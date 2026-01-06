@@ -25,7 +25,7 @@ class TreeWalker:
             if r.enumeration_scope == EnumerationScope.DIRECTORY_ENUMERATION
         ]
 
-    def walk_tree(self, unc_path: str) -> List[str]:
+    def walk_tree(self, unc_path: str) -> List[Tuple[str, Any]]:
         """
         Walk a directory tree and return all files
 
