@@ -11,7 +11,7 @@ from snaffler.utils.logger import setup_logging
 
 app = typer.Typer(
     add_completion=False,
-    help="Snaffler Linux – Find credentials and sensitive data on Windows shares"
+    help="Snaffler Linux – Find credentials and sensitive data on Windows SMB shares"
 )
 
 
@@ -111,12 +111,21 @@ def run(
             help="Output results in TSV format",
             rich_help_panel="Output",
         ),
-
-        boring: int = typer.Option(
-            0, "-b", "--boring",
-            help="Interest level threshold (0=everything, 3=high only)",
-            rich_help_panel="Scanning",
+        no_banner: bool = typer.Option(
+            False,
+            "--no-banner",
+            help="Disable startup banner",
+            rich_help_panel="Output",
         ),
+
+        min_interest: int = typer.Option(
+            0, "-b", "--min-interest",
+            help="Minimum interest level to report (0=all, 3=high only)",
+            rich_help_panel="Scanning",
+            min=0,
+            max=3,
+        ),
+
         max_grep_size: int = typer.Option(
             500_000, "-r", "--max-grep-size",
             help="Max file size (bytes) to search inside",
@@ -154,7 +163,8 @@ def run(
             rich_help_panel="Advanced",
         )
 ):
-    banner()
+    if not no_banner:
+        banner()
 
     # Default to stdout if no output file is specified
     if output_file is None:
@@ -190,7 +200,7 @@ def run(
             cfg.targets.computer_targets = [computers.strip()]
 
     # ---------- SCANNING ----------
-    cfg.scanning.interest_level = boring
+    cfg.scanning.interest_level = min_interest
     cfg.scanning.max_size_to_grep = max_grep_size
     cfg.scanning.max_size_to_snaffle = max_snaffle_size
     cfg.scanning.match_context_bytes = context
