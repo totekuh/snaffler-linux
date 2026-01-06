@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+from pathlib import Path
+from typing import Optional, List
+import typer
+
+from snaffler.config.configuration import SnafflerConfiguration
+from snaffler.engine.runner import SnafflerRunner
+from snaffler.utils.logger import setup_logging
+
+app = typer.Typer(
+    add_completion=False,
+    help="Snaffler Linux – Find credentials and sensitive data on Windows shares"
+)
+
+
+def banner():
+    typer.echo(r"""
+   _____ _   _          ______ ______ _      ______ _____
+  / ____| \ | |   /\   |  ____|  ____| |    |  ____|  __ \
+ | (___ |  \| |  /  \  | |__  | |__  | |    | |__  | |__) |
+  \___ \| . ` | / /\ \ |  __| |  __| | |    |  __| |  _  /
+  ____) | |\  |/ ____ \| |    | |    | |____| |____| | \ \
+ |_____/|_| \_/_/    \_\_|    |_|    |______|______|_|  \_\
+                                                  Impacket Port
+    """)
+
+
+@app.command()
+def run(
+        # ---------------- AUTH ----------------
+        username: str = typer.Option(
+            None, "-u", "--username",
+            help="Username for authentication (required)",
+            rich_help_panel="Authentication",
+        ),
+        password: Optional[str] = typer.Option(
+            None, "-p", "--password",
+            help="Password for authentication (NTLM)",
+            rich_help_panel="Authentication",
+        ),
+        nthash: Optional[str] = typer.Option(
+            None, "--hash",
+            help="NT hash for Pass-the-Hash authentication",
+            rich_help_panel="Authentication",
+        ),
+        domain: Optional[str] = typer.Option(
+            None, "-d", "--domain",
+            help="Target Active Directory domain (e.g. CORP.LOCAL)",
+            rich_help_panel="Authentication",
+        ),
+        dc_ip: Optional[str] = typer.Option(
+            None, "-c", "--dc-ip",
+            help="Domain controller IP",
+            rich_help_panel="Authentication",
+        ),
+        timeout: int = typer.Option(
+            5, "-e", "--timeout",
+            help="LDAP timeout / status update interval in minutes",
+            rich_help_panel="Authentication",
+        ),
+
+        unc_path: Optional[List[str]] = typer.Option(
+            None, "-i", "--unc",
+            help="Direct UNC path(s) to scan (disables computer/share discovery)",
+            rich_help_panel="Targeting",
+        ),
+        computers: Optional[str] = typer.Option(
+            None, "-n", "--computers",
+            help="Comma-separated computer list or path to file with one per line",
+            rich_help_panel="Targeting",
+        ),
+        shares_only: bool = typer.Option(
+            False, "-a", "--shares-only",
+            help="Only enumerate shares, skip filesystem walking",
+            rich_help_panel="Targeting",
+        ),
+        domain_users: bool = typer.Option(
+            False, "--domain-users",
+            help="Enable domain user account rules (service accounts, admins, etc.)",
+            rich_help_panel="Targeting",
+        ),
+
+        stdout: bool = typer.Option(
+            False, "-s", "--stdout",
+            help="Print results to stdout",
+            rich_help_panel="Output",
+        ),
+        output_file: Optional[Path] = typer.Option(
+            None, "-o", "--output",
+            help="Write results to file",
+            rich_help_panel="Output",
+        ),
+        log_level: str = typer.Option(
+            "info", "-v", "--verbose",
+            help="Log verbosity: trace | debug | info | data",
+            rich_help_panel="Output",
+        ),
+        log_type: str = typer.Option(
+            "plain", "-t", "--log-type",
+            help="Log format: plain | json",
+            rich_help_panel="Output",
+        ),
+        tsv: bool = typer.Option(
+            False, "-y", "--tsv",
+            help="Output results in TSV format",
+            rich_help_panel="Output",
+        ),
+
+        boring: int = typer.Option(
+            0, "-b", "--boring",
+            help="Interest level threshold (0=everything, 3=high only)",
+            rich_help_panel="Scanning",
+        ),
+        max_grep_size: int = typer.Option(
+            500_000, "-r", "--max-grep-size",
+            help="Max file size (bytes) to search inside",
+            rich_help_panel="Scanning",
+        ),
+        max_snaffle_size: int = typer.Option(
+            10_000_000, "-l", "--max-snaffle-size",
+            help="Max file size (bytes) to download",
+            rich_help_panel="Scanning",
+        ),
+        snaffle_path: Optional[Path] = typer.Option(
+            None, "-m", "--snaffle-path",
+            help="Directory to copy interesting files into",
+            rich_help_panel="Scanning",
+        ),
+        context: int = typer.Option(
+            200, "-j", "--context",
+            help="Bytes of context around matched strings",
+            rich_help_panel="Scanning",
+        ),
+
+        max_threads: int = typer.Option(
+            60, "-x", "--max-threads",
+            help="Maximum total worker threads",
+            rich_help_panel="Advanced",
+        ),
+        config_file: Optional[Path] = typer.Option(
+            None, "-z", "--config",
+            help="Path to TOML configuration file",
+            rich_help_panel="Advanced",
+        ),
+        rule_dir: Optional[Path] = typer.Option(
+            None, "-R", "--rule-dir",
+            help="Directory containing custom TOML rule files",
+            rich_help_panel="Advanced",
+        )
+):
+    banner()
+
+    if not stdout and not output_file:
+        typer.secho("[-] Either --stdout or --output must be specified", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    # ---------- load configuration ----------
+    cfg = SnafflerConfiguration()
+
+    if config_file:
+        cfg.load_from_toml(str(config_file))
+
+    # ---------- AUTH ----------
+    cfg.auth.username = username
+    cfg.auth.password = password
+    cfg.auth.nthash = nthash
+    cfg.auth.domain = domain
+    cfg.auth.dc_ip = dc_ip
+    cfg.auth.timeout = timeout
+
+    # ---------- TARGETING ----------
+    cfg.targets.path_targets = unc_path or []
+    cfg.targets.shares_only = shares_only
+    cfg.targets.domain_users = domain_users
+
+    if computers:
+        if "," in computers:
+            cfg.targets.computer_targets = [c.strip() for c in computers.split(",")]
+        elif Path(computers).is_file():
+            cfg.targets.computer_targets = [
+                l.strip() for l in Path(computers).read_text().splitlines() if l.strip()
+            ]
+        else:
+            cfg.targets.computer_targets = [computers.strip()]
+
+    # ---------- SCANNING ----------
+    cfg.scanning.interest_level = boring
+    cfg.scanning.max_size_to_grep = max_grep_size
+    cfg.scanning.max_size_to_snaffle = max_snaffle_size
+    cfg.scanning.match_context_bytes = context
+
+    if snaffle_path:
+        cfg.scanning.snaffle = True
+        cfg.scanning.snaffle_path = str(snaffle_path)
+
+    # ---------- ADVANCED ----------
+    cfg.advanced.max_threads = max_threads
+    cfg.advanced.share_threads = max_threads // 3
+    cfg.advanced.tree_threads = max_threads // 3
+    cfg.advanced.file_threads = max_threads // 3
+    cfg.advanced.rule_dir = str(rule_dir) if rule_dir else None
+
+    # ---------- OUTPUT ----------
+    cfg.output.to_stdout = stdout
+    cfg.output.to_file = output_file is not None
+    cfg.output.output_file = str(output_file) if output_file else None
+    cfg.output.log_level = log_level
+    cfg.output.log_type = log_type
+    cfg.output.tsv = tsv
+
+    # ---------- validate ----------
+    cfg.validate()
+
+
+    # ---------- logging ----------
+    setup_logging(
+        log_level=cfg.output.log_level,
+        log_to_file=cfg.output.to_file,
+        log_file_path=cfg.output.output_file,
+        log_to_console=cfg.output.to_stdout,
+        log_type=cfg.output.log_type,
+    )
+
+    # ---------- run ----------
+    snaff = SnafflerRunner(cfg)
+    snaff.execute()
+
+
+if __name__ == "__main__":
+    app()

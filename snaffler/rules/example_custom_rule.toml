@@ -1,0 +1,65 @@
+# Example Custom Rule for Snaffler Linux
+# This file demonstrates how to create custom classification rules
+
+# Rule to find backup files
+[[ClassifierRules]]
+EnumerationScope = "FileEnumeration"
+RuleName = "FindBackupFiles"
+MatchAction = "Snaffle"
+Description = "Find potentially interesting backup files"
+MatchLocation = "FileExtension"
+WordListType = "Exact"
+WordList = [".bak", ".backup", ".old", ".orig"]
+Triage = "Yellow"
+
+# Rule to find development/test credentials
+[[ClassifierRules]]
+EnumerationScope = "FileEnumeration"
+RuleName = "FindDevCredFiles"
+MatchAction = "Snaffle"
+Description = "Find development credential files"
+MatchLocation = "FileName"
+WordListType = "Contains"
+WordList = ["test_creds", "dev_password", "staging_keys", ".env.local", ".env.development"]
+Triage = "Red"
+
+# Rule to search scripts for hardcoded credentials
+[[ClassifierRules]]
+EnumerationScope = "FileEnumeration"
+RuleName = "SearchScriptsForCreds"
+MatchAction = "Relay"
+Description = "Scan script files for credentials"
+MatchLocation = "FileExtension"
+WordListType = "Exact"
+WordList = [".ps1", ".sh", ".bat", ".cmd", ".py", ".rb", ".pl"]
+RelayTargets = ["FindCredsInScripts"]
+
+# Content rule to find credentials in scripts
+[[ClassifierRules]]
+EnumerationScope = "ContentsEnumeration"
+RuleName = "FindCredsInScripts"
+MatchAction = "Snaffle"
+Description = "Find hardcoded credentials in scripts"
+MatchLocation = "FileContentAsString"
+WordListType = "Regex"
+WordList = [
+    "password\\s*=\\s*['\\\"][^'\\\"]+['\\\"]",
+    "apikey\\s*=\\s*['\\\"][^'\\\"]+['\\\"]",
+    "token\\s*=\\s*['\\\"][^'\\\"]+['\\\"]",
+    "secret\\s*=\\s*['\\\"][^'\\\"]+['\\\"]"
+]
+Triage = "Red"
+
+# Rule to skip large log directories
+[[ClassifierRules]]
+EnumerationScope = "DirectoryEnumeration"
+RuleName = "SkipLogDirectories"
+MatchAction = "Discard"
+Description = "Skip log directories to improve performance"
+MatchLocation = "FilePath"
+WordListType = "Contains"
+WordList = ["/logs/", "/var/log/", "\\\\logs\\\\", "\\\\Logs\\\\"]
+
+# Usage:
+# Place this file in a directory (e.g., /opt/custom_rules/)
+# Run snaffler with: -p /opt/custom_rules/
