@@ -43,7 +43,7 @@ class TreeWalker:
             parts = [p for p in parts if p]  # Remove empty parts
 
             if len(parts) < 2:
-                logger.error(f"Invalid UNC path: {unc_path}")
+                logger.error(f"Invalid UNC path: {unc_path}; example: //10.10.10.10/SHARE$")
                 return files
 
             server = parts[0]
@@ -53,7 +53,11 @@ class TreeWalker:
             logger.debug(f"Walking tree: {unc_path}")
 
             # Recursively walk the tree
-            self._walk_directory(server, share, path, files)
+            smb = self.smb_transport.connect(server)
+            try:
+                self._walk_directory(smb, server, share, path, files)
+            finally:
+                smb.logoff()
 
             logger.info(f"Found {len(files)} files in {unc_path}")
 
@@ -62,10 +66,8 @@ class TreeWalker:
 
         return files
 
-    def _walk_directory(self, server: str, share: str, path: str, files: List):
+    def _walk_directory(self, smb, server: str, share: str, path: str, files: List):
         try:
-            smb = self.smb_transport.connect(server)
-
             if not path.endswith('/'):
                 path += '/'
 
@@ -73,7 +75,6 @@ class TreeWalker:
                 entries = smb.listPath(share, path + '*')
             except SessionError as e:
                 logger.debug(f"Cannot list {server}/{share}{path}: {e}")
-                smb.logoff()
                 return
 
             for entry in entries:
@@ -86,70 +87,30 @@ class TreeWalker:
 
                 if entry.is_directory():
                     if self._should_scan_directory(unc_full):
-                        self._walk_directory(server, share, entry_path, files)
+                        self._walk_directory(smb, server, share, entry_path, files)
                 else:
                     files.append((unc_full, entry))
-
-            smb.logoff()
 
         except Exception as e:
             logger.debug(f"Error walking {server}/{share}{path}: {e}")
 
     def _should_scan_directory(self, dir_path: str) -> bool:
-        """
-        Check if a directory should be scanned based on classifiers
-
-        Args:
-            dir_path: Full UNC path to directory
-
-        Returns:
-            True if should scan, False if should skip
-        """
-        # Apply directory classifiers
         for rule in self.dir_classifiers:
-            if rule.match_location == MatchLocation.FILE_PATH:
-                match = rule.matches(dir_path)
+            if rule.match_location != MatchLocation.FILE_PATH:
+                continue
 
-                if match:
-                    if rule.match_action == MatchAction.DISCARD:
-                        # Skip this directory
-                        logger.debug(f"Skipped scanning on {dir_path} due to Discard rule match: {rule.rule_name}")
-                        return False
-                    elif rule.match_action == MatchAction.SNAFFLE:
-                        # Log interesting directory and continue scanning
-                        logger.warning(f"[{rule.triage.value}] [{rule.rule_name}] Directory: {dir_path}")
-                        # Continue scanning (don't break, check other rules)
+            if not rule.matches(dir_path):
+                continue
 
-        # By default, scan the directory
+            if rule.match_action == MatchAction.DISCARD:
+                logger.debug(
+                    f"Skipped scanning on {dir_path} due to Discard rule match: {rule.rule_name}"
+                )
+                return False
+
+            if rule.match_action == MatchAction.SNAFFLE:
+                logger.warning(
+                    f"[{rule.triage.value}] [{rule.rule_name}] Directory: {dir_path}"
+                )
+
         return True
-
-    def batch_walk_trees(self, unc_paths: List[str], max_workers: int = 20) -> List[Tuple[str, Any]]:
-        """
-        Walk multiple directory trees concurrently
-
-        Args:
-            unc_paths: List of UNC paths to walk
-            max_workers: Maximum number of concurrent threads
-
-        Returns:
-            List of tuples (file_path, file_info)
-        """
-        all_files = []
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
-            future_to_path = {
-                executor.submit(self.walk_tree, unc_path): unc_path
-                for unc_path in unc_paths
-            }
-
-            # Collect results as they complete
-            for future in as_completed(future_to_path):
-                unc_path = future_to_path[future]
-                try:
-                    files = future.result()
-                    all_files.extend(files)
-                except Exception as e:
-                    logger.error(f"Exception walking {unc_path}: {e}")
-
-        return all_files
