@@ -64,7 +64,6 @@ class OutputConfig:
 
     log_level: str = "info"
     log_type: str = "plain"
-    tsv: bool = False
 
 
 # ---------------- ADVANCED ----------------
@@ -109,9 +108,6 @@ class SnafflerConfiguration:
     def validate(self):
         if self.targets.path_targets and self.targets.computer_targets:
             raise ValueError("Cannot mix path targets and computer targets")
-
-        if self.output.tsv and self.output.log_type != "plain":
-            raise ValueError("TSV output requires plain log type")
 
     # ---------- TOML ----------
 

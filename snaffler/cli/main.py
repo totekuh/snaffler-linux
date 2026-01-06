@@ -66,9 +66,15 @@ def run(
             help="Direct UNC path(s) to scan (disables computer/share discovery)",
             rich_help_panel="Targeting",
         ),
-        computers: Optional[str] = typer.Option(
-            None, "-n", "--computers",
-            help="Comma-separated computer list or path to file with one per line",
+        computer: Optional[List[str]] = typer.Option(
+            None, "--computer",
+            help="Target computer(s). Can be used multiple times.",
+            rich_help_panel="Targeting",
+        ),
+
+        computer_file: Optional[Path] = typer.Option(
+            None, "--computer-file",
+            help="File containing computer names (one per line)",
             rich_help_panel="Targeting",
         ),
         shares_only: bool = typer.Option(
@@ -104,11 +110,6 @@ def run(
         log_type: str = typer.Option(
             "plain", "-t", "--log-type",
             help="Log format: plain | json",
-            rich_help_panel="Output",
-        ),
-        tsv: bool = typer.Option(
-            False, "-y", "--tsv",
-            help="Output results in TSV format",
             rich_help_panel="Output",
         ),
         no_banner: bool = typer.Option(
@@ -189,15 +190,16 @@ def run(
     cfg.targets.shares_only = shares_only
     cfg.targets.domain_users = domain_users
 
-    if computers:
-        if "," in computers:
-            cfg.targets.computer_targets = [c.strip() for c in computers.split(",")]
-        elif Path(computers).is_file():
-            cfg.targets.computer_targets = [
-                l.strip() for l in Path(computers).read_text().splitlines() if l.strip()
-            ]
-        else:
-            cfg.targets.computer_targets = [computers.strip()]
+    if computer and computer_file:
+        raise typer.BadParameter("Use either --computer or --computer-file, not both")
+
+    if computer:
+        cfg.targets.computer_targets = computer
+
+    if computer_file:
+        cfg.targets.computer_targets = [
+            l.strip() for l in computer_file.read_text().splitlines() if l.strip()
+        ]
 
     # ---------- SCANNING ----------
     cfg.scanning.interest_level = min_interest
@@ -225,7 +227,6 @@ def run(
     cfg.output.output_file = str(output_file) if output_file else None
     cfg.output.log_level = log_level
     cfg.output.log_type = log_type
-    cfg.output.tsv = tsv
 
     # ---------- validate ----------
     cfg.validate()
