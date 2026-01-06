@@ -93,12 +93,10 @@ class SnafflerRunner:
         try:
             # ---------- Direct UNC paths ----------
             if self.cfg.targets.path_targets:
-                logger.info(f"Using direct path targets: {len(self.cfg.targets.path_targets)}")
                 self.file_pipeline.run(self.cfg.targets.path_targets)
 
             # ---------- Explicit computer list ----------
             elif self.cfg.targets.computer_targets:
-                logger.info(f"Using specific computer targets: {len(self.cfg.targets.computer_targets)}")
                 share_paths = self.share_pipeline.run(self.cfg.targets.computer_targets)
                 if share_paths:
                     self.file_pipeline.run(share_paths)
