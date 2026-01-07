@@ -18,8 +18,6 @@ logger = logging.getLogger('snaffler')
 
 
 class SnafflerRunner:
-    """Main Snaffler controller"""
-
     def __init__(self, cfg: SnafflerConfiguration):
         self.cfg = cfg
         self.start_time = None
@@ -27,7 +25,7 @@ class SnafflerRunner:
         adv = cfg.advanced
         targets = cfg.targets
 
-        # Load classification rules
+        # rules must be loaded before any pipeline or scanner is instantiated
         self._load_rules()
 
         self.share_finder = ShareFinder(cfg=self.cfg)
@@ -35,17 +33,18 @@ class SnafflerRunner:
         self.tree_walker = TreeWalker(self.cfg)
         self.file_scanner = FileScanner(self.cfg)
 
-        self.file_pipeline = FilePipeline(
-            tree_walker=self.tree_walker,
-            file_scanner=self.file_scanner,
-            tree_threads=adv.tree_threads,
-            file_threads=adv.file_threads,
-        )
         # ---------- Pipelines ----------
         self.share_pipeline = SharePipeline(
             share_finder=self.share_finder,
             max_workers=adv.share_threads,
             shares_only=targets.shares_only,
+        )
+
+        self.file_pipeline = FilePipeline(
+            tree_walker=self.tree_walker,
+            file_scanner=self.file_scanner,
+            tree_threads=adv.tree_threads,
+            file_threads=adv.file_threads,
         )
 
     def _load_rules(self):

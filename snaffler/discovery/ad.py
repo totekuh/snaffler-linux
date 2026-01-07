@@ -29,7 +29,7 @@ class ADDiscovery:
         self.ldap_transport = LDAPTransport(cfg)
 
         if not cfg.auth.domain:
-            raise ValueError("ADDiscovery requires cfg.auth.domain")
+            raise ValueError("AD discovery requires cfg.auth.domain")
 
         self.domain = cfg.auth.domain
         self.base_dn = ",".join(f"DC={p}" for p in self.domain.split("."))
