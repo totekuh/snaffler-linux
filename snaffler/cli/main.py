@@ -20,9 +20,9 @@ MB = 1024 * 1024
 
 # Scanning
 DEFAULT_MIN_INTEREST = 0
-DEFAULT_MAX_GREP_SIZE = 2 * MB        # 2 MB
-DEFAULT_MAX_SNAFFLE_SIZE = 10 * MB    # 10 MB
-DEFAULT_MATCH_CONTEXT = 200           # bytes
+DEFAULT_MAX_GREP_SIZE = 2 * MB  # 2 MB
+DEFAULT_MAX_SNAFFLE_SIZE = 10 * MB  # 10 MB
+DEFAULT_MATCH_CONTEXT = 200  # bytes
 
 # Auth
 DEFAULT_TIMEOUT_MINUTES = 5
@@ -33,7 +33,6 @@ DEFAULT_MAX_THREADS = 60
 # Output
 DEFAULT_LOG_LEVEL = "info"
 DEFAULT_LOG_TYPE = "plain"
-
 
 
 def banner():
@@ -104,17 +103,7 @@ def run(
             help="Only enumerate shares, skip filesystem walking",
             rich_help_panel="Targeting",
         ),
-        domain_users: bool = typer.Option(
-            False, "--domain-users",
-            help="Enable domain user account rules (service accounts, admins, etc.)",
-            rich_help_panel="Targeting",
-        ),
 
-        stdout: bool = typer.Option(
-            False, "-s", "--stdout",
-            help="Print results to stdout",
-            rich_help_panel="Output",
-        ),
         output_file: Optional[Path] = typer.Option(
             None, "-o", "--output",
             help="Write results to file",
@@ -216,7 +205,6 @@ def run(
     # ---------- TARGETING ----------
     cfg.targets.path_targets = unc_path or []
     cfg.targets.shares_only = shares_only
-    cfg.targets.domain_users = domain_users
 
     if computer and computer_file:
         raise typer.BadParameter("Use either --computer or --computer-file, not both")
@@ -260,7 +248,6 @@ def run(
     cfg.advanced.rule_dir = str(rule_dir) if rule_dir else None
 
     # ---------- OUTPUT ----------
-    cfg.output.to_stdout = stdout
     cfg.output.to_file = output_file is not None
     cfg.output.output_file = str(output_file) if output_file else None
     cfg.output.log_level = log_level

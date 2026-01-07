@@ -28,7 +28,6 @@ class TargetingConfig:
     computer_targets: List[str] = field(default_factory=list)
 
     shares_only: bool = False
-    domain_users: bool = False
 
     scan_sysvol: bool = True
     scan_netlogon: bool = True
@@ -42,7 +41,7 @@ class TargetingConfig:
 @dataclass
 class ScanningConfig:
     interest_level: int = 0
-    max_size_to_grep: int = 2_097_152      # 2 MB
+    max_size_to_grep: int = 2_097_152  # 2 MB
     max_size_to_snaffle: int = 10_485_760  # 10 MB
     snaffle: bool = False
     snaffle_path: Optional[str] = None
@@ -58,7 +57,6 @@ class ScanningConfig:
 
 @dataclass
 class OutputConfig:
-    to_stdout: bool = False
     to_file: bool = False
     output_file: Optional[str] = None
 
