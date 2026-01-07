@@ -1,4 +1,4 @@
-# Snaffler Linux
+# snaffler-ng
 
 Linux port of [Snaffler](https://github.com/SnaffCon/Snaffler) using Impacket.
 

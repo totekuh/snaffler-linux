@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="snaffler-linux",
+    name="snaffler-ng",
     version="1.0.0",
     description="Snaffler Linux port – find credentials and sensitive data on Windows shares",
     author="totekuh",
