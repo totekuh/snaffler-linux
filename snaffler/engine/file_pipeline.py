@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
 
 from snaffler.accessors.smb_file_accessor import SMBFileAccessor
+from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.analysis.files import FileScanner
 from snaffler.discovery.tree import TreeWalker
@@ -20,7 +21,9 @@ class FilePipeline:
         self.tree_walker = TreeWalker(cfg)
 
         file_accessor = SMBFileAccessor(cfg)
-        self.file_scanner = FileScanner(cfg, file_accessor)
+        self.file_scanner = FileScanner(cfg=cfg,
+                                        file_accessor=file_accessor,
+                                        rule_evaluator=RuleEvaluator())
 
     def run(self, paths: List[str]) -> int:
         """

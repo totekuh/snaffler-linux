@@ -1,6 +1,4 @@
-"""
-File scanning and classification
-"""
+#!/usr/bin/env python3
 
 import logging
 import re
@@ -10,28 +8,22 @@ from typing import Optional
 
 from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.analysis.certificates import CertificateChecker
-from snaffler.classifiers.rules import ClassifierRule, MatchLocation, MatchAction, Triage
+from snaffler.analysis.file_result import FileResult
+from snaffler.classifiers.evaluator import RuleEvaluator
+from snaffler.classifiers.rules import MatchLocation, MatchAction, Triage
 from snaffler.utils.logger import log_file_result
 from snaffler.utils.path_utils import parse_unc_path, get_modified_time
 
 logger = logging.getLogger("snaffler")
 
 
-class FileResult:
-    def __init__(self, file_path: str, size: int = 0, modified: datetime = None):
-        self.file_path = file_path
-        self.size = size
-        self.modified = modified
-        self.triage: Optional[Triage] = None
-        self.rule_name: Optional[str] = None
-        self.match: Optional[str] = None
-        self.context: Optional[str] = None
-
-
 class FileScanner:
-    def __init__(self, cfg, file_accessor: FileAccessor):
+    def __init__(self, cfg,
+                 file_accessor: FileAccessor,
+                 rule_evaluator: RuleEvaluator):
         self.cfg = cfg
-        self.files = file_accessor
+        self.file_accessor = file_accessor
+        self.rules_evaluator = rule_evaluator
 
         self.file_rules = cfg.rules.file
         self.content_rules = cfg.rules.content
@@ -73,7 +65,7 @@ class FileScanner:
                 self.cfg.scanning.snaffle
                 and result.size <= self.cfg.scanning.max_size_to_snaffle
         ):
-            self.files.copy_to_local(
+            self.file_accessor.copy_to_local(
                 server,
                 share,
                 smb_path,
@@ -116,7 +108,7 @@ class FileScanner:
             best_result = None
 
             for rule in self.file_rules:
-                match = self._match_file_rule(rule, unc_path, file_name, file_ext, size)
+                match = self.rules_evaluator.match_file_rule(rule, unc_path, file_name, file_ext, size)
                 if not match:
                     continue
 
@@ -142,10 +134,10 @@ class FileScanner:
                 if action != MatchAction.SNAFFLE:
                     continue
 
-                if self._postmatch_discard(unc_path, file_name):
+                if self.rules_evaluator.should_discard(self.postmatch_rules, unc_path, file_name):
                     return None
 
-                if not self.files.can_read(server, share, smb_path):
+                if not self.file_accessor.can_read(server, share, smb_path):
                     continue
 
                 result = self._build_result(
@@ -179,39 +171,6 @@ class FileScanner:
             logger.debug(f"Error scanning file {unc_path}: {e}")
             return None
 
-    def _match_file_rule(
-            self,
-            rule: ClassifierRule,
-            full_path: str,
-            name: str,
-            ext: str,
-            size: int,
-    ):
-        if rule.match_location == MatchLocation.FILE_PATH:
-            return rule.matches(full_path)
-        if rule.match_location == MatchLocation.FILE_NAME:
-            return rule.matches(name)
-        if rule.match_location == MatchLocation.FILE_EXTENSION:
-            return rule.matches(ext)
-        if rule.match_location == MatchLocation.FILE_LENGTH:
-            return f"size == {size}" if rule.match_length == size else None
-        return None
-
-    def _postmatch_discard(self, unc_path: str, name: str) -> bool:
-        for rule in self.postmatch_rules:
-            if rule.match_action != MatchAction.DISCARD:
-                continue
-
-            text = (
-                unc_path
-                if rule.match_location == MatchLocation.FILE_PATH
-                else name
-            )
-            if rule.matches(text):
-                return True
-
-        return False
-
     def _scan_file_contents(
             self,
             server: str,
@@ -223,7 +182,7 @@ class FileScanner:
             relay_rule_names: Optional[list],
     ) -> Optional[FileResult]:
 
-        data = self.files.read(server, share, smb_path)
+        data = self.file_accessor.read(server, share, smb_path)
         if not data:
             return None
 
@@ -246,7 +205,7 @@ class FileScanner:
             if not match:
                 continue
 
-            if self._postmatch_discard(unc_path, Path(unc_path).name):
+            if self.rules_evaluator.should_discard(self.postmatch_rules, unc_path, Path(unc_path).name):
                 continue
 
             start = max(0, match.start() - self.cfg.scanning.match_context_bytes)
@@ -278,7 +237,7 @@ class FileScanner:
             modified: datetime,
     ) -> Optional[FileResult]:
 
-        data = self.files.read(server, share, smb_path)
+        data = self.file_accessor.read(server, share, smb_path)
         if not data:
             return None
 
