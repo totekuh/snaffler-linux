@@ -184,7 +184,7 @@ def log_file_result(
         parts.append(f"[{format_size(size)}]")
 
     if modified:
-        parts.append(f"[{modified}]")
+        parts.append(f"[mtime:{modified}]")
 
     parts.append(f"{Colors.BOLD}{file_path}{Colors.RESET}")
 

@@ -14,7 +14,7 @@ from snaffler.classifiers.rules import ClassifierRule, MatchLocation, MatchActio
 from snaffler.transport.smb import SMBTransport
 from snaffler.utils.logger import log_file_result
 
-logger = logging.getLogger('snaffler')
+logger = logging.getLogger("snaffler")
 
 
 class FileResult:
@@ -33,54 +33,25 @@ class FileScanner:
         self.cfg = cfg
         self.smb_transport = SMBTransport(cfg)
 
-        self.file_classifiers = cfg.rules.file
-        self.content_classifiers = cfg.rules.content
-        self.postmatch_classifiers = cfg.rules.postmatch
+        self.file_rules = cfg.rules.file
+        self.content_rules = cfg.rules.content
+        self.postmatch_rules = cfg.rules.postmatch
 
         self.content_rules_by_name = {
-            rule.rule_name: rule for rule in self.content_classifiers
+            r.rule_name: r for r in self.content_rules
         }
 
         self.cert_checker = CertificateChecker(
-            custom_passwords=self.cfg.scanning.cert_passwords
+            custom_passwords=cfg.scanning.cert_passwords
         )
 
         self._thread_local = threading.local()
 
-    def _finalize_result(
-            self,
-            result: FileResult,
-            server: str,
-            share: str,
-            file_path: str,
-    ):
-        if result.triage.below(self.cfg.scanning.min_interest):
-            return None
-
-        log_file_result(
-            logger,
-            result.file_path,
-            result.triage.label,
-            result.rule_name,
-            result.match,
-            result.context,
-            result.size,
-            result.modified.strftime('%Y-%m-%d %H:%M:%S') if result.modified else None
-        )
-
-        if (
-                self.cfg.scanning.snaffle
-                and result.size <= self.cfg.scanning.max_size_to_snaffle
-        ):
-            self._snaffle_file(server, share, file_path, result.file_path)
-
-        return result
+    # ------------------------------------------------------------------ SMB
 
     def _get_smb(self, server: str):
-        if not hasattr(self._thread_local, "smb_cache"):
-            self._thread_local.smb_cache = {}
-
-        cache = self._thread_local.smb_cache
+        cache = getattr(self._thread_local, "smb_cache", {})
+        self._thread_local.smb_cache = cache
 
         smb = cache.get(server)
         if smb:
@@ -98,102 +69,147 @@ class FileScanner:
         cache[server] = smb
         return smb
 
+    def _read_file_smb(self, server: str, share: str, path: str) -> Optional[bytes]:
+        try:
+            smb = self._get_smb(server)
+            from io import BytesIO
+            buf = BytesIO()
+            smb.getFile(share, path, buf.write)
+            return buf.getvalue()
+        except Exception:
+            return None
+
+    def _can_read_file(self, server: str, share: str, path: str) -> bool:
+        try:
+            smb = self._get_smb(server)
+            from io import BytesIO
+            buf = BytesIO()
+            smb.getFile(share, path, buf.write, 0, 1)
+            return True
+        except Exception:
+            return False
+
+    # -------------------------------------------------------------- Results
+
+    def _finalize_result(
+            self,
+            result: FileResult,
+            server: str,
+            share: str,
+            smb_path: str,
+    ) -> Optional[FileResult]:
+
+        if result.triage.below(self.cfg.scanning.min_interest):
+            return None
+
+        log_file_result(
+            logger,
+            result.file_path,
+            result.triage.label,
+            result.rule_name,
+            result.match,
+            result.context,
+            result.size,
+            result.modified.strftime("%Y-%m-%d %H:%M:%S") if result.modified else None,
+        )
+
+        if (
+                self.cfg.scanning.snaffle
+                and result.size <= self.cfg.scanning.max_size_to_snaffle
+        ):
+            self._snaffle_file(server, share, smb_path, result.file_path)
+
+        return result
+
+    def _build_result(
+            self,
+            unc_path: str,
+            size: int,
+            modified: datetime,
+            triage: Triage,
+            rule_name: str,
+            match: str,
+            context: Optional[str] = None,
+    ) -> FileResult:
+
+        r = FileResult(unc_path, size, modified)
+        r.triage = triage
+        r.rule_name = rule_name
+        r.match = match
+        r.context = context
+        return r
+
+    # -------------------------------------------------------------- Scanning
+
     def scan_file(self, unc_path: str, file_info) -> Optional[FileResult]:
         try:
-            parts = [p for p in unc_path.replace('\\', '/').split('/') if p]
-            if len(parts) < 3:
+            parsed = self._parse_unc_path(unc_path)
+            if not parsed:
                 return None
 
-            server, share = parts[0], parts[1]
-            file_path = '\\' + '\\'.join(parts[2:])
-
-            file_name = Path(unc_path).name
-            file_ext = Path(unc_path).suffix
-
-            if file_ext.lower() == '.bak':
-                stripped = file_name[:-4]
-                alt_ext = Path(stripped).suffix
-                if alt_ext:
-                    file_ext = alt_ext
-
-            if not file_ext:
-                return None
-
-            file_size = file_info.get_filesize() if hasattr(file_info, 'get_filesize') else 0
-
-            modified_time = None
-            if hasattr(file_info, 'get_mtime_epoch'):
-                try:
-                    modified_time = datetime.fromtimestamp(file_info.get_mtime_epoch())
-                except Exception:
-                    pass
+            server, share, smb_path, file_name, file_ext = parsed
+            size = getattr(file_info, "get_filesize", lambda: 0)()
+            modified = self._get_modified_time(file_info)
 
             relay_targets = []
             best_result = None
 
-            for rule in self.file_classifiers:
-                match = self._check_file_rule(
-                    rule, unc_path, file_name, file_ext, file_size
-                )
+            for rule in self.file_rules:
+                match = self._match_file_rule(rule, unc_path, file_name, file_ext, size)
                 if not match:
                     continue
 
-                if rule.match_action == MatchAction.DISCARD:
+                action = rule.match_action
+
+                if action == MatchAction.DISCARD:
                     return None
 
-                if rule.match_action == MatchAction.RELAY:
+                if action == MatchAction.RELAY:
                     relay_targets.extend(rule.relay_targets)
                     continue
 
-                if rule.match_action == MatchAction.CHECK_FOR_KEYS:
+                if action == MatchAction.CHECK_FOR_KEYS:
                     cert = self._check_certificate(
-                        server, share, file_path, unc_path, file_size, modified_time
+                        server, share, smb_path, unc_path, size, modified
                     )
                     if cert:
-                        cert = self._finalize_result(
-                            cert,
-                            server,
-                            share,
-                            file_path
-                        )
+                        cert = self._finalize_result(cert, server, share, smb_path)
                         if cert and not best_result:
                             best_result = cert
                     continue
 
-                if rule.match_action != MatchAction.SNAFFLE:
+                if action != MatchAction.SNAFFLE:
                     continue
 
                 if self._postmatch_discard(unc_path, file_name):
                     return None
 
-                if not self._can_read_file(server, share, file_path):
+                if not self._can_read_file(server, share, smb_path):
                     continue
 
-                result = FileResult(unc_path, file_size, modified_time)
-                result.triage = rule.triage
-                result.rule_name = rule.rule_name
-                result.match = match if isinstance(match, str) else match.group(0)
-
-                result = self._finalize_result(
-                    result,
-                    server,
-                    share,
-                    file_path,
+                result = self._build_result(
+                    unc_path,
+                    size,
+                    modified,
+                    rule.triage,
+                    rule.rule_name,
+                    match if isinstance(match, str) else match.group(0),
                 )
 
+                result = self._finalize_result(result, server, share, smb_path)
                 if result and not best_result:
                     best_result = result
 
-            if file_size <= self.cfg.scanning.max_size_to_grep:
+            if size <= self.cfg.scanning.max_size_to_grep:
                 content_result = self._scan_file_contents(
                     server,
                     share,
-                    file_path,
+                    smb_path,
                     unc_path,
-                    file_size,
-                    modified_time,
-                    relay_targets or None
-                )
+                    size,
+                    modified,
+                    relay_targets or None,
+                    )
                 return content_result or best_result
 
             return best_result
@@ -202,42 +218,64 @@ class FileScanner:
             logger.debug(f"Error scanning file {unc_path}: {e}")
             return None
 
-    def _check_file_rule(
+    # -------------------------------------------------------------- Helpers
+
+    def _parse_unc_path(self, unc_path: str):
+        parts = [p for p in unc_path.replace("\\", "/").split("/") if p]
+        if len(parts) < 3:
+            return None
+
+        server, share = parts[0], parts[1]
+        smb_path = "\\" + "\\".join(parts[2:])
+
+        file_name = Path(unc_path).name
+        ext = Path(unc_path).suffix
+
+        if ext.lower() == ".bak":
+            stripped = file_name[:-4]
+            alt = Path(stripped).suffix
+            if alt:
+                ext = alt
+
+        if not ext:
+            return None
+
+        return server, share, smb_path, file_name, ext
+
+    def _get_modified_time(self, file_info) -> Optional[datetime]:
+        try:
+            return datetime.fromtimestamp(file_info.get_mtime_epoch())
+        except Exception:
+            return None
+
+    def _match_file_rule(
             self,
             rule: ClassifierRule,
             full_path: str,
-            file_name: str,
-            file_ext: str,
-            file_size: int
-    ) -> Optional[object]:
-
+            name: str,
+            ext: str,
+            size: int,
+    ):
         if rule.match_location == MatchLocation.FILE_PATH:
             return rule.matches(full_path)
-
         if rule.match_location == MatchLocation.FILE_NAME:
-            return rule.matches(file_name)
-
+            return rule.matches(name)
         if rule.match_location == MatchLocation.FILE_EXTENSION:
-            return rule.matches(file_ext)
-
+            return rule.matches(ext)
         if rule.match_location == MatchLocation.FILE_LENGTH:
-            if rule.match_length == file_size:
-                return f"size == {file_size}"
-            return None
-
+            return f"size == {size}" if rule.match_length == size else None
         return None
 
-    def _postmatch_discard(self, unc_path: str, file_name: str) -> bool:
-        for rule in self.postmatch_classifiers:
+    def _postmatch_discard(self, unc_path: str, name: str) -> bool:
+        for rule in self.postmatch_rules:
             if rule.match_action != MatchAction.DISCARD:
                 continue
 
             text = (
                 unc_path
                 if rule.match_location == MatchLocation.FILE_PATH
-                else file_name
+                else name
             )
-
             if rule.matches(text):
                 return True
 
@@ -247,121 +285,98 @@ class FileScanner:
             self,
             server: str,
             share: str,
-            file_path: str,
+            smb_path: str,
             unc_path: str,
-            file_size: int,
-            modified_time: datetime,
-            relay_target_names: Optional[list]
+            size: int,
+            modified: datetime,
+            relay_rule_names: Optional[list],
     ) -> Optional[FileResult]:
 
+        data = self._read_file_smb(server, share, smb_path)
+        if not data:
+            return None
+
         try:
-            data = self._read_file_smb(server, share, file_path)
-            if not data:
-                return None
+            text = data.decode("utf-8", errors="ignore")
+        except Exception:
+            text = data.decode("latin-1", errors="ignore")
 
-            try:
-                text = data.decode('utf-8', errors='ignore')
-            except Exception:
-                text = data.decode('latin-1', errors='ignore')
+        rules = (
+            [self.content_rules_by_name[n] for n in relay_rule_names if n in self.content_rules_by_name]
+            if relay_rule_names
+            else self.content_rules
+        )
 
-            rules = (
-                [self.content_rules_by_name[n] for n in relay_target_names if n in self.content_rules_by_name]
-                if relay_target_names
-                else self.content_classifiers
+        for rule in rules:
+            if rule.match_location != MatchLocation.FILE_CONTENT_AS_STRING:
+                continue
+
+            match = rule.matches(text)
+            if not match:
+                continue
+
+            if self._postmatch_discard(unc_path, Path(unc_path).name):
+                continue
+
+            start = max(0, match.start() - self.cfg.scanning.match_context_bytes)
+            end = min(len(text), match.end() + self.cfg.scanning.match_context_bytes)
+
+            result = self._build_result(
+                unc_path,
+                size,
+                modified,
+                rule.triage,
+                rule.rule_name,
+                match.group(0),
+                re.escape(text[start:end]),
             )
 
-            for rule in rules:
-                if rule.match_location != MatchLocation.FILE_CONTENT_AS_STRING:
-                    continue
+            return self._finalize_result(result, server, share, smb_path)
 
-                match = rule.matches(text)
-                if not match:
-                    continue
+        return None
 
-                if self._postmatch_discard(unc_path, Path(unc_path).name):
-                    continue
-
-                result = FileResult(unc_path, file_size, modified_time)
-                result.triage = rule.triage
-                result.rule_name = rule.rule_name
-                result.match = match.group(0)
-
-                start = max(0, match.start() - self.cfg.scanning.match_context_bytes)
-                end = min(len(text), match.end() + self.cfg.scanning.match_context_bytes)
-                result.context = re.escape(text[start:end])
-
-                return self._finalize_result(
-                    result,
-                    server,
-                    share,
-                    file_path,
-                )
-
-            return None
-
-        except Exception as e:
-            logger.debug(f"Error scanning contents of {unc_path}: {e}")
-            return None
-
-    def _can_read_file(self, server: str, share: str, file_path: str) -> bool:
-        try:
-            smb = self._get_smb(server)
-            from io import BytesIO
-            buf = BytesIO()
-            smb.getFile(share, file_path, buf.write, 0, 1)
-            return True
-        except Exception as e:
-            logger.debug(f"Cannot access file {server}/{share}/{file_path}: {e}")
-            return False
+    # -------------------------------------------------------------- Certs
 
     def _check_certificate(
             self,
             server: str,
             share: str,
-            file_path: str,
+            smb_path: str,
             unc_path: str,
-            file_size: int,
-            modified_time: datetime
+            size: int,
+            modified: datetime,
     ) -> Optional[FileResult]:
 
-        data = self._read_file_smb(server, share, file_path)
+        data = self._read_file_smb(server, share, smb_path)
         if not data:
             return None
 
-        filename = Path(unc_path).name
-        reasons = self.cert_checker.check_certificate(data, filename)
-
+        reasons = self.cert_checker.check_certificate(data, Path(unc_path).name)
         if not reasons or "HasPrivateKey" not in reasons:
             return None
 
-        result = FileResult(unc_path, file_size, modified_time)
-        result.triage = Triage.RED
-        result.rule_name = "RelayCertByExtension"
-        result.match = filename
-        result.context = ", ".join(reasons)
+        return self._build_result(
+            unc_path,
+            size,
+            modified,
+            Triage.RED,
+            "RelayCertByExtension",
+            Path(unc_path).name,
+            ", ".join(reasons),
+        )
 
-        return result
+    # -------------------------------------------------------------- Snaffle
 
-    def _read_file_smb(self, server: str, share: str, file_path: str) -> Optional[bytes]:
-        try:
-            smb = self._get_smb(server)
-            from io import BytesIO
-            buf = BytesIO()
-            smb.getFile(share, file_path, buf.write)
-            return buf.getvalue()
-        except Exception:
-            return None
-
-    def _snaffle_file(self, server: str, share: str, file_path: str, unc_path: str):
+    def _snaffle_file(self, server: str, share: str, smb_path: str, unc_path: str):
         if not self.cfg.scanning.snaffle_path:
             return
 
         try:
-            clean = file_path.lstrip("\\/")
+            clean = smb_path.lstrip("\\/")
             local = Path(self.cfg.scanning.snaffle_path) / server / share / clean
             local.parent.mkdir(parents=True, exist_ok=True)
 
-            data = self._read_file_smb(server, share, file_path)
+            data = self._read_file_smb(server, share, smb_path)
             if data:
                 local.write_bytes(data)
         except Exception:
