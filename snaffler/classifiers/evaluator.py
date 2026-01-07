@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Iterable
+from typing import Optional
 
 from snaffler.classifiers.rules import MatchLocation, MatchAction
 
@@ -10,11 +10,17 @@ class RuleDecision:
     match: Optional[str] = None
     relay_targets: Optional[list] = None
 
-# snaffler/classifiers/evaluator.py
-from snaffler.classifiers.rules import MatchLocation, MatchAction
-
 
 class RuleEvaluator:
+    def __init__(self, file_rules, content_rules, postmatch_rules):
+        self.file_rules = file_rules
+        self.content_rules = content_rules
+        self.postmatch_rules = postmatch_rules
+
+        self.content_rules_by_name = {
+            r.rule_name: r for r in self.content_rules
+        }
+
     def evaluate_file_rule(self, rule, full_path, name, ext, size):
         match = None
 
@@ -40,8 +46,8 @@ class RuleEvaluator:
             relay_targets=rule.relay_targets if rule.match_action == MatchAction.RELAY else None,
         )
 
-    def should_discard(self, rules, unc_path, name) -> bool:
-        for rule in rules:
+    def should_discard(self, unc_path, name) -> bool:
+        for rule in self.postmatch_rules:
             if rule.match_action != MatchAction.DISCARD:
                 continue
 

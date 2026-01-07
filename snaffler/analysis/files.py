@@ -23,15 +23,7 @@ class FileScanner:
                  rule_evaluator: RuleEvaluator):
         self.cfg = cfg
         self.file_accessor = file_accessor
-        self.rules_evaluator = rule_evaluator
-
-        self.file_rules = cfg.rules.file
-        self.content_rules = cfg.rules.content
-        self.postmatch_rules = cfg.rules.postmatch
-
-        self.content_rules_by_name = {
-            r.rule_name: r for r in self.content_rules
-        }
+        self.rule_evaluator = rule_evaluator
 
         self.cert_checker = CertificateChecker(
             custom_passwords=cfg.scanning.cert_passwords
@@ -107,8 +99,8 @@ class FileScanner:
             relay_targets = []
             best_result = None
 
-            for rule in self.file_rules:
-                decision = self.rules_evaluator.evaluate_file_rule(
+            for rule in self.rule_evaluator.file_rules:
+                decision = self.rule_evaluator.evaluate_file_rule(
                     rule,
                     unc_path,
                     file_name,
@@ -141,7 +133,7 @@ class FileScanner:
                 if action != MatchAction.SNAFFLE:
                     continue
 
-                if self.rules_evaluator.should_discard(self.postmatch_rules, unc_path, file_name):
+                if self.rule_evaluator.should_discard(unc_path, file_name):
                     return None
 
                 if not self.file_accessor.can_read(server, share, smb_path):
@@ -199,9 +191,10 @@ class FileScanner:
             text = data.decode("latin-1", errors="ignore")
 
         rules = (
-            [self.content_rules_by_name[n] for n in relay_rule_names if n in self.content_rules_by_name]
+            [self.rule_evaluator.content_rules_by_name[n] for n in relay_rule_names if
+             n in self.rule_evaluator.content_rules_by_name]
             if relay_rule_names
-            else self.content_rules
+            else self.rule_evaluator.content_rules
         )
 
         for rule in rules:
@@ -212,7 +205,7 @@ class FileScanner:
             if not match:
                 continue
 
-            if self.rules_evaluator.should_discard(self.postmatch_rules, unc_path, Path(unc_path).name):
+            if self.rule_evaluator.should_discard(unc_path, Path(unc_path).name):
                 continue
 
             start = max(0, match.start() - self.cfg.scanning.match_context_bytes)
