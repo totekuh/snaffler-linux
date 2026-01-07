@@ -1,9 +1,10 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
+
 from snaffler.config.configuration import SnafflerConfiguration
-from snaffler.discovery.tree import TreeWalker
 from snaffler.discovery.files import FileScanner
+from snaffler.discovery.tree import TreeWalker
 
 logger = logging.getLogger("snaffler")
 

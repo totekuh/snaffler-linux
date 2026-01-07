@@ -7,22 +7,25 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple
 
+from snaffler.config.configuration import SnafflerConfiguration
+from snaffler.discovery.shares import ShareFinder
+
 logger = logging.getLogger("snaffler")
 
 
 class SharePipeline:
-    def __init__(self, share_finder, max_workers: int, shares_only: bool = False):
-        """
-        Initialize SharePipeline
 
-        Args:
-            share_finder: ShareFinder instance
-            max_workers: Number of concurrent share enumeration threads
-            shares_only: If True, only enumerate shares (no file scanning)
-        """
-        self.share_finder = share_finder
-        self.max_workers = max_workers
-        self.shares_only = shares_only
+    def __init__(self, cfg: SnafflerConfiguration):
+        self.cfg = cfg
+
+        self.max_workers = self.cfg.advanced.share_threads
+        self.shares_only = self.cfg.targets.shares_only
+
+        # Internal worker
+        self.share_finder = ShareFinder(cfg)
+
+        if self.max_workers < 1:
+            raise ValueError("Invalid share_threads configuration")
 
     def run(self, computers: List[str]) -> List[str]:
         """

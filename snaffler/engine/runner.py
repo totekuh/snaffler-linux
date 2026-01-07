@@ -7,9 +7,6 @@ from datetime import datetime
 from snaffler.classifiers.default_rules import get_default_rules
 from snaffler.classifiers.rules import load_rules_from_directory, EnumerationScope
 from snaffler.config.configuration import SnafflerConfiguration
-from snaffler.discovery.files import FileScanner
-from snaffler.discovery.shares import ShareFinder
-from snaffler.discovery.tree import TreeWalker
 from snaffler.engine.domain_pipeline import DomainPipeline
 from snaffler.engine.file_pipeline import FilePipeline
 from snaffler.engine.share_pipeline import SharePipeline
@@ -22,21 +19,11 @@ class SnafflerRunner:
         self.cfg = cfg
         self.start_time = None
 
-        adv = cfg.advanced
-        targets = cfg.targets
-
         # rules must be loaded before any pipeline or scanner is instantiated
         self._load_rules()
 
-        self.share_finder = ShareFinder(cfg=self.cfg)
-
         # ---------- Pipelines ----------
-        self.share_pipeline = SharePipeline(
-            share_finder=self.share_finder,
-            max_workers=adv.share_threads,
-            shares_only=targets.shares_only,
-        )
-
+        self.share_pipeline = SharePipeline(cfg=cfg)
         self.file_pipeline = FilePipeline(cfg=cfg)
 
     def _load_rules(self):
