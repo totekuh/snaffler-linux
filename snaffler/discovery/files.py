@@ -13,6 +13,7 @@ from snaffler.analysis.certificates import CertificateChecker
 from snaffler.classifiers.rules import ClassifierRule, MatchLocation, MatchAction, Triage
 from snaffler.transport.smb import SMBTransport
 from snaffler.utils.logger import log_file_result
+from snaffler.utils.path_utils import parse_unc_path, get_modified_time
 
 logger = logging.getLogger("snaffler")
 
@@ -143,13 +144,13 @@ class FileScanner:
 
     def scan_file(self, unc_path: str, file_info) -> Optional[FileResult]:
         try:
-            parsed = self._parse_unc_path(unc_path)
+            parsed = parse_unc_path(unc_path)
             if not parsed:
                 return None
 
             server, share, smb_path, file_name, file_ext = parsed
             size = getattr(file_info, "get_filesize", lambda: 0)()
-            modified = self._get_modified_time(file_info)
+            modified = get_modified_time(file_info)
 
             relay_targets = []
             best_result = None
@@ -209,43 +210,13 @@ class FileScanner:
                     size,
                     modified,
                     relay_targets or None,
-                    )
+                )
                 return content_result or best_result
 
             return best_result
 
         except Exception as e:
             logger.debug(f"Error scanning file {unc_path}: {e}")
-            return None
-
-    # -------------------------------------------------------------- Helpers
-
-    def _parse_unc_path(self, unc_path: str):
-        parts = [p for p in unc_path.replace("\\", "/").split("/") if p]
-        if len(parts) < 3:
-            return None
-
-        server, share = parts[0], parts[1]
-        smb_path = "\\" + "\\".join(parts[2:])
-
-        file_name = Path(unc_path).name
-        ext = Path(unc_path).suffix
-
-        if ext.lower() == ".bak":
-            stripped = file_name[:-4]
-            alt = Path(stripped).suffix
-            if alt:
-                ext = alt
-
-        if not ext:
-            return None
-
-        return server, share, smb_path, file_name, ext
-
-    def _get_modified_time(self, file_info) -> Optional[datetime]:
-        try:
-            return datetime.fromtimestamp(file_info.get_mtime_epoch())
-        except Exception:
             return None
 
     def _match_file_rule(
