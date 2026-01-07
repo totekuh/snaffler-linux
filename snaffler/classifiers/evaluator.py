@@ -42,7 +42,7 @@ class RuleEvaluator:
 
         return RuleDecision(
             action=rule.match_action,
-            match=match,
+            match=match.group(0) if hasattr(match, "group") else match,
             relay_targets=rule.relay_targets if rule.match_action == MatchAction.RELAY else None,
         )
 

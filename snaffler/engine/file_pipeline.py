@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
 
 from snaffler.accessors.smb_file_accessor import SMBFileAccessor
-from snaffler.analysis.files import FileScanner
+from snaffler.analysis.file_scanner import FileScanner
 from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.discovery.tree import TreeWalker

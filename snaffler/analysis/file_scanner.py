@@ -91,6 +91,7 @@ class FileScanner:
             parsed = parse_unc_path(unc_path)
             if not parsed:
                 return None
+            logger.debug(f"Scanning {unc_path}")
 
             server, share, smb_path, file_name, file_ext = parsed
             size = getattr(file_info, "get_filesize", lambda: 0)()
