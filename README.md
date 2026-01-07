@@ -1,8 +1,8 @@
 # snaffler-ng
 
-Linux port of [Snaffler](https://github.com/SnaffCon/Snaffler) using Impacket.
+Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 
-Snaffler Linux is a post-exploitation / red teaming tool designed to **discover readable SMB shares**, **walk directory trees**, and **identify credentials and sensitive data** on Windows systems from Linux.
+**snaffler-ng** is a post-exploitation / red teaming tool designed to **discover readable SMB shares**, **walk directory trees**, and **identify credentials and sensitive data** on Windows systems.
 
 ## Features
 
