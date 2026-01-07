@@ -41,7 +41,7 @@ class TargetingConfig:
 
 @dataclass
 class ScanningConfig:
-    interest_level: int = 0
+    min_interest: int = 0
     max_size_to_grep: int = 2_097_152  # 2 MB
     max_size_to_snaffle: int = 10_485_760  # 10 MB
     snaffle: bool = False
@@ -106,7 +106,7 @@ class SnafflerConfiguration:
 
     def validate(self):
         if self.targets.unc_targets and self.targets.computer_targets:
-            raise ValueError("Cannot mix path targets and computer targets")
+            raise ValueError("Cannot mix UNC targets and computer targets")
 
         if self.rules.rule_dir:
             p = Path(self.rules.rule_dir)

@@ -51,12 +51,17 @@ class MatchAction(Enum):
 
 
 class Triage(Enum):
-    """Severity/interest level"""
-    BLACK = "Black"  # Critical - credentials, keys, etc.
-    RED = "Red"  # High - config files with secrets, etc.
-    YELLOW = "Yellow"  # Medium - potentially interesting
-    GREEN = "Green"  # Low - mildly interesting
-    GRAY = "Gray"  # Informational
+    BLACK = ("Black", 3)        # Critical - credentials, keys, etc.
+    RED = ("Red", 2)            # High - config files with secrets, etc.
+    YELLOW = ("Yellow", 1)      # Medium - potentially interesting
+    GREEN = ("Green", 0)        # Low - mildly interesting
+
+    def __init__(self, label: str, level: int):
+        self.label = label
+        self.level = level
+
+    def below(self, min_level: int) -> bool:
+        return self.level < min_level
 
 
 @dataclass

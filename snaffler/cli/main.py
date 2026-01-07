@@ -83,7 +83,7 @@ def run(
             rich_help_panel="Authentication",
         ),
 
-        unc_path: Optional[List[str]] = typer.Option(
+        unc_targets: Optional[List[str]] = typer.Option(
             None, "--unc",
             help="Direct UNC path(s) to scan (disables computer/share discovery)",
             rich_help_panel="Targeting",
@@ -200,7 +200,7 @@ def run(
     cfg.auth.smb_timeout = smb_timeout
 
     # ---------- TARGETING ----------
-    cfg.targets.unc_targets = unc_path or []
+    cfg.targets.unc_targets = unc_targets or []
     cfg.targets.shares_only = shares_only
 
     if computer and computer_file:
@@ -225,7 +225,7 @@ def run(
             "--unc, --computer/--computer-file, or --domain"
         )
     # ---------- SCANNING ----------
-    cfg.scanning.interest_level = min_interest
+    cfg.scanning.min_interest = min_interest
     cfg.scanning.max_size_to_grep = max_grep_size
     cfg.scanning.max_size_to_snaffle = max_snaffle_size
     cfg.scanning.match_context_bytes = context
