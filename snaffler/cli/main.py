@@ -68,7 +68,7 @@ def run(
         ),
         domain: Optional[str] = typer.Option(
             None, "-d", "--domain",
-            help="Target Active Directory domain (e.g. CORP.LOCAL)",
+            help="Target Active Directory domain / Kerberos realm (e.g. CORP.LOCAL)",
             rich_help_panel="Authentication",
         ),
         dc_ip: Optional[str] = typer.Option(
@@ -83,6 +83,20 @@ def run(
             rich_help_panel="Authentication",
         ),
 
+        kerberos: bool = typer.Option(
+            False, "-k", "--kerberos",
+            help=(
+                    "Use Kerberos authentication. "
+                    "Requires --domain and hostnames/FQDNs as targets."
+            ),
+            rich_help_panel="Authentication",
+        ),
+        use_kcache: bool = typer.Option(
+            False, "--use-kcache",
+            help="Use Kerberos credentials from ccache (KRB5CCNAME)",
+            rich_help_panel="Authentication",
+        ),
+
         unc_targets: Optional[List[str]] = typer.Option(
             None, "--unc",
             help="Direct UNC path(s) to scan (disables computer/share discovery)",
@@ -90,7 +104,7 @@ def run(
         ),
         computer: Optional[List[str]] = typer.Option(
             None, "--computer",
-            help="Target computer(s). Can be used multiple times.",
+            help="Target computer(s) by hostname or FQDN (note that Kerberos requires names, not IPs)",
             rich_help_panel="Targeting",
         ),
 
@@ -198,6 +212,8 @@ def run(
     cfg.auth.domain = domain
     cfg.auth.dc_ip = dc_ip
     cfg.auth.smb_timeout = smb_timeout
+    cfg.auth.kerberos = kerberos
+    cfg.auth.use_kcache = use_kcache
 
     # ---------- TARGETING ----------
     cfg.targets.unc_targets = unc_targets or []

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Optional, Any
 
 import toml
+import typer
 
 
 # ---------------- AUTH ----------------
@@ -20,6 +21,9 @@ class AuthConfig:
     dc_ip: Optional[str] = None
     smb_timeout: int = 5
 
+    # Kerberos
+    kerberos: bool = False
+    use_kcache: bool = False
 
 # ---------------- TARGETING ----------------
 
@@ -86,7 +90,6 @@ class RulesConfig:
 
 
 # ---------------- ROOT CONFIG ----------------
-
 @dataclass
 class SnafflerConfiguration:
     auth: AuthConfig = field(default_factory=AuthConfig)
@@ -103,7 +106,6 @@ class SnafflerConfiguration:
     contents_classifiers: List[Any] = field(default_factory=list)
 
     # ---------- validation ----------
-
     def validate(self):
         if self.targets.unc_targets and self.targets.computer_targets:
             raise ValueError("Cannot mix UNC targets and computer targets")
@@ -114,6 +116,30 @@ class SnafflerConfiguration:
                 raise ValueError(f"rule_dir does not exist: {p}")
             if not p.is_dir():
                 raise ValueError(f"rule_dir is not a directory: {p}")
+
+        # ---------- AUTH VALIDATION ----------
+        if self.auth.kerberos:
+            if self.auth.password or self.auth.nthash:
+                raise typer.BadParameter(
+                    "Kerberos cannot be used with password or NT hash authentication"
+                )
+            if not self.auth.domain:
+                raise typer.BadParameter(
+                    "Kerberos authentication requires a domain"
+                )
+
+            if self.auth.use_kcache and self.auth.username:
+                raise typer.BadParameter(
+                    "Cannot specify username when using Kerberos ccache"
+                )
+
+            if self.auth.use_kcache:
+                import os
+                if "KRB5CCNAME" not in os.environ:
+                    raise typer.BadParameter(
+                        "KRB5CCNAME not set but Kerberos ccache was requested"
+                    )
+
 
     # ---------- TOML ----------
 

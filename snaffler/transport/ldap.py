@@ -4,49 +4,48 @@ from snaffler.config.configuration import SnafflerConfiguration
 
 
 class LDAPTransport:
-    """
-    LDAP transport wrapper for Active Directory
-
-    Responsibilities:
-    - Establish LDAP connection
-    - Handle NTLM auth
-    - Auto-discover DC if needed
-    """
-
     def __init__(self, cfg: SnafflerConfiguration):
         self.cfg = cfg
         self.auth = cfg.auth
 
-        self.username = self.auth.username or ""
-        self.password = self.auth.password or ""
-        self.nthash = self.auth.nthash or ""
-        self.domain = self.auth.domain
-        self.dc_ip = self.auth.dc_ip
-
     def connect(self) -> LDAPConnection:
-        if not self.domain:
+        if not self.auth.domain:
             raise ValueError("LDAP connection requires a domain")
 
-        target = self.dc_ip or self.domain
+        target = self.auth.dc_ip or self.auth.domain
 
         ldap = LDAPConnection(
             f"ldap://{target}",
-            self.domain,
+            self.auth.domain,
         )
 
-        if self.nthash:
+        # ---------------- Kerberos ----------------
+        if self.auth.kerberos:
+            ldap.kerberosLogin(
+                user=self.auth.username or "",
+                password=self.auth.password or "",
+                domain=self.auth.domain,
+                lmhash="",
+                nthash=self.auth.nthash or "",
+                kdcHost=self.auth.dc_ip,
+                useCache=self.auth.use_kcache,
+            )
+            return ldap
+
+        # ---------------- NTLM ----------------
+        if self.auth.nthash:
             ldap.login(
-                self.username,
+                self.auth.username,
                 "",
-                self.domain,
+                self.auth.domain,
                 "",
-                self.nthash,
+                self.auth.nthash,
             )
         else:
             ldap.login(
-                self.username,
-                self.password,
-                self.domain,
+                self.auth.username,
+                self.auth.password or "",
+                self.auth.domain,
             )
 
         return ldap

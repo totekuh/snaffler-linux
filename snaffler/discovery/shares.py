@@ -46,8 +46,13 @@ class ShareFinder:
         self.smb_transport = SMBTransport(cfg)
         self.share_classifiers = cfg.rules.share
 
-        if not self.cfg.auth.username and not self.cfg.auth.password:
-            logger.warning("No creds provided - continuing with NULL session")
+        if (
+                not self.cfg.auth.username
+                and not self.cfg.auth.password
+                and not self.cfg.auth.nthash
+                and not self.cfg.auth.kerberos
+        ):
+            logger.warning("No credentials provided (NTLM or Kerberos) – continuing with NULL session")
 
         self._thread_local = threading.local()
 
