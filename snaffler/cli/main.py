@@ -141,12 +141,12 @@ def run(
         log_type: str = typer.Option(
             DEFAULT_LOG_TYPE,
             "-t", "--log-type",
-            help="Log format: plain | json",
+            help="Log format: plain | json | tsv",
             rich_help_panel="Output",
         ),
         no_banner: bool = typer.Option(
             False,
-            "--no-banner",
+            "-q", "--no-banner",
             help="Disable startup banner",
             rich_help_panel="Output",
         ),

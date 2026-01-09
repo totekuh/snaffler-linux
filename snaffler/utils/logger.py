@@ -86,6 +86,40 @@ class SnafflerJSONFormatter(logging.Formatter):
 
         return json.dumps(data)
 
+class SnafflerTSVFormatter(logging.Formatter):
+    FIELDS = (
+        "timestamp",
+        "triage",
+        "rule_name",
+        "file_path",
+        "size",
+        "mtime",
+        "finding_id",
+        "match_context",
+    )
+
+    def format(self, record: logging.LogRecord) -> str:
+        values = {
+            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+        }
+
+        row = []
+        for field in self.FIELDS:
+            val = values.get(field, getattr(record, field, ""))
+            if val is None:
+                val = ""
+
+            # normalize FIRST
+            val = str(val).replace("\r\n", "\n").replace("\n\r", "\n")
+
+            # then escape
+            val = val.replace("\t", " ").replace("\n", "\\n")
+
+            row.append(val)
+
+        return "\t".join(row)
+
+
 
 def setup_logging(
         log_level: str = "info",
@@ -126,6 +160,10 @@ def setup_logging(
 
         if log_type == "json":
             fh.setFormatter(SnafflerJSONFormatter())
+        elif log_type == "tsv":
+            fh.setLevel(logging.DEBUG)
+            fh.addFilter(DataOnlyFilter())
+            fh.setFormatter(SnafflerTSVFormatter())
         else:
             fh.setFormatter(SnafflerFormatter(logger))
 
