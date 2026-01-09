@@ -87,9 +87,7 @@ snaffler run \
 snaffler-ng supports three output formats, each with a distinct purpose:
 
 - `Plain` (default, human-readable)
-
 - `JSON` (structured, SIEM-friendly)
-
 - `TSV` (flat, ingestion-friendly)
 
 ## Resume Support
