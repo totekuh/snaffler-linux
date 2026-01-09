@@ -5,8 +5,8 @@ from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
-from snaffler.transport.smb import SMBTransport
 from snaffler.accessors.file_accessor import FileAccessor
+from snaffler.transport.smb import SMBTransport
 
 
 class SMBFileAccessor(FileAccessor):

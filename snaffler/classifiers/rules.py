@@ -51,10 +51,10 @@ class MatchAction(Enum):
 
 
 class Triage(Enum):
-    BLACK = ("Black", 3)        # Critical - credentials, keys, etc.
-    RED = ("Red", 2)            # High - config files with secrets, etc.
-    YELLOW = ("Yellow", 1)      # Medium - potentially interesting
-    GREEN = ("Green", 0)        # Low - mildly interesting
+    BLACK = ("Black", 3)  # Critical - credentials, keys, etc.
+    RED = ("Red", 2)  # High - config files with secrets, etc.
+    YELLOW = ("Yellow", 1)  # Medium - potentially interesting
+    GREEN = ("Green", 0)  # Low - mildly interesting
 
     def __init__(self, label: str, level: int):
         self.label = label
@@ -65,6 +65,7 @@ class Triage(Enum):
 
     def more_severe_than(self, other: "Triage") -> bool:
         return self.level > other.level
+
 
 @dataclass
 class ClassifierRule:

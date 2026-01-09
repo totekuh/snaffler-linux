@@ -29,7 +29,6 @@ class DomainPipeline:
 
         self.ad = ADDiscovery(cfg)
 
-
     def run(self) -> List[str]:
         """
         Execute domain discovery

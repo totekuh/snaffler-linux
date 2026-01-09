@@ -1,4 +1,5 @@
 from impacket.smbconnection import SMBConnection
+
 from snaffler.config.configuration import SnafflerConfiguration
 
 

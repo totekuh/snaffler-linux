@@ -2,10 +2,10 @@
 Logging utilities for Snaffler Linux
 """
 
+import hashlib
 import json
 import logging
 import sys
-import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional

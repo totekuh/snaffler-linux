@@ -5,11 +5,11 @@ Detects certificates with private keys and extracts metadata
 
 import logging
 from typing import List, Optional
+
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,7 @@
 # snaffler/classifiers/loader.py
 
 import logging
+
 from snaffler.classifiers.default_rules import get_default_rules
 from snaffler.classifiers.rules import load_rules_from_directory, EnumerationScope
 from snaffler.config.configuration import SnafflerConfiguration

@@ -13,8 +13,8 @@ from snaffler.classifiers.rules import (
     MatchLocation,
 )
 from snaffler.config.configuration import SnafflerConfiguration
-from snaffler.transport.smb import SMBTransport
 from snaffler.resume.scan_state import ScanState
+from snaffler.transport.smb import SMBTransport
 
 logger = logging.getLogger("snaffler")
 
@@ -64,7 +64,8 @@ class TreeWalker:
             finally:
                 smb.logoff()
 
-            logger.info(f"Found {len(files)} files in {unc_path}")
+            if files:
+                logger.info(f"Found {len(files)} files in {unc_path}")
 
         except Exception as e:
             logger.debug(f"Error walking tree {unc_path}: {e}")

@@ -78,7 +78,6 @@ class ShareFinder:
         cache[computer] = smb
         return smb
 
-
     def enumerate_shares_rpc(self, target: str) -> List[ShareInfo]:
         shares = []
 
@@ -144,7 +143,6 @@ class ShareFinder:
         except Exception as e:
             logger.debug(f"Error enumerating shares on {target} via SMB: {e}")
         return shares
-
 
     def _classify_share(self, unc_path: str) -> bool:
         """
@@ -254,4 +252,3 @@ class ShareFinder:
         except Exception as e:
             logger.debug(f"Error testing share {computer}\\{share_name}: {e}")
             return False
-
