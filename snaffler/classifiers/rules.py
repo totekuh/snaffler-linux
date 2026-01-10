@@ -79,7 +79,7 @@ class ClassifierRule:
     wordlist: List[str] = field(default_factory=list)
     triage: Triage = Triage.GREEN
     description: str = ""
-    relay_targets: List[str] = field(default_factory=list)
+    content_rule_names: List[str] = field(default_factory=list)
     match_length: int = 0
     match_md5: Optional[str] = None
     regexes: List[re.Pattern] = field(default_factory=list)
@@ -144,7 +144,7 @@ class ClassifierRule:
             wordlist=toml_data.get('WordList', []),
             triage=Triage(toml_data.get('Triage', 'Green')),
             description=toml_data.get('Description', ''),
-            relay_targets=toml_data.get('RelayTargets', []),
+            content_rule_names=toml_data.get('RelayTargets', []),
             match_length=toml_data.get('MatchLength', 0),
             match_md5=toml_data.get('MatchMD5'),
         )

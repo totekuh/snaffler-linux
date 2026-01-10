@@ -43,11 +43,16 @@ class SMBFileAccessor(FileAccessor):
         except Exception:
             return False
 
-    def read(self, server: str, share: str, path: str) -> Optional[bytes]:
+    def read(self, server: str, share: str, path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
         try:
             smb = self._get_smb(server)
             buf = BytesIO()
-            smb.getFile(share, path, buf.write)
+
+            if max_bytes is None:
+                smb.getFile(share, path, buf.write)
+            else:
+                smb.getFile(share, path, buf.write, 0, max_bytes)
+
             return buf.getvalue()
         except Exception:
             return None
