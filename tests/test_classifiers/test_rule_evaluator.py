@@ -1,7 +1,7 @@
 import re
 from unittest.mock import MagicMock
 
-from snaffler.analysis.file_context import FileContext
+from snaffler.analysis.model.file_context import FileContext
 from snaffler.classifiers.evaluator import RuleEvaluator, RuleDecision
 from snaffler.classifiers.rules import MatchLocation, MatchAction
 

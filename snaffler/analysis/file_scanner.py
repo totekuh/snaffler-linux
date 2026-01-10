@@ -6,8 +6,8 @@ from typing import Optional, List
 
 from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.analysis.certificates import CertificateChecker
-from snaffler.analysis.file_context import FileContext
-from snaffler.analysis.file_result import FileResult
+from snaffler.analysis.model.file_context import FileContext
+from snaffler.analysis.model.file_result import FileResult
 from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.classifiers.rules import MatchLocation, MatchAction, Triage
 from snaffler.utils.logger import log_file_result

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from snaffler.analysis.file_result import FileResult
+from snaffler.analysis.model.file_result import FileResult
 from snaffler.classifiers.rules import Triage
 
 
