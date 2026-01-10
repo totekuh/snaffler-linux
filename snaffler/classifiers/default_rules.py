@@ -61,7 +61,7 @@ def get_share_rules() -> List[ClassifierRule]:
             match_action=MatchAction.DISCARD,
             match_location=MatchLocation.SHARE_NAME,
             wordlist_type=MatchListType.ENDS_WITH,
-            wordlist=['\\print$', '\\ipc$'],
+            wordlist=['/PRINT', '/IPC'],
             triage=Triage.GREEN,
             description="Skips scanning inside shares ending with these words."
         ),
@@ -72,7 +72,7 @@ def get_share_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.SHARE_NAME,
             wordlist_type=MatchListType.ENDS_WITH,
-            wordlist=['\\C$', '\\ADMIN$'],
+            wordlist=['/C', '/ADMIN'],
             triage=Triage.BLACK,
             description="Notifies the user that they can read C$ or ADMIN$."
         ),
@@ -83,7 +83,7 @@ def get_share_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.SHARE_NAME,
             wordlist_type=MatchListType.ENDS_WITH,
-            wordlist=['\\SCCMContentLib$'],
+            wordlist=['/SCCMContentLib'],
             triage=Triage.YELLOW,
             description="Notifies the user that they can read SCCMContentLib$ so they can take CMLoot for a spin."
         ),
@@ -103,7 +103,12 @@ def get_discard_directory_rules() -> List[ClassifierRule]:
             match_action=MatchAction.DISCARD,
             match_location=MatchLocation.FILE_PATH,
             wordlist_type=MatchListType.CONTAINS,
-            wordlist=['\\puppet\\share\\doc', '\\lib\\ruby', '\\lib\\site-packages', '\\usr\\share\\doc', 'node_modules', 'vendor\\bundle', 'vendor\\cache', '\\doc\\openssl', 'Anaconda3\\Lib\\test', 'WindowsPowerShell\\Modules', 'Python\\d*\\Lib', 'Reference Assemblies\\Microsoft\\Framework\\.NETFramework', 'dotnet\\sdk', 'dotnet\\shared', 'Modules\\Microsoft.PowerShell.Security', 'Windows\\assembly'],
+            wordlist=['/puppet/share/doc', '/lib/ruby', '/lib/site-packages', '/usr/share/doc',
+                      'node_modules', 'vendor/bundle', 'vendor/cache', '/doc/openssl',
+                      'Anaconda3/Lib/test', 'WindowsPowerShell/Modules', 'Python/d*/Lib',
+                      'Reference Assemblies/Microsoft/Framework/.NETFramework', 'dotnet/sdk',
+                      'dotnet/shared', 'Modules/Microsoft.PowerShell.Security',
+                      'Windows/assembly'],
             triage=Triage.GREEN,
             description="File paths that will be skipped entirely."
         ),
@@ -114,7 +119,13 @@ def get_discard_directory_rules() -> List[ClassifierRule]:
             match_action=MatchAction.DISCARD,
             match_location=MatchLocation.FILE_PATH,
             wordlist_type=MatchListType.CONTAINS,
-            wordlist=['\\winsxs', '\\syswow64', '\\system32', '\\systemapps', '\\windows\\servicing', '\\servicing', '\\Microsoft.NET\\Framework', '\\windows\\immersivecontrolpanel', '\\windows\\diagnostics', '\\windows\\debug', '\\locale', '\\chocolatey\\helpers', '\\sources\\sxs', '\\localization', '\\AppData\\Local\\Microsoft', '\\AppData\\Roaming\\Microsoft\\Windows', '\\AppData\\Roaming\\Microsoft\\Teams', '\\wsuscontent', '\\Application Data\\Microsoft\\CLR Security Config', '\\servicing\\LCU'],
+            wordlist=['/winsxs', '/syswow64', '/system32', '/systemapps', '/windows/servicing',
+                      '/servicing', '/Microsoft.NET/Framework', '/windows/immersivecontrolpanel',
+                      '/windows/diagnostics', '/windows/debug', '/locale', '/chocolatey/helpers',
+                      '/sources/sxs', '/localization', '/AppData/Local/Microsoft',
+                      '/AppData/Roaming/Microsoft/Windows', '/AppData/Roaming/Microsoft/Teams',
+                      '/wsuscontent', '/Application Data/Microsoft/CLR Security Config',
+                      '/servicing/LCU'],
             triage=Triage.GREEN,
             description="File paths that will be skipped entirely."
         ),
@@ -134,7 +145,9 @@ def get_discard_file_rules() -> List[ClassifierRule]:
             match_action=MatchAction.DISCARD,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.bmp', '\\.eps', '\\.gif', '\\.ico', '\\.jfi', '\\.jfif', '\\.jif', '\\.jpe', '\\.jpeg', '\\.jpg', '\\.png', '\\.psd', '\\.svg', '\\.tif', '\\.tiff', '\\.webp', '\\.xcf', '\\.ttf', '\\.otf', '\\.lock', '\\.css', '\\.less', '\\.admx', '\\.adml', '\\.xsd', '\\.nse', '\\.xsl'],
+            wordlist=['.bmp', '.eps', '.gif', '.ico', '.jfi', '.jfif', '.jif', '.jpe', '.jpeg', '.jpg',
+                      '.png', '.psd', '.svg', '.tif', '.tiff', '.webp', '.xcf', '.ttf', '.otf', '.lock',
+                      '.css', '.less', '.admx', '.adml', '.xsd', '.nse', '.xsl'],
             triage=Triage.GREEN,
             description="Skip any further scanning for files with these extensions."
         ),
@@ -145,7 +158,7 @@ def get_discard_file_rules() -> List[ClassifierRule]:
             match_action=MatchAction.DISCARD,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['jmxremote\\.password\\.template', 'sceregvl\\.inf'],
+            wordlist=['jmxremote.password.template', 'sceregvl.inf'],
             triage=Triage.GREEN,
             description="Skip any further scanning for files with these names."
         ),
@@ -176,7 +189,7 @@ def get_ssh_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_PATH,
             wordlist_type=MatchListType.CONTAINS,
-            wordlist=['\\\\.ssh\\\\'],
+            wordlist=['/.ssh/'],
             triage=Triage.BLACK,
             description="Files with a path containing these strings are very very interesting."
         ),
@@ -187,7 +200,7 @@ def get_ssh_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.ppk'],
+            wordlist=['.ppk'],
             triage=Triage.BLACK,
             description="SSHKeys"
         ),
@@ -218,7 +231,11 @@ def get_password_file_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['passwords\\.txt', 'pass\\.txt', 'accounts\\.txt', 'passwords\\.doc', 'pass\\.doc', 'accounts\\.doc', 'passwords\\.xls', 'pass\\.xls', 'accounts\\.xls', 'passwords\\.docx', 'pass\\.docx', 'accounts\\.docx', 'passwords\\.xlsx', 'pass\\.xlsx', 'accounts\\.xlsx', 'secrets\\.txt', 'secrets\\.doc', 'secrets\\.xls', 'secrets\\.docx', 'BitlockerLAPSPasswords\\.csv', 'secrets\\.xlsx'],
+            wordlist=['passwords.txt', 'pass.txt', 'accounts.txt', 'passwords.doc', 'pass.doc',
+                      'accounts.doc', 'passwords.xls', 'pass.xls', 'accounts.xls', 'passwords.docx',
+                      'pass.docx', 'accounts.docx', 'passwords.xlsx', 'pass.xlsx', 'accounts.xlsx',
+                      'secrets.txt', 'secrets.doc', 'secrets.xls', 'secrets.docx',
+                      'BitlockerLAPSPasswords.csv', 'secrets.xlsx'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
         ),
@@ -249,7 +266,7 @@ def get_hash_file_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['shadow', 'pwd\\.db', 'passwd'],
+            wordlist=['shadow', 'pwd.db', 'passwd'],
             triage=Triage.BLACK,
             description="Files with these exact names are very very interesting."
         ),
@@ -269,7 +286,7 @@ def get_key_and_cert_rules() -> List[ClassifierRule]:
             match_action=MatchAction.CHECK_FOR_KEYS,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.pem', '\\.der', '\\.pfx', '\\.pk12', '\\.p12', '\\.pkcs12'],
+            wordlist=['.pem', '.der', '.pfx', '.pk12', '.p12', '.pkcs12'],
             triage=Triage.RED,
             description="Files with these extensions will be parsed as x509 certificates to see if they have private keys."
         ),
@@ -289,7 +306,7 @@ def get_database_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.mdf', '\\.sdf', '\\.sqldump', '\\.bak'],
+            wordlist=['.mdf', '.sdf', '.sqldump', '.bak'],
             triage=Triage.YELLOW,
             description="Files with these extensions are a little interesting."
         ),
@@ -300,7 +317,9 @@ def get_database_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['SqlStudio\\.bin', '\\.mysql_history', '\\.psql_history', '\\.pgpass', '\\.dbeaver-data-sources\\.xml', 'credentials-config\\.json', 'dbvis\\.xml', 'robomongo\\.json'],
+            wordlist=['SqlStudio.bin', '.mysql_history', '.psql_history', '.pgpass',
+                      '.dbeaver-data-sources.xml', 'credentials-config.json', 'dbvis.xml',
+                      'robomongo.json'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
         ),
@@ -320,7 +339,7 @@ def get_config_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.htpasswd', 'accounts\\.v4'],
+            wordlist=['.htpasswd', 'accounts.v4'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
         ),
@@ -331,7 +350,7 @@ def get_config_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['LocalSettings\\.php'],
+            wordlist=['LocalSettings.php'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
         ),
@@ -342,7 +361,7 @@ def get_config_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['database\\.yml', '\\.secret_token\\.rb', 'knife\\.rb', 'carrierwave\\.rb', 'omniauth\\.rb'],
+            wordlist=['database.yml', '.secret_token.rb', 'knife.rb', 'carrierwave.rb', 'omniauth.rb'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
         ),
@@ -353,7 +372,7 @@ def get_config_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['jenkins\\.plugins\\.publish_over_ssh\\.BapSshPublisherPlugin\\.xml', 'credentials\\.xml'],
+            wordlist=['jenkins.plugins.publish_over_ssh.BapSshPublisherPlugin.xml', 'credentials.xml'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
         ),
@@ -364,7 +383,7 @@ def get_config_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.git-credentials'],
+            wordlist=['.git-credentials'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
         ),
@@ -384,7 +403,7 @@ def get_cloud_credential_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.tugboat'],
+            wordlist=['.tugboat'],
             triage=Triage.BLACK,
             description="Files with these exact names are very interesting."
         ),
@@ -395,7 +414,7 @@ def get_cloud_credential_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_PATH,
             wordlist_type=MatchListType.CONTAINS,
-            wordlist=['\\\\.aws\\\\', 'doctl\\\\config.yaml'],
+            wordlist=['/.aws/', 'doctl/config.yaml'],
             triage=Triage.BLACK,
             description="Files with a path containing these strings are very very interesting."
         ),
@@ -415,7 +434,7 @@ def get_password_manager_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.kdbx', '\\.kdb', '\\.psafe3', '\\.kwallet', '\\.keychain', '\\.agilekeychain', '\\.cred'],
+            wordlist=['.kdbx', '.kdb', '.psafe3', '.kwallet', '.keychain', '.agilekeychain', '.cred'],
             triage=Triage.BLACK,
             description="Files with these extensions are very very interesting."
         ),
@@ -435,7 +454,7 @@ def get_remote_access_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.rdg', '\\.rtsz', '\\.rtsx', '\\.ovpn', '\\.tvopt', '\\.sdtid'],
+            wordlist=['.rdg', '.rtsz', '.rtsx', '.ovpn', '.tvopt', '.sdtid'],
             triage=Triage.YELLOW,
             description="Files with these extensions are a little interesting."
         ),
@@ -446,7 +465,7 @@ def get_remote_access_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['mobaxterm\\.ini', 'mobaxterm backup\\.zip', 'confCons.xml'],
+            wordlist=['mobaxterm.ini', 'mobaxterm backup.zip', 'confCons.xml'],
             triage=Triage.BLACK,
             description="Files with these exact names are very very interesting."
         ),
@@ -466,7 +485,8 @@ def get_shell_history_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.bash_history', '\\.zsh_history', '\\.sh_history', 'zhistory', '\\.irb_history', 'ConsoleHost_History\\.txt'],
+            wordlist=['.bash_history', '.zsh_history', '.sh_history', 'zhistory', '.irb_history',
+                      'ConsoleHost_History.txt'],
             triage=Triage.GREEN,
             description="Files with these exact names are very interesting."
         ),
@@ -477,7 +497,8 @@ def get_shell_history_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.netrc', '_netrc', '\\.exports', '\\.functions', '\\.extra', '\\.npmrc', '\\.env', '\\.bashrc', '\\.profile', '\\.zshrc'],
+            wordlist=['.netrc', '_netrc', '.exports', '.functions', '.extra', '.npmrc', '.env', '.bashrc',
+                      '.profile', '.zshrc'],
             triage=Triage.GREEN,
             description="Files with these exact names are very interesting."
         ),
@@ -499,7 +520,7 @@ def get_browser_credential_rules() -> List[ClassifierRule]:
             content_rule_names=["KeepFFRegexRed"],
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['logins\\.json'],
+            wordlist=['logins.json'],
             triage=Triage.GREEN,
             description="Files with these extensions will be searched for Firefox/Thunderbird backups related strings."
         ),
@@ -530,7 +551,7 @@ def get_infrastructure_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.cscfg', '\\.ucs', '\\.tfvars'],
+            wordlist=['.cscfg', '.ucs', '.tfvars'],
             triage=Triage.RED,
             description="Files with these extensions are very very interesting."
         ),
@@ -550,7 +571,7 @@ def get_network_config_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['running-config\\.cfg', 'startup-config\\.cfg', 'running-config', 'startup-config'],
+            wordlist=['running-config.cfg', 'startup-config.cfg', 'running-config', 'startup-config'],
             triage=Triage.BLACK,
             description="Files with these exact names are very very interesting."
         ),
@@ -570,7 +591,10 @@ def get_cyberark_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['Psmapp\\.cred', 'psmgw\\.cred', 'backup\\.key', 'MasterReplicationUser\\.pass', 'RecPrv\\.key', 'ReplicationUser\\.pass', 'Server\\.key', 'VaultEmergency\\.pass', 'VaultUser\\.pass', 'Vault\\.ini', 'PADR\\.ini', 'PARAgent\\.ini', 'CACPMScanner\\.exe\\.config', 'PVConfiguration\\.xml'],
+            wordlist=['Psmapp.cred', 'psmgw.cred', 'backup.key', 'MasterReplicationUser.pass', 'RecPrv.key',
+                      'ReplicationUser.pass', 'Server.key', 'VaultEmergency.pass', 'VaultUser.pass',
+                      'Vault.ini', 'PADR.ini', 'PARAgent.ini', 'CACPMScanner.exe.config',
+                      'PVConfiguration.xml'],
             triage=Triage.BLACK,
             description="Files with these exact names are very very interesting."
         ),
@@ -581,7 +605,7 @@ def get_cyberark_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.cred', '\\.pass'],
+            wordlist=['.cred', '.pass'],
             triage=Triage.RED,
             description="Files with these extensions are QUITE interesting."
         ),
@@ -601,7 +625,7 @@ def get_ftp_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['proftpdpasswd', 'filezilla\\.xml'],
+            wordlist=['proftpdpasswd', 'filezilla.xml'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
         ),
@@ -612,7 +636,7 @@ def get_ftp_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['recentservers\\.xml', 'sftp-config\\.json'],
+            wordlist=['recentservers.xml', 'sftp-config.json'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
         ),
@@ -632,7 +656,7 @@ def get_kerberos_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.keytab', '\\.CCACHE'],
+            wordlist=['.keytab', '.CCACHE'],
             triage=Triage.YELLOW,
             description="Files with these extensions are interesting."
         ),
@@ -683,7 +707,7 @@ def get_memory_dump_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.dmp'],
+            wordlist=['.dmp'],
             triage=Triage.RED,
             description="Files with these extensions are a little interesting."
         ),
@@ -694,7 +718,7 @@ def get_memory_dump_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['MEMORY\\.DMP', 'hiberfil\\.sys', 'lsass\\.dmp', 'lsass\\.exe\\.dmp'],
+            wordlist=['MEMORY.DMP', 'hiberfil.sys', 'lsass.dmp', 'lsass.exe.dmp'],
             triage=Triage.BLACK,
             description="Files with these exact names are very very interesting."
         ),
@@ -714,7 +738,7 @@ def get_pcap_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.pcap', '\\.cap', '\\.pcapng'],
+            wordlist=['.pcap', '.cap', '.pcapng'],
             triage=Triage.YELLOW,
             description="Files with these extensions are a little interesting."
         ),
@@ -765,7 +789,7 @@ def get_sccm_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_PATH,
             wordlist_type=MatchListType.CONTAINS,
-            wordlist=['control\\\\customsettings.ini'],
+            wordlist=['control/customsettings.ini'],
             triage=Triage.RED,
             description="Files with a path containing these strings are very interesting."
         ),
@@ -776,10 +800,15 @@ def get_sccm_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_PATH,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['REMINST\\\\SMSTemp\\\\.*\\.var', 'SMS\\\\data\\\\Variables.dat', 'SMS\\\\data\\\\Policy.xml'],
+            wordlist=[
+                r'/REMINST/SMSTemp/.*\.var',
+                r'/SMS/data/Variables\.dat',
+                r'/SMS/data/Policy\.xml',
+            ],
             triage=Triage.RED,
             description="Files with a path containing these strings are very interesting."
         ),
+
     ]
 
 
@@ -797,7 +826,10 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['Data Source=.+Integrated Security=(SSPI|true)', 'Integrated Security=(SSPI|true);.*Data Source=.+'],
+            wordlist=[
+                r'Data Source=.+Integrated Security=(SSPI|true)',
+                r'Integrated Security=(SSPI|true);.*Data Source=.+'
+            ],
             triage=Triage.YELLOW,
             description="Match SQL connection strings that appear to use integrated security (so no passwords)."
         ),
@@ -808,7 +840,9 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['Data Source=.+(;|)Password=.+(;|)', 'Password=.+(;|)Data Source=.+(;|)'],
+            wordlist=[
+                r'Data Source=.+(;|)Password=.+(;|)',
+                r'Password=.+(;|)Data Source=.+(;|)'],
             triage=Triage.RED,
             description="Match SQL connection strings that appear to have a password."
         ),
@@ -820,7 +854,10 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['validationkey\\s*=\\s*[\\\'\\"][^\\\'\\"]....', 'decryptionkey\\s*=\\s*[\\\'\\"][^\\\'\\"]....'],
+            wordlist=[
+                r'validationkey\s*=\s*[\'"][^\'"]....',
+                r'decryptionkey\s*=\s*[\'"][^\'"]....'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -832,7 +869,14 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['passwo?r?d\\s*=\\s*[\\\'\\"][^\\\'\\"]....', 'schtasks.{1,300}(/rp\\s|/p\\s)', 'net user ', 'psexec .{0,100} -p ', 'net use .{0,300} /user:', 'cmdkey '],
+            wordlist=[
+                r'passwo?r?d\s*=\s*[\'"][^\'"]{4,}',
+                r'schtasks.{1,300}(/rp\s+|/p\s+)',
+                r'\bnet user\b',
+                r'psexec .{0,100} -p\s+',
+                r'net use .{0,300} /user:',
+                r'\bcmdkey\b'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -844,7 +888,10 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['\\.getConnection\\(\\"jdbc\\:', 'passwo?r?d\\s*=\\s*[\\\'\\"][^\\\'\\"]....'],
+            wordlist=[
+                r'\.getConnection\(\"jdbc\:',
+                r'passwo?r?d\s*=\s*[\'"][^\'"]....'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -856,7 +903,10 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['aws[_\\-\\.]?key', '(\\s|\\\'|\\"|\\^|=)(A3T[A-Z0-9]|AKIA|AGPA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z2-7]{12,16}(\\s|\\\'|\\"|$)'],
+            wordlist=[
+                r'aws[_\-\.]?key',
+                r'(\s|\'|"|\^|=)(A3T[A-Z0-9]|AKIA|AGPA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z2-7]{12,16}(\s|\'|"|$)'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -868,7 +918,9 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['connectionstring.{1,200}passw'],
+            wordlist=[
+                r'connectionstring.{1,200}passw'
+            ],
             triage=Triage.YELLOW,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -880,7 +932,9 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['-----BEGIN( RSA| OPENSSH| DSA| EC| PGP)? PRIVATE KEY( BLOCK)?-----'],
+            wordlist=[
+                r'-----BEGIN( RSA| OPENSSH| DSA| EC| PGP)? PRIVATE KEY( BLOCK)?-----'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -892,7 +946,18 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['passw?o?r?d\\s*=\\s*[\\\'\\"][^\\\'\\"]....', 'api[Kk]ey\\s*=\\s*[\\\'\\"][^\\\'\\"]....', 'passw?o?r?d?>\\s*[^\\s<]+\\s*<', 'passw?o?r?d?>.{3,2000}</pass', '[\\s]+-passw?o?r?d?', 'api[kK]ey>\\s*[^\\s<]+\\s*<', '[_\\-\\.]oauth\\s*=\\s*[\\\'\\"][^\\\'\\"]....', 'client_secret\\s*=*\\s*', '<ExtendedMatchKey>ClientAuth', 'GIUserPassword'],
+            wordlist=[
+                r'passw?o?r?d\s*=\s*[\'"][^\'"]....',
+                r'api[Kk]ey\s*=\s*[\'"][^\'"]....',
+                r'passw?o?r?d?>\s*[^\s<]+\s*<',
+                r'passw?o?r?d?>.{3,2000}</pass',
+                r'[\s]+-passw?o?r?d?',
+                r'api[kK]ey>\s*[^\s<]+\s*<',
+                r'[_\-\.]oauth\s*=\s*[\'"][^\'"]....',
+                r'client_secret\s*=*\s*',
+                r'<ExtendedMatchKey>ClientAuth',
+                r'GIUserPassword'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -904,7 +969,9 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['s3[a]?:\\/\\/[a-zA-Z0-9\\-\\+\\/]{2,16}'],
+            wordlist=[
+                r's3[a]?:\/\/[a-zA-Z0-9\-\+\/]{2,16}'
+            ],
             triage=Triage.YELLOW,
             description="Files with content matching an AWS S3 or Apache Hadoop S3A URI Prefix"
         ),
@@ -916,7 +983,10 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['(xox[pboa]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32})', 'https://hooks.slack.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8}/[a-zA-Z0-9_]{24}'],
+            wordlist=[
+                r'(xox[pboa]-[0-9]{12}-[0-9]{12}-[0-9]{12}-[a-z0-9]{32})',
+                r'https://hooks.slack.com/services/T[a-zA-Z0-9_]{8}/B[a-zA-Z0-9_]{8}/[a-zA-Z0-9_]{24}'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -928,7 +998,9 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['CREATE (USER|LOGIN) .{0,200} (IDENTIFIED BY|WITH PASSWORD)'],
+            wordlist=[
+                r'CREATE (USER|LOGIN) .{0,200} (IDENTIFIED BY|WITH PASSWORD)'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -940,7 +1012,13 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['mysql_connect\\s*\\(.*\\$.*\\)', 'mysql_pconnect\\s*\\(.*\\$.*\\)', 'mysql_change_user\\s*\\(.*\\$.*\\)', 'pg_connect\\s*\\(.*\\$.*\\)', 'pg_pconnect\\s*\\(.*\\$.*\\)'],
+            wordlist=[
+                r'mysql_connect\s*\(.*\$.*\)',
+                r'mysql_pconnect\s*\(.*\$.*\)',
+                r'mysql_change_user\s*\(.*\$.*\)',
+                r'pg_connect\s*\(.*\$.*\)',
+                r'pg_pconnect\s*\(.*\$.*\)'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -952,7 +1030,9 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['DBI\\-\\>connect\\('],
+            wordlist=[
+                r'DBI\-\>connect\('
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -964,7 +1044,11 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['-SecureString', '-AsPlainText', '\\[Net.NetworkCredential\\]::new\\('],
+            wordlist=[
+                r'-SecureString',
+                r'-AsPlainText',
+                r'\[Net\.NetworkCredential\]::new\('
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -976,7 +1060,10 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['mysql\\.connector\\.connect\\(', 'psycopg2\\.connect\\('],
+            wordlist=[
+                r'mysql\.connector\.connect\(',
+                r'psycopg2\.connect\('
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -988,7 +1075,9 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['DBI\\.connect\\('],
+            wordlist=[
+                r'DBI\.connect\('
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -1000,7 +1089,10 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['(?s)<AdministratorPassword>.{0,30}<Value>.*<\\/Value>', '(?s)<AutoLogon>.{0,30}<Value>.*<\\/Value>'],
+            wordlist=[
+                r'(?s)<AdministratorPassword>.{0,30}<Value>.*<\/Value>',
+                r'(?s)<AutoLogon>.{0,30}<Value>.*<\/Value>'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
         ),
@@ -1012,7 +1104,13 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['NVRAM config last updated', 'enable password \\.', 'simple-bind authenticated encrypt', 'pac key [0-7] ', 'snmp-server community\\s.+\\sRW'],
+            wordlist=[
+                r'NVRAM config last updated',
+                r'enable password \.',
+                r'simple-bind authenticated encrypt',
+                r'pac key [0-7] ',
+                r'snmp-server community\s.+\sRW'
+            ],
             triage=Triage.RED,
             description="A description of what a rule does."
         ),
@@ -1024,7 +1122,9 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
-            wordlist=['"encryptedPassword":"[A-Za-z0-9+/=]+"'],
+            wordlist=[
+                r'"encryptedPassword"\s*:\s*"[A-Za-z0-9+/=]+"'
+            ],
             triage=Triage.RED,
             description="Files with contents matching these regexes are very interesting."
         ),
@@ -1060,9 +1160,9 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepCSharpDbConnStringsYellow", "KeepCSharpDbConnStringsRed",
-                          "KeepCSharpViewstateKeys", "KeepAwsKeysInCode", "KeepInlinePrivateKey",
-                          "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
-                          "KeepDbConnStringPw"],
+                                "KeepCSharpViewstateKeys", "KeepAwsKeysInCode", "KeepInlinePrivateKey",
+                                "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
+                                "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.aspx', '\\.ashx', '\\.asmx', '\\.asp', '\\.cshtml', '\\.cs', '\\.ascx', '\\.config'],
@@ -1076,8 +1176,8 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepPsCredentials", "KeepCmdCredentials", "KeepAwsKeysInCode",
-                          "KeepInlinePrivateKey", "KeepPassOrKeyInCode", "KeepSlackTokensInCode",
-                          "KeepSqlAccountCreation", "KeepDbConnStringPw"],
+                                "KeepInlinePrivateKey", "KeepPassOrKeyInCode", "KeepSlackTokensInCode",
+                                "KeepSqlAccountCreation", "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.psd1', '\\.psm1', '\\.ps1'],
@@ -1091,8 +1191,8 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepPsCredentials", "KeepCmdCredentials", "KeepAwsKeysInCode",
-                          "KeepInlinePrivateKey", "KeepPassOrKeyInCode", "KeepSlackTokensInCode",
-                          "KeepSqlAccountCreation", "KeepDbConnStringPw"],
+                                "KeepInlinePrivateKey", "KeepPassOrKeyInCode", "KeepSlackTokensInCode",
+                                "KeepSqlAccountCreation", "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
             wordlist=['ConsoleHost_history\\.txt', 'Visual Studio Code Host_history\\.txt'],
@@ -1106,8 +1206,8 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepPyDbConnStrings", "KeepAwsKeysInCode", "KeepInlinePrivateKey",
-                          "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
-                          "KeepDbConnStringPw"],
+                                "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
+                                "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.py'],
@@ -1121,8 +1221,8 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepJavaDbConnStrings", "KeepAwsKeysInCode", "KeepInlinePrivateKey",
-                          "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
-                          "KeepDbConnStringPw"],
+                                "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
+                                "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.jsp', '\\.do', '\\.java', '\\.cfm'],
@@ -1136,8 +1236,8 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepPhpDbConnStrings", "KeepAwsKeysInCode", "KeepInlinePrivateKey",
-                          "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
-                          "KeepDbConnStringPw"],
+                                "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
+                                "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.php', '\\.phtml', '\\.inc', '\\.php3', '\\.php5', '\\.php7'],
@@ -1151,8 +1251,8 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepRubyDbConnStrings", "KeepAwsKeysInCode", "KeepInlinePrivateKey",
-                          "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
-                          "KeepDbConnStringPw"],
+                                "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
+                                "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.rb'],
@@ -1166,8 +1266,8 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepPerlDbConnStrings", "KeepAwsKeysInCode", "KeepInlinePrivateKey",
-                          "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
-                          "KeepDbConnStringPw"],
+                                "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
+                                "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.pl'],
@@ -1181,7 +1281,7 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepAwsKeysInCode", "KeepInlinePrivateKey", "KeepPassOrKeyInCode",
-                          "KeepSlackTokensInCode", "KeepSqlAccountCreation", "KeepDbConnStringPw"],
+                                "KeepSlackTokensInCode", "KeepSqlAccountCreation", "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.js', '\\.cjs', '\\.mjs', '\\.ts', '\\.tsx', '\\.ls', '\\.es6', '\\.es'],
@@ -1195,8 +1295,8 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepCmdCredentials", "KeepAwsKeysInCode", "KeepInlinePrivateKey",
-                          "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
-                          "KeepDbConnStringPw", "KeepCSharpDbConnStringsRed", "KeepCSharpDbConnStringsYellow"],
+                                "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation",
+                                "KeepDbConnStringPw", "KeepCSharpDbConnStringsRed", "KeepCSharpDbConnStringsYellow"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.vbs', '\\.vbe', '\\.wsf', '\\.wsc', '\\.asp', '\\.hta'],
@@ -1210,7 +1310,7 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepCmdCredentials", "KeepAwsKeysInCode", "KeepInlinePrivateKey",
-                          "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation"],
+                                "KeepPassOrKeyInCode", "KeepSlackTokensInCode", "KeepSqlAccountCreation"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.bat', '\\.cmd'],
@@ -1224,12 +1324,12 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepAwsKeysInCode", "KeepInlinePrivateKey", "KeepPassOrKeyInCode",
-                          "KeepSlackTokensInCode", "KeepSqlAccountCreation"],
+                                "KeepSlackTokensInCode", "KeepSqlAccountCreation"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.netrc', '\\.exports', '\\.functions', '\\.extra', '\\.npmrc', '\\.env',
-                     '\\.bashrc', '\\.profile', '\\.zshrc', '\\.bash_history', '\\.zsh_history',
-                     '\\.sh_history', 'zhistory', '\\.irb_history'],
+                      '\\.bashrc', '\\.profile', '\\.zshrc', '\\.bash_history', '\\.zsh_history',
+                      '\\.sh_history', 'zhistory', '\\.irb_history'],
             triage=Triage.GREEN,
             description="Files with these extensions will be searched for Bash related strings."
         ),
@@ -1240,12 +1340,12 @@ def get_relay_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.FILE_ENUMERATION,
             match_action=MatchAction.RELAY,
             content_rule_names=["KeepAwsKeysInCode", "KeepInlinePrivateKey", "KeepPassOrKeyInCode",
-                          "KeepSlackTokensInCode", "KeepSqlAccountCreation", "KeepDbConnStringPw"],
+                                "KeepSlackTokensInCode", "KeepSqlAccountCreation", "KeepDbConnStringPw"],
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
             wordlist=['\\.yaml', '\\.yml', '\\.toml', '\\.xml', '\\.json', '\\.config', '\\.ini',
-                     '\\.inf', '\\.cnf', '\\.conf', '\\.properties', '\\.env', '\\.dist', '\\.txt',
-                     '\\.sql', '\\.log', '\\.sqlite', '\\.sqlite3', '\\.fdb', '\\.tfvars'],
+                      '\\.inf', '\\.cnf', '\\.conf', '\\.properties', '\\.env', '\\.dist', '\\.txt',
+                      '\\.sql', '\\.log', '\\.sqlite', '\\.sqlite3', '\\.fdb', '\\.tfvars'],
             triage=Triage.GREEN,
             description="Files with these extensions will be subjected to a generic search for keys and such."
         ),
@@ -1333,7 +1433,7 @@ def get_postmatch_rules() -> List[ClassifierRule]:
             match_location=MatchLocation.FILE_NAME,
             wordlist_type=MatchListType.EXACT,
             wordlist=['credentialprovider\\.idl', 'pspasswd64\\.exe', 'pspasswd\\.exe',
-                     'psexec\\.exe', 'psexec64\\.exe'],
+                      'psexec\\.exe', 'psexec64\\.exe'],
             triage=Triage.GREEN,
             description="Post-match check for specific filenames"
         ),
@@ -1345,8 +1445,8 @@ def get_postmatch_rules() -> List[ClassifierRule]:
             match_location=MatchLocation.FILE_PATH,
             wordlist_type=MatchListType.CONTAINS,
             wordlist=['Windows Kits\\\\10', 'Git\\\\mingw64', 'Git\\\\usr\\\\lib',
-                     'ProgramData\\\\Microsoft\\\\NetFramework\\\\BreadcrumbStore',
-                     '\\.MSSQLSERVER\\\\MSSQL\\\\Binn\\\\Templates'],
+                      'ProgramData\\\\Microsoft\\\\NetFramework\\\\BreadcrumbStore',
+                      '\\.MSSQLSERVER\\\\MSSQL\\\\Binn\\\\Templates'],
             triage=Triage.GREEN,
             description="Post-match check for specific path elements"
         ),
