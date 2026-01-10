@@ -663,7 +663,7 @@ def get_deploy_image_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['\\.wim', '\\.ova', '\\.ovf'],
+            wordlist=['.wim', '.ova', '.ovf'],
             triage=Triage.YELLOW,
             description="Files with these extensions are a little interesting."
         ),
