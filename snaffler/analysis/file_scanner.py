@@ -83,10 +83,9 @@ class FileScanner:
             size = getattr(file_info, "get_filesize", lambda: 0)()
             modified = get_modified_time(file_info)
 
-            logger.debug(f"Scanning {unc_path} (size={size})")
-
             if not self.file_accessor.can_read(server, share, smb_path):
-                return None
+                logger.debug(f"Can't read {unc_path}")
+                return
 
             ctx = FileContext(
                 unc_path=unc_path,
@@ -100,11 +99,15 @@ class FileScanner:
             content_rule_names: set[str] = set()
             best_result: Optional[FileResult] = None
 
+            logger.debug(f"Evaluating file rules: {unc_path} (size={size})")
+
             # ---------------- File rules
             for rule in self.rule_evaluator.file_rules:
                 decision = self.rule_evaluator.evaluate_file_rule(rule, ctx)
                 if not decision:
                     continue
+
+                logger.debug(f"{decision.action.name}: {unc_path}")
 
                 action = decision.action
 
@@ -156,7 +159,7 @@ class FileScanner:
                 content_rules = self.rule_evaluator.content_rules
 
             if size <= self.cfg.scanning.max_read_bytes:
-                logger.debug(f"Scanning file content {unc_path}")
+                logger.debug(f"Scanning file content: {unc_path}")
                 content_result = self._scan_file_contents(
                     ctx,
                     server,
