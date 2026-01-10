@@ -28,3 +28,9 @@ packages = { find = {} }
 
 [tool.setuptools.package-data]
 snaffler = ["rules/*.toml"]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-cov",
+]

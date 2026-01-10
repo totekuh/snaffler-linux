@@ -74,7 +74,7 @@ def test_cli_no_targets_error():
     )
 
     assert result.exit_code != 0
-    assert "No targets specified" in result.stderr
+    assert "No targets specified" in result.output
 
 
 
@@ -91,7 +91,7 @@ def test_cli_computer_and_file_conflict(tmp_path):
     )
 
     assert result.exit_code != 0
-    assert "Use either --computer or --computer-file" in result.stderr
+    assert "Use either --computer or --computer-file" in result.output
 
 
 
