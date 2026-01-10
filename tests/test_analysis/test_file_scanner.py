@@ -16,8 +16,8 @@ from snaffler.classifiers.rules import (
 def make_cfg():
     cfg = MagicMock()
     cfg.scanning.min_interest = 0
-    cfg.scanning.max_size_to_grep = 1024 * 1024
-    cfg.scanning.max_size_to_snaffle = 1024 * 1024
+    cfg.scanning.max_read_bytes = 1024 * 1024
+    cfg.scanning.max_file_bytes = 1024 * 1024
     cfg.scanning.match_context_bytes = 20
     cfg.scanning.snaffle = False
     cfg.scanning.snaffle_path = None

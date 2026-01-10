@@ -9,7 +9,7 @@ from snaffler.classifiers.rules import MatchLocation, MatchAction
 class RuleDecision:
     action: MatchAction
     match: Optional[str] = None
-    relay_targets: Optional[List[str]] = None
+    content_rule_names: Optional[List[str]] = None
 
 
 class RuleEvaluator:
@@ -40,7 +40,7 @@ class RuleEvaluator:
         return RuleDecision(
             action=rule.match_action,
             match=match if isinstance(match, str) else match.group(0),
-            relay_targets=rule.relay_targets,
+            content_rule_names=rule.content_rule_names,
         )
 
     def should_discard_postmatch(self, ctx: FileContext) -> bool:

@@ -47,8 +47,9 @@ class TargetingConfig:
 @dataclass
 class ScanningConfig:
     min_interest: int = 0
-    max_size_to_grep: int = 2_097_152  # 2 MB
-    max_size_to_snaffle: int = 10_485_760  # 10 MB
+    max_file_size: int = 104_857_600  # 100 MB
+    max_read_bytes: int = 2_097_152  # 2 MB
+    max_file_bytes: int = 10_485_760  # 10 MB
     snaffle: bool = False
     snaffle_path: Optional[str] = None
     match_context_bytes: int = 200
@@ -111,6 +112,9 @@ class SnafflerConfiguration:
 
     # ---------- validation ----------
     def validate(self):
+        if self.scanning.max_read_bytes > self.scanning.max_file_bytes:
+            raise ValueError("max_read_bytes cannot exceed max_file_bytes")
+
         if self.targets.unc_targets and self.targets.computer_targets:
             raise ValueError("Cannot mix UNC targets and computer targets")
 

@@ -59,7 +59,7 @@ class FileScanner:
 
         if (
                 self.cfg.scanning.snaffle
-                and result.size <= self.cfg.scanning.max_size_to_snaffle
+                and result.size <= self.cfg.scanning.max_file_bytes
         ):
             self.file_accessor.copy_to_local(
                 server,
@@ -94,7 +94,7 @@ class FileScanner:
                 size=size,
             )
 
-            relay_rule_names: List[str] = []
+            content_rule_names: List[str] = []
             best_result: Optional[FileResult] = None
 
             # ---------------- File rules
@@ -109,8 +109,8 @@ class FileScanner:
                     return None
 
                 if action == MatchAction.RELAY:
-                    if decision.relay_targets:
-                        relay_rule_names.extend(decision.relay_targets)
+                    if decision.content_rule_names:
+                        content_rule_names.extend(decision.content_rule_names)
                     continue
 
                 if action == MatchAction.CHECK_FOR_KEYS:
@@ -143,14 +143,14 @@ class FileScanner:
                 best_result = FileResult.pick_best(best_result, result)
 
             # ---------------- Content rules
-            if size <= self.cfg.scanning.max_size_to_grep:
+            if size <= self.cfg.scanning.max_read_bytes:
                 content_result = self._scan_file_contents(
                     ctx,
                     server,
                     share,
                     smb_path,
                     modified,
-                    relay_rule_names or None,
+                    content_rule_names or None,
                 )
                 return FileResult.pick_best(best_result, content_result)
 
@@ -167,7 +167,7 @@ class FileScanner:
             share: str,
             smb_path: str,
             modified: datetime,
-            relay_rule_names: Optional[List[str]],
+            content_rules_to_evaluate: Optional[List[str]],
     ) -> Optional[FileResult]:
 
         data = self.file_accessor.read(server, share, smb_path)
@@ -182,10 +182,10 @@ class FileScanner:
         rules = (
             [
                 self.rule_evaluator.content_rules_by_name[n]
-                for n in relay_rule_names
+                for n in content_rules_to_evaluate
                 if n in self.rule_evaluator.content_rules_by_name
             ]
-            if relay_rule_names
+            if content_rules_to_evaluate
             else self.rule_evaluator.content_rules
         )
 

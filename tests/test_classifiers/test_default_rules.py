@@ -52,7 +52,6 @@ def test_default_rules_on_files(file_path: Path, evaluator):
         if evaluator.evaluate_file_rule(rule, ctx):
             matched.append(rule)
 
-    # 🔒 Минимальный, но реальный assert
     assert matched is not None
 
 

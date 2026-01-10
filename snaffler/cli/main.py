@@ -21,8 +21,8 @@ MB = 1024 * 1024
 
 # Scanning
 DEFAULT_MIN_INTEREST = 0
-DEFAULT_MAX_GREP_SIZE = 2 * MB  # 2 MB
-DEFAULT_MAX_SNAFFLE_SIZE = 10 * MB  # 10 MB
+DEFAULT_MAX_READ_BYTES = 2 * MB  # 2 MB
+DEFAULT_MAX_FILE_BYTES = 10 * MB  # 10 MB
 DEFAULT_MATCH_CONTEXT = 200  # bytes
 
 # Auth
@@ -159,16 +159,16 @@ def run(
             min=0,
             max=3,
         ),
-        max_grep_size: int = typer.Option(
-            DEFAULT_MAX_GREP_SIZE,
-            "-r", "--max-grep-size",
-            help="Max file size to search inside (default: 2 MB)",
-            rich_help_panel="Scanning",
-        ),
-        max_snaffle_size: int = typer.Option(
-            DEFAULT_MAX_SNAFFLE_SIZE,
-            "-l", "--max-snaffle-size",
-            help="Max file size to download (default: 10 MB)",
+         max_read_bytes: int = typer.Option(
+             DEFAULT_MAX_READ_BYTES,
+             "-r", "--max-read-bytes",
+             help="Maximum bytes to read from a file for content scanning (default: 2 MB)",
+             rich_help_panel="Scanning",
+         ),
+        max_file_bytes: int = typer.Option(
+            DEFAULT_MAX_FILE_BYTES,
+            "-l", "--max-file-bytes",
+            help="Maximum file size allowed for scanning and downloading (default: 10 MB)",
             rich_help_panel="Scanning",
         ),
 
@@ -260,8 +260,8 @@ def run(
         )
     # ---------- SCANNING ----------
     cfg.scanning.min_interest = min_interest
-    cfg.scanning.max_size_to_grep = max_grep_size
-    cfg.scanning.max_size_to_snaffle = max_snaffle_size
+    cfg.scanning.max_read_bytes = max_read_bytes
+    cfg.scanning.max_file_bytes = max_file_bytes
     cfg.scanning.match_context_bytes = context
 
     if snaffle_path:
