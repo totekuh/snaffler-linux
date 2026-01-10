@@ -1146,10 +1146,6 @@ def get_content_grep_rules() -> List[ClassifierRule]:
 # ==============================================================================
 # RELAY RULES (FILE EXTENSION -> CONTENT GREP)
 # ==============================================================================
-# NOTE: These rules require relay logic implementation in file_scanner.py
-# Currently, content grep runs on ALL files under max_size_to_grep
-# With relay logic, content grep would only run on files matched by these rules
-# ==============================================================================
 
 def get_relay_rules() -> List[ClassifierRule]:
     """Relay rules that trigger content grepping based on file type"""
