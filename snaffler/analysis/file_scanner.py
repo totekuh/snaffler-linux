@@ -94,7 +94,7 @@ class FileScanner:
                 size=size,
             )
 
-            content_rule_names: List[str] = []
+            content_rule_names: set[str] = set()
             best_result: Optional[FileResult] = None
 
             # ---------------- File rules
@@ -110,7 +110,7 @@ class FileScanner:
 
                 if action == MatchAction.RELAY:
                     if decision.content_rule_names:
-                        content_rule_names.extend(decision.content_rule_names)
+                        content_rule_names.update(decision.content_rule_names)
                     continue
 
                 if action == MatchAction.CHECK_FOR_KEYS:
