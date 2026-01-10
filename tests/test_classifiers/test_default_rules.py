@@ -4,7 +4,7 @@ import pytest
 
 from snaffler.classifiers.default_rules import get_default_rules
 from snaffler.classifiers.evaluator import RuleEvaluator
-from snaffler.analysis.file_context import FileContext
+from snaffler.analysis.model.file_context import FileContext
 from snaffler.classifiers.rules import EnumerationScope
 
 

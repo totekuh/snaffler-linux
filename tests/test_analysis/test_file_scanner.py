@@ -1,17 +1,14 @@
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from snaffler.analysis.file_scanner import FileScanner
-from snaffler.analysis.file_result import FileResult
+from snaffler.analysis.model.file_result import FileResult
 from snaffler.classifiers.evaluator import RuleEvaluator, RuleDecision
 from snaffler.classifiers.rules import (
     MatchAction,
     MatchLocation,
     Triage,
 )
-from snaffler.analysis.file_context import FileContext
 
 
 # ---------------- helpers ----------------

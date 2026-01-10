@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional, List
 
-from snaffler.analysis.file_context import FileContext
+from snaffler.analysis.model.file_context import FileContext
 from snaffler.classifiers.rules import MatchLocation, MatchAction
 
 
