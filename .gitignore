@@ -3,3 +3,5 @@ venv
 snaffler_ng.egg-info
 __pycache__
 snaffler.db
+.pytest_cache
+build
