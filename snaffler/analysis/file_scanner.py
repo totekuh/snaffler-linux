@@ -78,20 +78,23 @@ class FileScanner:
             if not parsed:
                 return None
 
-            logger.debug(f"Scanning {unc_path}")
 
             server, share, smb_path, file_name, file_ext = parsed
             size = getattr(file_info, "get_filesize", lambda: 0)()
             modified = get_modified_time(file_info)
+
+            logger.debug(f"Scanning {unc_path} (size={size})")
 
             if not self.file_accessor.can_read(server, share, smb_path):
                 return None
 
             ctx = FileContext(
                 unc_path=unc_path,
+                smb_path=smb_path,
                 name=file_name,
                 ext=file_ext,
                 size=size,
+                modified=modified
             )
 
             content_rule_names: set[str] = set()
@@ -143,14 +146,22 @@ class FileScanner:
                 best_result = FileResult.pick_best(best_result, result)
 
             # ---------------- Content rules
+            if content_rule_names:
+                content_rules = [
+                    self.rule_evaluator.content_rules_by_name[n]
+                    for n in content_rule_names
+                    if n in self.rule_evaluator.content_rules_by_name
+                ]
+            else:
+                content_rules = self.rule_evaluator.content_rules
+
             if size <= self.cfg.scanning.max_read_bytes:
+                logger.debug(f"Scanning file content {unc_path}")
                 content_result = self._scan_file_contents(
                     ctx,
                     server,
                     share,
-                    smb_path,
-                    modified,
-                    content_rule_names or None,
+                    content_rules,
                 )
                 return FileResult.pick_best(best_result, content_result)
 
@@ -165,10 +176,9 @@ class FileScanner:
             ctx: FileContext,
             server: str,
             share: str,
-            smb_path: str,
-            modified: datetime,
-            content_rules_to_evaluate: Optional[List[str]],
+            rules: set,
     ) -> Optional[FileResult]:
+        smb_path = ctx.smb_path
 
         data = self.file_accessor.read(server, share, smb_path)
         if not data:
@@ -178,16 +188,6 @@ class FileScanner:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             text = data.decode("latin-1", errors="ignore")
-
-        rules = (
-            [
-                self.rule_evaluator.content_rules_by_name[n]
-                for n in content_rules_to_evaluate
-                if n in self.rule_evaluator.content_rules_by_name
-            ]
-            if content_rules_to_evaluate
-            else self.rule_evaluator.content_rules
-        )
 
         for rule in rules:
             if rule.match_location != MatchLocation.FILE_CONTENT_AS_STRING:
@@ -212,7 +212,7 @@ class FileScanner:
             result = FileResult(
                 file_path=ctx.unc_path,
                 size=ctx.size,
-                modified=modified,
+                modified=ctx.modified,
                 triage=rule.triage,
                 rule_name=rule.rule_name,
                 match=match.group(0),
