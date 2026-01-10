@@ -5,6 +5,8 @@ from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
+from impacket.smb import FILE_READ_DATA, FILE_READ_ATTRIBUTES, FILE_SHARE_READ
+
 from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.transport.smb import SMBTransport
 
@@ -37,8 +39,15 @@ class SMBFileAccessor(FileAccessor):
     def can_read(self, server: str, share: str, path: str) -> bool:
         try:
             smb = self._get_smb(server)
-            buf = BytesIO()
-            smb.getFile(share, path, buf.write, 0, 1)
+
+            tid = smb.connectTree(share)
+            fid = smb.openFile(
+                tid,
+                path,
+                desiredAccess=FILE_READ_DATA | FILE_READ_ATTRIBUTES,
+                shareMode=FILE_SHARE_READ,
+            )
+            smb.closeFile(tid, fid)
             return True
         except Exception:
             return False
