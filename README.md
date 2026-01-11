@@ -20,9 +20,8 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 ## Installation
 
 ```bash
-pip install -e .
+pip install snaffler-ng
 ```
-
 
 ## Quick Start
 
