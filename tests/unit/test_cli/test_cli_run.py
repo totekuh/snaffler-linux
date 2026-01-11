@@ -91,7 +91,7 @@ def test_cli_computer_and_file_conflict(tmp_path):
     )
 
     assert result.exit_code != 0
-    assert "Use either --computer or --computer-file" in result.output
+    assert "Use either --computer or --computer-file" in result.output.replace("\x1b", "")
 
 
 
