@@ -3,9 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-def parse_unc_path(unc_path: str):
-    print(unc_path)
 
+def parse_unc_path(unc_path: str):
     parts = [p for p in unc_path.split("/") if p]
     if len(parts) < 3:
         return None
