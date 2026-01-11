@@ -84,6 +84,7 @@ class TreeWalker:
             path += "/"
 
         unc_dir = f"//{server}/{share}{path}"
+        logger.debug(f"Walking tree: {unc_dir}")
 
         # ---------- Resume: directory already fully enumerated ----------
         if self.state and self.state.should_skip_dir(unc_dir):
