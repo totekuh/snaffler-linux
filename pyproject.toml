@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "snaffler-ng"
 version = "1.0.0"
-description = "Snaffler Linux port – find credentials and sensitive data on Windows shares"
+description = "Snaffler Impacket port - find credentials and sensitive data on SMB shares"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
