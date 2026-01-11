@@ -222,7 +222,7 @@ def get_password_file_rules() -> List[ClassifierRule]:
             wordlist_type=MatchListType.CONTAINS,
             wordlist=['passw', 'secret', 'credential', 'thycotic', 'cyberark'],
             triage=Triage.GREEN,
-            description="A description of what a rule does."
+            description="Files with these exact names are interesting."
         ),
 
         ClassifierRule(

@@ -1,13 +1,14 @@
 import re
 from datetime import datetime
-from unittest.mock import MagicMock
 
 from snaffler.analysis.model.file_context import FileContext
 from snaffler.classifiers.evaluator import RuleEvaluator, RuleDecision
 from snaffler.classifiers.rules import MatchLocation, MatchAction
 
 
-# ---------- helpers ----------
+# =============================================================================
+# helpers
+# =============================================================================
 
 def make_ctx(
         *,
@@ -28,106 +29,139 @@ def make_ctx(
     )
 
 
-def make_rule(
-    *,
-    location,
-    action=MatchAction.SNAFFLE,
-    match_return=None,
-    match_length=None,
-    relay_targets=None,
-):
-    rule = MagicMock()
-    rule.match_location = location
-    rule.match_action = action
-    rule.match_length = match_length
-    rule.relay_targets = relay_targets
-    rule.matches.return_value = match_return
-    return rule
+class DummyRule:
+    """
+    Minimal real rule implementation.
+
+    This intentionally mirrors the evaluator ↔ rule contract:
+    - match_location
+    - match_action
+    - match_length (for FILE_LENGTH)
+    - matches(text) -> re.Match | None
+    """
+
+    def __init__(
+            self,
+            *,
+            match_location,
+            match_action=MatchAction.SNAFFLE,
+            pattern=None,
+            match_length=None,
+    ):
+        self.match_location = match_location
+        self.match_action = match_action
+        self.match_length = match_length
+        self.content_rule_names = None
+        self._pattern = re.compile(pattern) if pattern else None
+
+    def matches(self, text):
+        if self._pattern:
+            return self._pattern.search(text)
+        return None
 
 
-# ---------- evaluate_file_rule ----------
+# =============================================================================
+# evaluate_file_rule
+# =============================================================================
 
-def test_evaluate_file_rule_path_match():
-    ctx = make_ctx()
+def test_file_path_regex_match():
+    ctx = make_ctx(unc_path="//HOST/SHARE/very_secret.txt")
 
-    rule = make_rule(
-        location=MatchLocation.FILE_PATH,
-        match_return=re.search("secret", ctx.unc_path),
+    rule = DummyRule(
+        match_location=MatchLocation.FILE_PATH,
+        pattern=r"very_secret",
     )
 
     ev = RuleEvaluator([rule], [], [])
     decision = ev.evaluate_file_rule(rule, ctx)
 
     assert isinstance(decision, RuleDecision)
+    assert decision.match == "very_secret"
     assert decision.action == MatchAction.SNAFFLE
-    assert decision.match == "secret"
 
 
-def test_evaluate_file_rule_name_match():
-    ctx = make_ctx()
+def test_file_name_regex_match():
+    ctx = make_ctx(name="passwords.txt")
 
-    rule = make_rule(
-        location=MatchLocation.FILE_NAME,
-        match_return=re.search("secret", ctx.name),
+    rule = DummyRule(
+        match_location=MatchLocation.FILE_NAME,
+        pattern=r"password",
     )
 
     ev = RuleEvaluator([rule], [], [])
     decision = ev.evaluate_file_rule(rule, ctx)
 
-    assert decision.match == "secret"
+    assert decision.match == "password"
 
 
-def test_evaluate_file_rule_extension_match():
-    ctx = make_ctx()
+def test_file_extension_regex_match():
+    ctx = make_ctx(ext=".conf")
 
-    rule = make_rule(
-        location=MatchLocation.FILE_EXTENSION,
-        match_return=".txt",
+    rule = DummyRule(
+        match_location=MatchLocation.FILE_EXTENSION,
+        pattern=r"\.conf",
     )
 
     ev = RuleEvaluator([rule], [], [])
     decision = ev.evaluate_file_rule(rule, ctx)
 
-    assert decision.match == ".txt"
+    assert decision.match == ".conf"
 
 
-def test_evaluate_file_rule_length_match():
-    ctx = make_ctx()
+def test_file_length_exact_match():
+    ctx = make_ctx(size=4096)
 
-    rule = make_rule(
-        location=MatchLocation.FILE_LENGTH,
-        match_length=1337,
+    rule = DummyRule(
+        match_location=MatchLocation.FILE_LENGTH,
+        match_length=4096,
     )
 
     ev = RuleEvaluator([rule], [], [])
     decision = ev.evaluate_file_rule(rule, ctx)
 
-    assert decision.match == "size == 1337"
+    assert decision.match == "size == 4096"
 
 
-def test_evaluate_file_rule_no_match():
-    ctx = make_ctx()
+def test_file_length_mismatch():
+    ctx = make_ctx(size=1024)
 
-    rule = make_rule(
-        location=MatchLocation.FILE_NAME,
-        match_return=None,
+    rule = DummyRule(
+        match_location=MatchLocation.FILE_LENGTH,
+        match_length=4096,
     )
 
     ev = RuleEvaluator([rule], [], [])
-    decision = ev.evaluate_file_rule(rule, ctx)
 
-    assert decision is None
+    assert ev.evaluate_file_rule(rule, ctx) is None
 
 
-# ---------- should_discard_postmatch ----------
+def test_no_match_returns_none():
+    ctx = make_ctx(name="innocent.txt")
 
-def test_should_discard_postmatch_true():
-    ctx = make_ctx()
+    rule = DummyRule(
+        match_location=MatchLocation.FILE_NAME,
+        pattern=r"secret",
+    )
 
-    rule = make_rule(
-        location=MatchLocation.FILE_PATH,
-        action=MatchAction.DISCARD,
-        match_return=True,
+    ev = RuleEvaluator([rule], [], [])
+
+    assert ev.evaluate_file_rule(rule, ctx) is None
+
+
+# =============================================================================
+# should_discard_postmatch
+# =============================================================================
+
+def test_postmatch_discard_by_path():
+    ctx = make_ctx(
+        unc_path="//HOST/SHARE/Windows Kits/10/Debuggers/sdk.conf",
+        name="sdk.conf",
+    )
+
+    rule = DummyRule(
+        match_location=MatchLocation.FILE_PATH,
+        match_action=MatchAction.DISCARD,
+        pattern=r"Windows Kits",
     )
 
     ev = RuleEvaluator([], [], [rule])
@@ -135,15 +169,38 @@ def test_should_discard_postmatch_true():
     assert ev.should_discard_postmatch(ctx) is True
 
 
-def test_should_discard_postmatch_false():
-    ctx = make_ctx()
+def test_postmatch_not_discarded():
+    ctx = make_ctx(
+        unc_path="//HOST/SHARE/real_secret.txt",
+        name="real_secret.txt",
+    )
 
-    rule = make_rule(
-        location=MatchLocation.FILE_NAME,
-        action=MatchAction.DISCARD,
-        match_return=False,
+    rule = DummyRule(
+        match_location=MatchLocation.FILE_PATH,
+        match_action=MatchAction.DISCARD,
+        pattern=r"Windows Kits",
     )
 
     ev = RuleEvaluator([], [], [rule])
 
     assert ev.should_discard_postmatch(ctx) is False
+
+def test_postmatch_discard_large_file_by_size():
+    ctx = make_ctx(
+        name="huge_dump.sql",
+        size=5 * 1024 * 1024 * 1024,  # 5 GB, clearly stupid to scan
+    )
+
+    class SizeDiscardRule:
+        match_location = MatchLocation.FILE_LENGTH
+        match_action = MatchAction.DISCARD
+
+        def matches(self, _):
+            # discard anything >= 1 GB
+            return ctx.size >= 1 * 1024 * 1024 * 1024
+
+    rule = SizeDiscardRule()
+
+    ev = RuleEvaluator([], [], [rule])
+
+    assert ev.should_discard_postmatch(ctx) is True
