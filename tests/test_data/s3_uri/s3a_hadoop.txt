@@ -1,0 +1,2 @@
+s3a://hadoopbucket
+s3a://logs123

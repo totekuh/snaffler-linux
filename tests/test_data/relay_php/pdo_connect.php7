@@ -1,0 +1,7 @@
+<?php
+$pdo = new PDO(
+    "mysql:host=db01;dbname=prod",
+    "admin",
+    "Winter2024!"
+);
+?>

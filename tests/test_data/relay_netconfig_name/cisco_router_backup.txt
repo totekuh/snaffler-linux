@@ -1,0 +1,2 @@
+username admin privilege 15 password 0 Winter2024!
+enable secret SuperSecretEnable

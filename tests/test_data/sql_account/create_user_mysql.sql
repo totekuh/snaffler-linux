@@ -1,0 +1,1 @@
+CREATE USER appuser IDENTIFIED BY 'SuperSecret123!';

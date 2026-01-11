@@ -1,0 +1,1 @@
+CREATE USER admin IDENTIFIED BY 'Winter2024!';

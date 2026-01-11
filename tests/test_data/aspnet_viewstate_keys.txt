@@ -1,0 +1,4 @@
+validationKey="A1B2C3D4E5F6G7H8"
+decryptionKey='0123456789ABCDEF'
+validationkey = "deadbeefdeadbeef"
+decryptionkey='feedfacecafebabe'

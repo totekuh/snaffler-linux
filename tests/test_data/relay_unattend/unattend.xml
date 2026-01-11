@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup">
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>SuperSecretAdmin123!</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+    </component>
+  </settings>
+</unattend>

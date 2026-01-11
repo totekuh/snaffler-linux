@@ -1,0 +1,3 @@
+ --password
+<ExtendedMatchKey>ClientAuth</ExtendedMatchKey>
+GIUserPassword

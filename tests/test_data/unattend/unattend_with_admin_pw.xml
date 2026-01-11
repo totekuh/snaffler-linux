@@ -1,0 +1,5 @@
+<unattend>
+  <AdministratorPassword>
+    <Value>SuperSecret123!</Value>
+  </AdministratorPassword>
+</unattend>

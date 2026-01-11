@@ -1,0 +1,9 @@
+{
+  "logins": [
+    {
+      "hostname": "https://example.com",
+      "encryptedUsername": "dXNlcg==",
+      "encryptedPassword": "MTIzNDU2Nzg5QUJDREVGRw=="
+    }
+  ]
+}

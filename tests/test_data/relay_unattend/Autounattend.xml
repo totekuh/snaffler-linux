@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend>
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup">
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>admin</Name>
+            <Password>
+              <Value>U3VwZXJTZWNyZXQh</Value>
+              <PlainText>false</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+    </component>
+  </settings>
+</unattend>

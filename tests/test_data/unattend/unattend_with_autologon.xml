@@ -1,0 +1,7 @@
+<unattend>
+  <AutoLogon>
+    <Password>
+      <Value>P@ssw0rd!</Value>
+    </Password>
+  </AutoLogon>
+</unattend>

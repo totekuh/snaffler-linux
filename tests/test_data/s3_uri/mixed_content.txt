@@ -1,0 +1,3 @@
+Some config value:
+endpoint = "s3://backup01"
+path = s3a://etl/jobs
