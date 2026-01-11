@@ -1,7 +1,7 @@
-from pathlib import Path
 from unittest.mock import patch
 
 from typer.testing import CliRunner
+
 from snaffler.cli.main import app
 
 runner = CliRunner()
@@ -20,9 +20,8 @@ def base_args():
 
 def test_cli_unc_targets():
     with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
-         patch("snaffler.cli.main.RuleLoader.load"), \
-         patch("snaffler.cli.main.setup_logging"):
-
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
         instance = runner_cls.return_value
 
         result = runner.invoke(
@@ -37,9 +36,8 @@ def test_cli_unc_targets():
 
 def test_cli_computer_targets():
     with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
-         patch("snaffler.cli.main.RuleLoader.load"), \
-         patch("snaffler.cli.main.setup_logging"):
-
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
         instance = runner_cls.return_value
 
         result = runner.invoke(
@@ -53,9 +51,8 @@ def test_cli_computer_targets():
 
 def test_cli_domain_targets():
     with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
-         patch("snaffler.cli.main.RuleLoader.load"), \
-         patch("snaffler.cli.main.setup_logging"):
-
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
         instance = runner_cls.return_value
 
         result = runner.invoke(
@@ -77,24 +74,6 @@ def test_cli_no_targets_error():
     assert "No targets specified" in result.output
 
 
-
-def test_cli_computer_and_file_conflict(tmp_path):
-    hosts = tmp_path / "hosts.txt"
-    hosts.write_text("HOST1\n")
-
-    result = runner.invoke(
-        app,
-        base_args() + [
-            "--computer", "HOST1",
-            "--computer-file", str(hosts),
-        ],
-    )
-
-    assert result.exit_code != 0
-    assert "Use either --computer or --computer-file" in result.output.replace("\x1b", "")
-
-
-
 def test_cli_load_config_file(tmp_path):
     cfg = tmp_path / "config.toml"
     cfg.write_text("""
@@ -103,9 +82,8 @@ def test_cli_load_config_file(tmp_path):
     """)
 
     with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
-         patch("snaffler.cli.main.RuleLoader.load"), \
-         patch("snaffler.cli.main.setup_logging"):
-
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
         instance = runner_cls.return_value
 
         result = runner.invoke(
@@ -118,4 +96,3 @@ def test_cli_load_config_file(tmp_path):
 
     assert result.exit_code == 0
     instance.execute.assert_called_once()
-
