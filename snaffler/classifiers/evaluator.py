@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import Optional, List
 
@@ -37,9 +38,14 @@ class RuleEvaluator:
         if not match:
             return None
 
+        if isinstance(match, re.Match):
+            match_text = match.group(0)
+        else:
+            match_text = match
+
         return RuleDecision(
             action=rule.match_action,
-            match=match if isinstance(match, str) else match.group(0),
+            match=match_text,
             content_rule_names=rule.content_rule_names,
         )
 

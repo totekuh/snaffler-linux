@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from unittest.mock import MagicMock
 
 from snaffler.analysis.model.file_context import FileContext
@@ -8,12 +9,22 @@ from snaffler.classifiers.rules import MatchLocation, MatchAction
 
 # ---------- helpers ----------
 
-def make_ctx():
-    return FileContext(
+def make_ctx(
+        *,
         unc_path="//HOST/SHARE/secret.txt",
+        smb_path="\\secret.txt",
         name="secret.txt",
         ext=".txt",
         size=1337,
+        modified=None,
+):
+    return FileContext(
+        unc_path=unc_path,
+        smb_path=smb_path,
+        name=name,
+        ext=ext,
+        size=size,
+        modified=modified or datetime.utcfromtimestamp(0),
     )
 
 
