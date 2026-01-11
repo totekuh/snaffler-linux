@@ -1,0 +1,5 @@
+key = <<~KEY
+-----BEGIN RSA PRIVATE KEY-----
+MIIBOgIBAAJBALfakekeymaterial1234567890
+-----END RSA PRIVATE KEY-----
+KEY

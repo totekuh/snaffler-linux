@@ -1,0 +1,4 @@
+Data Source=SQLSERVER01;Integrated Security=SSPI
+Data Source=localhost;Initial Catalog=Test;Integrated Security=true
+Integrated Security=SSPI;Data Source=CORP-SQL-01
+Integrated Security=true;Application Name=App;Data Source=127.0.0.1

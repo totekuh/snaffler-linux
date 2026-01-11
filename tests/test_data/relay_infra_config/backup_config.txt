@@ -1,0 +1,2 @@
+set system login user admin authentication plain-text-password
+InfraBackupPass

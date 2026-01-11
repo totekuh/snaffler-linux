@@ -1,0 +1,2 @@
+CREATE USER admin IDENTIFIED BY 'SuperSecret123!';
+GRANT ALL PRIVILEGES ON *.* TO admin;

@@ -1,0 +1,2 @@
+enable password .
+NVRAM config last updated
