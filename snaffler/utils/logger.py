@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Optional
 
 
-class DataOnlyFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        return getattr(record, "is_data", False)
+class FindingsOnlyFilter(logging.Filter):
+    def filter(self, record):
+        return bool(getattr(record, "is_data", False))
 
 
 class Colors:
@@ -154,19 +154,22 @@ def setup_logging(
 
         if log_level == "data":
             fh.setLevel(logging.DEBUG)
-            fh.addFilter(DataOnlyFilter())
+            fh.addFilter(FindingsOnlyFilter())
         else:
             fh.setLevel(level)
 
         if log_type == "json":
             fh.setFormatter(SnafflerJSONFormatter())
         elif log_type == "tsv":
-            with open(log_file_path, "w") as f:
+            Path(log_file_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(log_file_path, "w", encoding="utf-8") as f:
                 f.write(
                     "timestamp\ttriage\trule_name\tfile_path\tsize\tmtime\tfinding_id\tmatch_context\n"
                 )
+
+            fh = logging.FileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
             fh.setLevel(logging.DEBUG)
-            fh.addFilter(DataOnlyFilter())
+            fh.addFilter(FindingsOnlyFilter())
             fh.setFormatter(SnafflerTSVFormatter())
         else:
             fh.setFormatter(SnafflerFormatter(logger))

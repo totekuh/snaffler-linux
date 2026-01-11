@@ -65,6 +65,8 @@ snaffler run \
   --unc //192.168.1.10/Share
 ```
 
+![snaffler-ng run](https://github.com/user-attachments/assets/4cd12508-88f3-4724-9a1e-6c5991cddafa)
+
 Scan multiple computers (share discovery enabled):
 ```bash
 snaffler run \
