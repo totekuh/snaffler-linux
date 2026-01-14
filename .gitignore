@@ -5,3 +5,6 @@ __pycache__
 snaffler.db
 .pytest_cache
 build
+snaffler-*.log
+snaffler-*.csv
+snaffler-*.json

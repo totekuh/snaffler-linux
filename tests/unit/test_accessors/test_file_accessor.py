@@ -35,4 +35,5 @@ def test_file_accessor_complete_implementation():
 
     assert accessor.can_read("srv", "share", "/f.txt") is True
     assert accessor.read("srv", "share", "/f.txt") == b"data"
+    assert accessor.copy_to_local("srv", "share", "/f.txt", "/tmp") is None
     assert accessor.list_path("srv", "share", "/*") == []
