@@ -81,22 +81,42 @@ class SnafflerConsoleFormatter(logging.Formatter):
         'ERROR': Colors.RED,
         'CRITICAL': Colors.RED + Colors.BOLD,
     }
-
+    TRIAGE_COLORS = {
+        "Black": Colors.BLACK + Colors.BOLD,
+        "Red": Colors.RED + Colors.BOLD,
+        "Yellow": Colors.YELLOW + Colors.BOLD,
+        "Green": Colors.GREEN,
+        "Gray": Colors.GRAY,
+    }
     def format(self, record: logging.LogRecord) -> str:
         timestamp = datetime.fromtimestamp(record.created).strftime(
             '%Y-%m-%d %H:%M:%S'
         )
-        level = record.levelname
         message = record.getMessage()
 
-        if sys.stdout.isatty():
-            color = self.LEVEL_COLORS.get(level, '')
-            return (
-                f"{Colors.GRAY}[{timestamp}]{Colors.RESET} "
-                f"{color}[{level}]{Colors.RESET} {message}"
+        # Non-TTY: no colors, no tricks
+        if not sys.stdout.isatty():
+            return f"[{timestamp}] [{record.levelname}] {message}"
+
+        # Color log level
+        level_color = self.LEVEL_COLORS.get(record.levelname, "")
+        level = f"{level_color}[{record.levelname}]{Colors.RESET}"
+
+        # Color triage token if present
+        if hasattr(record, "triage"):
+            triage = record.triage
+            triage_color = self.TRIAGE_COLORS.get(triage, "")
+            message = message.replace(
+                f"[{triage}]",
+                f"{triage_color}[{triage}]{Colors.RESET}",
+                1,  # only first occurrence
             )
 
-        return f"[{timestamp}] [{level}] {message}"
+        return (
+            f"{Colors.GRAY}[{timestamp}]{Colors.RESET} "
+            f"{level} {message}"
+        )
+
 
 
 class SnafflerFileFormatter(logging.Formatter):
