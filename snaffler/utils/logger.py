@@ -10,11 +10,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-def _plain_file_handler(logger, path: Path, level: int):
+
+def _plain_file_handler(path: Path, level: int):
     h = FlushFileHandler(path, mode="a", encoding="utf-8", errors="replace")
     h.setLevel(level)
-    h.setFormatter(SnafflerFormatter(logger))
+    h.setFormatter(SnafflerFileFormatter())
     return h
+
 
 
 def _json_file_handler(path: Path):
@@ -71,7 +73,7 @@ class Colors:
     BOLD = '\033[1m'
 
 
-class SnafflerFormatter(logging.Formatter):
+class SnafflerConsoleFormatter(logging.Formatter):
     LEVEL_COLORS = {
         'DEBUG': Colors.GRAY,
         'INFO': Colors.GREEN,
@@ -80,10 +82,6 @@ class SnafflerFormatter(logging.Formatter):
         'CRITICAL': Colors.RED + Colors.BOLD,
     }
 
-    def __init__(self, logger: logging.Logger):
-        super().__init__()
-        self.logger = logger
-
     def format(self, record: logging.LogRecord) -> str:
         timestamp = datetime.fromtimestamp(record.created).strftime(
             '%Y-%m-%d %H:%M:%S'
@@ -91,15 +89,22 @@ class SnafflerFormatter(logging.Formatter):
         level = record.levelname
         message = record.getMessage()
 
-        use_colors = sys.stdout.isatty()
-
-        if use_colors:
+        if sys.stdout.isatty():
             color = self.LEVEL_COLORS.get(level, '')
             return (
                 f"{Colors.GRAY}[{timestamp}]{Colors.RESET} "
                 f"{color}[{level}]{Colors.RESET} {message}"
             )
+
         return f"[{timestamp}] [{level}] {message}"
+
+
+class SnafflerFileFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        timestamp = datetime.fromtimestamp(record.created).strftime(
+            '%Y-%m-%d %H:%M:%S'
+        )
+        return f"[{timestamp}] [{record.levelname}] {record.getMessage()}"
 
 
 class SnafflerJSONFormatter(logging.Formatter):
@@ -184,7 +189,7 @@ def setup_logging(
     if log_to_console:
         ch = FlushStreamHandler(sys.stdout)
         ch.setLevel(level)
-        ch.setFormatter(SnafflerFormatter(logger))
+        ch.setFormatter(SnafflerConsoleFormatter())
         logger.addHandler(ch)
 
     if log_to_file and log_file_path:
@@ -194,7 +199,7 @@ def setup_logging(
         handlers = []
 
         if log_type == "all":
-            handlers.append(_plain_file_handler(logger, base.with_suffix(".log"), level))
+            handlers.append(_plain_file_handler(base.with_suffix(".log"), level))
             handlers.append(_json_file_handler(base.with_suffix(".json")))
             handlers.append(_tsv_file_handler(base.with_suffix(".tsv")))
 
@@ -205,11 +210,10 @@ def setup_logging(
             handlers.append(_tsv_file_handler(base))
 
         else:  # plain
-            handlers.append(_plain_file_handler(logger, base, level))
+            handlers.append(_plain_file_handler(base, level))
 
         for h in handlers:
             logger.addHandler(h)
-
 
     return logger
 
@@ -230,40 +234,21 @@ def log_file_result(
         size: Optional[int] = None,
         modified: Optional[str] = None,
 ):
-    use_colors = sys.stdout.isatty()
-
-    triage_colors = {
-        "Black": Colors.BLACK + Colors.BOLD,
-        "Red": Colors.RED + Colors.BOLD,
-        "Yellow": Colors.YELLOW + Colors.BOLD,
-        "Green": Colors.GREEN,
-        "Gray": Colors.GRAY,
-    }
-
-    color = triage_colors.get(triage, "") if use_colors else ""
-    reset = Colors.RESET if use_colors else ""
-    bold = Colors.BOLD if use_colors else ""
-
-    parts = [f"{color}[{triage}]{reset}", f"[{rule_name}]"]
+    parts = [f"[{triage}]", f"[{rule_name}]"]
 
     if size is not None:
         parts.append(f"[{format_size(size)}]")
     if modified:
         parts.append(f"[mtime:{modified}]")
 
-    parts.append(f"{bold}{file_path}{reset}")
+    parts.append(file_path)
 
     if match:
         parts.append(f"Match: {match}")
     if context:
         parts.append(f"Context: {context[:200]}...")
 
-    is_json = any(
-        isinstance(h.formatter, SnafflerJSONFormatter)
-        for h in logger.handlers
-    )
-
-    message = "file_match" if is_json else " ".join(parts)
+    message = " ".join(parts)
 
     extra = {
         "file_path": file_path,
