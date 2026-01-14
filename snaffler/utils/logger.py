@@ -112,7 +112,6 @@ class SnafflerJSONFormatter(logging.Formatter):
         data = {
             "timestamp": datetime.fromtimestamp(record.created).isoformat(),
             "level": record.levelname,
-            "message": record.getMessage(),
         }
 
         for field in (
