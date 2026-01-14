@@ -9,6 +9,7 @@ from snaffler.classifiers.loader import RuleLoader
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.engine.runner import SnafflerRunner
 from snaffler.utils.logger import setup_logging
+from datetime import datetime
 
 app = typer.Typer(
     add_completion=False,
@@ -280,8 +281,13 @@ def run(
         cfg.rules.rule_dir = f"{rule_dir}"
 
     # ---------- OUTPUT ----------
-    cfg.output.to_file = output_file is not None
-    cfg.output.output_file = str(output_file) if output_file else None
+    if output_file:
+        cfg.output.to_file = True
+        cfg.output.output_file = str(output_file)
+    else:
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        cfg.output.to_file = True
+        cfg.output.output_file = f"snaffler-{ts}.log"
     cfg.output.log_level = log_level
     cfg.output.log_type = log_type
 
@@ -322,7 +328,7 @@ def run(
         log_level=cfg.output.log_level,
         log_to_file=cfg.output.to_file,
         log_file_path=cfg.output.output_file,
-        log_to_console=not cfg.output.to_file,
+        log_to_console=True,
         log_type=cfg.output.log_type,
     )
 

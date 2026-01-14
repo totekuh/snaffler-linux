@@ -11,6 +11,24 @@ from pathlib import Path
 from typing import Optional
 
 
+class FlushStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        super().emit(record)
+        try:
+            self.flush()
+        except Exception:
+            pass
+
+
+class FlushFileHandler(logging.FileHandler):
+    def emit(self, record):
+        super().emit(record)
+        try:
+            self.flush()
+        except Exception:
+            pass
+
+
 class FindingsOnlyFilter(logging.Filter):
     def filter(self, record):
         return bool(getattr(record, "is_data", False))
@@ -24,10 +42,6 @@ class Colors:
     GRAY = '\033[37m'
     RESET = '\033[0m'
     BOLD = '\033[1m'
-
-
-def _logger_has_file_handler(logger: logging.Logger) -> bool:
-    return any(isinstance(h, logging.FileHandler) for h in logger.handlers)
 
 
 class SnafflerFormatter(logging.Formatter):
@@ -50,10 +64,7 @@ class SnafflerFormatter(logging.Formatter):
         level = record.levelname
         message = record.getMessage()
 
-        use_colors = (
-                sys.stdout.isatty()
-                and not _logger_has_file_handler(self.logger)
-        )
+        use_colors = sys.stdout.isatty()
 
         if use_colors:
             color = self.LEVEL_COLORS.get(level, '')
@@ -85,6 +96,7 @@ class SnafflerJSONFormatter(logging.Formatter):
                 data[field] = getattr(record, field)
 
         return json.dumps(data)
+
 
 class SnafflerTSVFormatter(logging.Formatter):
     FIELDS = (
@@ -120,7 +132,6 @@ class SnafflerTSVFormatter(logging.Formatter):
         return "\t".join(row)
 
 
-
 def setup_logging(
         log_level: str = "info",
         log_to_file: bool = False,
@@ -128,13 +139,14 @@ def setup_logging(
         log_to_console: bool = True,
         log_type: str = "plain",
 ) -> logging.Logger:
-
     level_map = {
         "trace": logging.DEBUG,
         "debug": logging.DEBUG,
         "info": logging.INFO,
         "data": logging.WARNING,
     }
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
 
     level = level_map.get(log_level.lower(), logging.INFO)
 
@@ -143,14 +155,14 @@ def setup_logging(
     logger.handlers.clear()
 
     if log_to_console:
-        ch = logging.StreamHandler(sys.stdout)
+        ch = FlushStreamHandler(sys.stdout)
         ch.setLevel(level)
         ch.setFormatter(SnafflerFormatter(logger))
         logger.addHandler(ch)
 
     if log_to_file and log_file_path:
         Path(log_file_path).parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
+        fh = FlushFileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
 
         if log_level == "data":
             fh.setLevel(logging.DEBUG)
@@ -167,7 +179,7 @@ def setup_logging(
                     "timestamp\ttriage\trule_name\tfile_path\tsize\tmtime\tfinding_id\tmatch_context\n"
                 )
 
-            fh = logging.FileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
+            fh = FlushFileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
             fh.setLevel(logging.DEBUG)
             fh.addFilter(FindingsOnlyFilter())
             fh.setFormatter(SnafflerTSVFormatter())
@@ -195,11 +207,7 @@ def log_file_result(
         size: Optional[int] = None,
         modified: Optional[str] = None,
 ):
-
-    use_colors = (
-            sys.stdout.isatty()
-            and not _logger_has_file_handler(logger)
-    )
+    use_colors = sys.stdout.isatty()
 
     triage_colors = {
         "Black": Colors.BLACK + Colors.BOLD,
