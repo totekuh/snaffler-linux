@@ -142,7 +142,7 @@ def run(
         log_type: str = typer.Option(
             DEFAULT_LOG_TYPE,
             "-t", "--log-type",
-            help="Log format: plain | json | tsv",
+            help="Log format: plain | json | tsv | all",
             rich_help_panel="Output",
         ),
         no_banner: bool = typer.Option(

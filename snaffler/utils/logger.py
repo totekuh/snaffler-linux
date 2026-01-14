@@ -10,6 +10,33 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+def _plain_file_handler(logger, path: Path, level: int):
+    h = FlushFileHandler(path, mode="a", encoding="utf-8", errors="replace")
+    h.setLevel(level)
+    h.setFormatter(SnafflerFormatter(logger))
+    return h
+
+
+def _json_file_handler(path: Path):
+    h = FlushFileHandler(path, mode="a", encoding="utf-8", errors="replace")
+    h.setLevel(logging.DEBUG)
+    h.addFilter(FindingsOnlyFilter())
+    h.setFormatter(SnafflerJSONFormatter())
+    return h
+
+
+def _tsv_file_handler(path: Path):
+    if not path.exists():
+        path.write_text(
+            "timestamp\ttriage\trule_name\tfile_path\tsize\tmtime\tfinding_id\tmatch_context\n",
+            encoding="utf-8",
+        )
+    h = FlushFileHandler(path, mode="a", encoding="utf-8", errors="replace")
+    h.setLevel(logging.DEBUG)
+    h.addFilter(FindingsOnlyFilter())
+    h.setFormatter(SnafflerTSVFormatter())
+    return h
+
 
 class FlushStreamHandler(logging.StreamHandler):
     def emit(self, record):
@@ -161,32 +188,28 @@ def setup_logging(
         logger.addHandler(ch)
 
     if log_to_file and log_file_path:
-        Path(log_file_path).parent.mkdir(parents=True, exist_ok=True)
-        fh = FlushFileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
+        base = Path(log_file_path)
+        base.parent.mkdir(parents=True, exist_ok=True)
 
-        if log_level == "data":
-            fh.setLevel(logging.DEBUG)
-            fh.addFilter(FindingsOnlyFilter())
-        else:
-            fh.setLevel(level)
+        handlers = []
 
-        if log_type == "json":
-            fh.setFormatter(SnafflerJSONFormatter())
+        if log_type == "all":
+            handlers.append(_plain_file_handler(logger, base.with_suffix(".log"), level))
+            handlers.append(_json_file_handler(base.with_suffix(".json")))
+            handlers.append(_tsv_file_handler(base.with_suffix(".tsv")))
+
+        elif log_type == "json":
+            handlers.append(_json_file_handler(base))
+
         elif log_type == "tsv":
-            Path(log_file_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(log_file_path, "w", encoding="utf-8") as f:
-                f.write(
-                    "timestamp\ttriage\trule_name\tfile_path\tsize\tmtime\tfinding_id\tmatch_context\n"
-                )
+            handlers.append(_tsv_file_handler(base))
 
-            fh = FlushFileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
-            fh.setLevel(logging.DEBUG)
-            fh.addFilter(FindingsOnlyFilter())
-            fh.setFormatter(SnafflerTSVFormatter())
-        else:
-            fh.setFormatter(SnafflerFormatter(logger))
+        else:  # plain
+            handlers.append(_plain_file_handler(logger, base, level))
 
-        logger.addHandler(fh)
+        for h in handlers:
+            logger.addHandler(h)
+
 
     return logger
 
