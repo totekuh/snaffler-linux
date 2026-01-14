@@ -3,7 +3,7 @@
 import threading
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Any
 
 from impacket.smb import FILE_READ_DATA, FILE_READ_ATTRIBUTES, FILE_SHARE_READ
 
@@ -77,3 +77,10 @@ class SMBFileAccessor(FileAccessor):
                 local.write_bytes(data)
         except Exception:
             pass
+
+    def list_path(self, server: str, share: str, path: str) -> List[Any]:
+        try:
+            smb = self._get_smb(server)
+            return smb.listPath(share, path)
+        except Exception:
+            return []

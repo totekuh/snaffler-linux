@@ -119,3 +119,27 @@ def test_smb_reconnect_on_dead_connection():
         data = accessor.read("srv", "share", "\\file.txt")
 
         assert data == b"NEW"
+
+
+def test_list_path_success():
+    smb = make_smb_mock()
+    fake_entries = [MagicMock(), MagicMock()]
+    smb.listPath.return_value = fake_entries
+
+    accessor = make_accessor(smb)
+
+    result = accessor.list_path("srv", "share", "/*")
+
+    assert result == fake_entries
+    smb.listPath.assert_called_once_with("share", "/*")
+
+
+def test_list_path_failure():
+    smb = make_smb_mock()
+    accessor = make_accessor(smb)
+
+    accessor._get_smb = MagicMock(side_effect=Exception("fail"))
+
+    result = accessor.list_path("srv", "share", "/*")
+
+    assert result == []

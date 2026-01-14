@@ -5,8 +5,7 @@ Directory tree walking over SMB with resume support
 import logging
 from typing import List, Tuple, Any
 
-from impacket.smbconnection import SessionError
-
+from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.classifiers.rules import (
     MatchAction,
     EnumerationScope,
@@ -14,7 +13,7 @@ from snaffler.classifiers.rules import (
 )
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.resume.scan_state import ScanState
-from snaffler.transport.smb import SMBTransport
+from snaffler.utils.path_utils import parse_unc_base
 
 logger = logging.getLogger("snaffler")
 
@@ -23,11 +22,12 @@ class TreeWalker:
     def __init__(
             self,
             cfg: SnafflerConfiguration,
+            file_accessor: FileAccessor,
             state: ScanState | None = None,
     ):
         self.cfg = cfg
         self.state = state
-        self.smb_transport = SMBTransport(cfg)
+        self.file_accessor = file_accessor
 
         self.dir_classifiers = [
             r for r in cfg.rules.directory
@@ -49,24 +49,16 @@ class TreeWalker:
         walked_dirs: List[str] = []
 
         try:
-            parts = unc_path.replace("\\", "/").split("/")
-            parts = [p for p in parts if p]
-
-            if len(parts) < 2:
+            parsed = parse_unc_base(unc_path)
+            if not parsed:
                 logger.error(
                     f"Invalid UNC path: {unc_path}; example: //10.10.10.10/SHARE$"
                 )
                 return files, walked_dirs
 
-            server = parts[0]
-            share = parts[1]
-            path = "/" + "/".join(parts[2:]) if len(parts) > 2 else "/"
+            server, share, path = parsed
 
-            smb = self.smb_transport.connect(server)
-            try:
-                self._walk_directory(smb, server, share, path, files, walked_dirs)
-            finally:
-                smb.logoff()
+            self._walk_directory(server, share, path, files, walked_dirs)
 
             if files:
                 logger.info(f"Found {len(files)} files in {unc_path}")
@@ -78,7 +70,6 @@ class TreeWalker:
 
     def _walk_directory(
             self,
-            smb,
             server: str,
             share: str,
             path: str,
@@ -97,10 +88,9 @@ class TreeWalker:
             return
 
         try:
-            try:
-                entries = smb.listPath(share, path + "*")
-            except SessionError as e:
-                logger.debug(f"Cannot list {unc_dir}: {e}")
+            entries = self.file_accessor.list_path(server, share, path + "*")
+            if not entries:
+                logger.debug(f"Cannot list or empty: {unc_dir}")
                 return
 
             for entry in entries:
@@ -114,7 +104,7 @@ class TreeWalker:
                 if entry.is_directory():
                     if self._should_scan_directory(unc_full):
                         self._walk_directory(
-                            smb, server, share, entry_path, files, walked_dirs
+                            server, share, entry_path, files, walked_dirs
                         )
                 else:
                     files.append((unc_full, entry))

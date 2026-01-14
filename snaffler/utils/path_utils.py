@@ -1,16 +1,53 @@
 #!/usr/bin/env python3
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
+
+
+def parse_unc_base(unc_path: str) -> Optional[Tuple[str, str, str]]:
+    """Parse UNC path into base components.
+
+    Args:
+        unc_path: UNC path like //server/share/path or //server/share
+
+    Returns:
+        Tuple of (server, share, path) where path uses forward slashes
+        and defaults to "/" for share root. Returns None if invalid.
+    """
+    normalized = unc_path.replace("\\", "/")
+    parts = [p for p in normalized.split("/") if p]
+
+    if len(parts) < 2:
+        return None
+
+    server = parts[0]
+    share = parts[1]
+    path = "/" + "/".join(parts[2:]) if len(parts) > 2 else "/"
+
+    return server, share, path
 
 
 def parse_unc_path(unc_path: str):
-    parts = [p for p in unc_path.split("/") if p]
-    if len(parts) < 3:
+    """Parse UNC file path into components including filename.
+
+    Args:
+        unc_path: UNC path to a file like //server/share/dir/file.txt
+
+    Returns:
+        Tuple of (server, share, smb_path, file_name, ext) where smb_path
+        uses backslashes. Returns None if path doesn't include a file.
+    """
+    base = parse_unc_base(unc_path)
+    if not base:
         return None
 
-    server, share = parts[0], parts[1]
-    smb_path = "\\" + "\\".join(parts[2:])
+    server, share, path = base
+
+    # Need at least a filename (not just share root)
+    if path == "/":
+        return None
+
+    smb_path = "\\" + path[1:].replace("/", "\\")
 
     p = Path(unc_path)
     file_name = p.name

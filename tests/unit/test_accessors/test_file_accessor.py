@@ -28,7 +28,11 @@ def test_file_accessor_complete_implementation():
         def copy_to_local(self, server, share, path, dest_root):
             pass
 
+        def list_path(self, server: str, share: str, path: str):
+            return []
+
     accessor = DummyAccessor()
 
     assert accessor.can_read("srv", "share", "/f.txt") is True
     assert accessor.read("srv", "share", "/f.txt") == b"data"
+    assert accessor.list_path("srv", "share", "/*") == []

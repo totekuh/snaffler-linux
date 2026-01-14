@@ -24,10 +24,15 @@ class FilePipeline:
         self.tree_threads = cfg.advanced.tree_threads
         self.file_threads = cfg.advanced.file_threads
 
-        self.tree_walker = TreeWalker(cfg,
-                                      state=state)
-
+        # Shared accessor for both tree walking and file scanning
         file_accessor = SMBFileAccessor(cfg)
+
+        self.tree_walker = TreeWalker(
+            cfg,
+            file_accessor=file_accessor,
+            state=state,
+        )
+
         rule_evaluator = RuleEvaluator(
             file_rules=cfg.rules.file,
             content_rules=cfg.rules.content,
@@ -55,9 +60,9 @@ class FilePipeline:
             for future in as_completed(future_to_path):
                 path = future_to_path[future]
                 try:
-                    files, dirs = future.result()
+                    files, walked_dirs = future.result()
                     all_files.extend(files)
-                    all_walked_dirs.extend(dirs)
+                    all_walked_dirs.extend(walked_dirs)
                 except Exception as e:
                     logger.debug(f"Error walking {path}: {e}")
 
@@ -111,7 +116,7 @@ class FilePipeline:
         if self.state and all_walked_dirs:
             for dir_path in all_walked_dirs:
                 self.state.mark_dir_done(dir_path)
-            logger.debug(f"Marked {len(all_walked_dirs)} directories as completed (all files scanned)")
+            logger.debug(f"Marked {len(all_walked_dirs)} directories as completed")
 
         logger.info(f"Scan completed: {results_count} files matched")
         return results_count
