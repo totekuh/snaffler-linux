@@ -25,7 +25,7 @@ def make_ctx(
         name=name,
         ext=ext,
         size=size,
-        modified=modified or datetime.utcfromtimestamp(0),
+        modified=modified,
     )
 
 
