@@ -948,7 +948,9 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             wordlist_type=MatchListType.REGEX,
             wordlist=[
                 r'passw?o?r?d\s*=\s*[\'"][^\'"]....',
+                r'passw?o?r?d\s*=\s*[^\s\'"\r\n]{4,}',  # unquoted: password=value
                 r'api[Kk]ey\s*=\s*[\'"][^\'"]....',
+                r'api[Kk]ey\s*=\s*[^\s\'"\r\n]{4,}',  # unquoted: apiKey=value
                 r'passw?o?r?d?>\s*[^\s<]+\s*<',
                 r'passw?o?r?d?>.{3,2000}</pass',
                 r'[\s]+-passw?o?r?d?',
