@@ -1,0 +1,28 @@
+[2026-01-14 16:55:38] [INFO] Starting Snaffler at 2026-01-14 16:55:38
+[2026-01-14 16:55:38] [INFO] Starting share discovery on 1 computers
+[2026-01-14 16:55:39] [INFO] Readable share: //ROMCS0850.user.alitalia.local/AcarsSpedizioneNewsDiurnaM
+[2026-01-14 16:55:39] [INFO] Readable share: //ROMCS0850.user.alitalia.local/INSTALL$
+[2026-01-14 16:55:39] [INFO] Found 2 readable shares on ROMCS0850.user.alitalia.local
+[2026-01-14 16:55:39] [INFO] Starting file discovery on 2 paths
+[2026-01-14 16:57:04] [INFO] Found 6809 files in //ROMCS0850.user.alitalia.local/INSTALL$
+[2026-01-14 16:58:16] [WARNING] [Green] [KeepNameContainsGreen] [1.5KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/installshield/util/TTYDisplay$PasswordThread.class Match: Passw
+[2026-01-14 16:58:19] [WARNING] [Green] [KeepNameContainsGreen] [2.1KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/installshield/wizardx/panels/PasswordInputField.class Match: Passw
+[2026-01-14 16:58:19] [WARNING] [Green] [KeepNameContainsGreen] [2.3KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/installshield/wizardx/panels/PasswordPanelAWTImpl.class Match: Passw
+[2026-01-14 16:58:19] [WARNING] [Green] [KeepNameContainsGreen] [651.0B] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/installshield/wizardx/panels/PasswordInputFieldBeanInfo.class Match: Passw
+[2026-01-14 16:58:19] [WARNING] [Green] [KeepNameContainsGreen] [5.1KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/installshield/wizardx/panels/PasswordPanel.class Match: Passw
+[2026-01-14 16:58:19] [WARNING] [Green] [KeepNameContainsGreen] [3.3KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/installshield/wizardx/panels/PasswordPanelSwingImpl.class Match: Passw
+[2026-01-14 16:58:19] [WARNING] [Green] [KeepNameContainsGreen] [1.3KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/installshield/wizardx/panels/PasswordPanelConsoleImpl.class Match: Passw
+[2026-01-14 16:58:19] [WARNING] [Green] [KeepNameContainsGreen] [1.4KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/installshield/wizardx/panels/PasswordPanelBeanInfo.class Match: Passw
+[2026-01-14 16:58:20] [WARNING] [Green] [KeepNameContainsGreen] [4.6KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/installshield/wizardx/panels/RuntimePasswordPanel.class Match: Passw
+[2026-01-14 16:58:24] [WARNING] [Green] [KeepNameContainsGreen] [1.9KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/sybase/ismp/ase/wizardbean/ui/SwingPasswordInputLine.class Match: Passw
+[2026-01-14 16:58:24] [WARNING] [Red] [KeepSqlAccountCreation] [46.0KB] [mtime:2013-03-13 16:18:40] //ROMCS0850.user.alitalia.local/INSTALL$/ASE 12.5.3 PC Client/pcclient/suite/com/sybase/sis/lang/SISResourceBundle.properties Match: create user {0} identified by Context:  2 = acdb owner
+#3=acdb password
+asa_create_dbo=GRANT CONNECT TO acdbdbo IDENTIFIED BY dbopswd;GRANT CONNECT TO {2} IDENTIFIED BY {3};\nGRANT DBA TO {2};\n
+
+oracle_create_dbo=drop user {0} cascade;\n ...
+[2026-01-14 16:59:28] [INFO] Scan completed: 11 files matched
+[2026-01-14 16:59:28] [INFO] ------------------------------------------------------------
+[2026-01-14 16:59:28] [INFO] Started:  2026-01-14 16:55:38
+[2026-01-14 16:59:28] [INFO] Finished: 2026-01-14 16:59:28
+[2026-01-14 16:59:28] [INFO] Duration: 3m 49s
+[2026-01-14 16:59:28] [INFO] ------------------------------------------------------------

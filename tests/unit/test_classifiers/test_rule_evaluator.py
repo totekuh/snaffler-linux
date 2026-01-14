@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, UTC
 
 from snaffler.analysis.model.file_context import FileContext
 from snaffler.classifiers.evaluator import RuleEvaluator, RuleDecision
@@ -25,7 +25,7 @@ def make_ctx(
         name=name,
         ext=ext,
         size=size,
-        modified=modified,
+        modified=modified or datetime.fromtimestamp(0, UTC)
     )
 
 
@@ -184,6 +184,7 @@ def test_postmatch_not_discarded():
     ev = RuleEvaluator([], [], [rule])
 
     assert ev.should_discard_postmatch(ctx) is False
+
 
 def test_postmatch_discard_large_file_by_size():
     ctx = make_ctx(
