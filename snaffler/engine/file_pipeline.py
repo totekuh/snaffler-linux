@@ -43,6 +43,7 @@ class FilePipeline:
         logger.info(f"Starting file discovery on {len(paths)} paths")
 
         all_files: list[tuple[str, object]] = []
+        all_walked_dirs: list[str] = []
 
         # ---------- Tree walking ----------
         with ThreadPoolExecutor(max_workers=self.tree_threads) as executor:
@@ -54,8 +55,9 @@ class FilePipeline:
             for future in as_completed(future_to_path):
                 path = future_to_path[future]
                 try:
-                    files = future.result()
+                    files, dirs = future.result()
                     all_files.extend(files)
+                    all_walked_dirs.extend(dirs)
                 except Exception as e:
                     logger.debug(f"Error walking {path}: {e}")
 
@@ -104,6 +106,12 @@ class FilePipeline:
 
                 except Exception as e:
                     logger.debug(f"Error scanning {file_path}: {e}")
+
+        # ---------- Mark directories done AFTER all file scanning completes ----------
+        if self.state and all_walked_dirs:
+            for dir_path in all_walked_dirs:
+                self.state.mark_dir_done(dir_path)
+            logger.debug(f"Marked {len(all_walked_dirs)} directories as completed (all files scanned)")
 
         logger.info(f"Scan completed: {results_count} files matched")
         return results_count

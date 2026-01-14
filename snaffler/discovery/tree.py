@@ -34,15 +34,19 @@ class TreeWalker:
             if r.enumeration_scope == EnumerationScope.DIRECTORY_ENUMERATION
         ]
 
-    def walk_tree(self, unc_path: str) -> List[Tuple[str, Any]]:
+    def walk_tree(self, unc_path: str) -> Tuple[List[Tuple[str, Any]], List[str]]:
         """
-        Walk a directory tree and return all files.
+        Walk a directory tree and return all files and walked directories.
 
         Resume semantics:
         - Directories are skipped if already marked as checked
-        - Directories are marked checked only after full traversal
+        - Directories are NOT marked here - caller must mark them after file scanning
+
+        Returns:
+            Tuple of (files, walked_directories)
         """
         files: List[Tuple[str, Any]] = []
+        walked_dirs: List[str] = []
 
         try:
             parts = unc_path.replace("\\", "/").split("/")
@@ -52,7 +56,7 @@ class TreeWalker:
                 logger.error(
                     f"Invalid UNC path: {unc_path}; example: //10.10.10.10/SHARE$"
                 )
-                return files
+                return files, walked_dirs
 
             server = parts[0]
             share = parts[1]
@@ -60,7 +64,7 @@ class TreeWalker:
 
             smb = self.smb_transport.connect(server)
             try:
-                self._walk_directory(smb, server, share, path, files)
+                self._walk_directory(smb, server, share, path, files, walked_dirs)
             finally:
                 smb.logoff()
 
@@ -70,7 +74,7 @@ class TreeWalker:
         except Exception as e:
             logger.debug(f"Error walking tree {unc_path}: {e}")
 
-        return files
+        return files, walked_dirs
 
     def _walk_directory(
             self,
@@ -79,6 +83,7 @@ class TreeWalker:
             share: str,
             path: str,
             files: List[Tuple[str, Any]],
+            walked_dirs: List[str],
     ):
         if not path.endswith("/"):
             path += "/"
@@ -86,7 +91,7 @@ class TreeWalker:
         unc_dir = f"//{server}/{share}{path}"
         logger.debug(f"Walking tree: {unc_dir}")
 
-        # ---------- Resume: directory already fully enumerated ----------
+        # ---------- Resume: directory already fully scanned ----------
         if self.state and self.state.should_skip_dir(unc_dir):
             logger.debug(f"Resume: skipping directory {unc_dir}")
             return
@@ -109,14 +114,13 @@ class TreeWalker:
                 if entry.is_directory():
                     if self._should_scan_directory(unc_full):
                         self._walk_directory(
-                            smb, server, share, entry_path, files
+                            smb, server, share, entry_path, files, walked_dirs
                         )
                 else:
                     files.append((unc_full, entry))
 
-            # ---------- Mark directory AFTER full traversal ----------
-            if self.state:
-                self.state.mark_dir_done(unc_dir)
+            # ---------- Collect directory for later marking ----------
+            walked_dirs.append(unc_dir)
 
         except Exception as e:
             logger.debug(f"Error walking {unc_dir}: {e}")

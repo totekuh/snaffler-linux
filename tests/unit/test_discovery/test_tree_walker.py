@@ -41,9 +41,10 @@ def test_walk_tree_invalid_unc():
     cfg = make_cfg()
     walker = TreeWalker(cfg)
 
-    result = walker.walk_tree("INVALID")
+    files, walked_dirs = walker.walk_tree("INVALID")
 
-    assert result == []
+    assert files == []
+    assert walked_dirs == []
 
 
 def test_walk_tree_simple_file():
@@ -58,10 +59,11 @@ def test_walk_tree_simple_file():
     with patch.object(
         walker.smb_transport, "connect", return_value=smb
     ):
-        files = walker.walk_tree("//HOST/SHARE")
+        files, walked_dirs = walker.walk_tree("//HOST/SHARE")
 
     assert len(files) == 1
     assert files[0][0] == "//HOST/SHARE/file.txt"
+    assert "//HOST/SHARE/" in walked_dirs
     smb.logoff.assert_called_once()
 
 
@@ -83,9 +85,12 @@ def test_walk_tree_recursive_directory():
     with patch.object(
         walker.smb_transport, "connect", return_value=smb
     ):
-        files = walker.walk_tree("//HOST/SHARE")
+        files, walked_dirs = walker.walk_tree("//HOST/SHARE")
 
-    assert files == [("//HOST/SHARE/dir/file.txt", smb.listPath.return_value)] or len(files) == 1
+    assert len(files) == 1
+    assert files[0][0] == "//HOST/SHARE/dir/file.txt"
+    assert "//HOST/SHARE/" in walked_dirs
+    assert "//HOST/SHARE/dir/" in walked_dirs
 
 
 def test_resume_skips_directory():
@@ -100,13 +105,16 @@ def test_resume_skips_directory():
     with patch.object(
         walker.smb_transport, "connect", return_value=smb
     ):
-        files = walker.walk_tree("//HOST/SHARE")
+        files, walked_dirs = walker.walk_tree("//HOST/SHARE")
 
     assert files == []
+    assert walked_dirs == []
     state.should_skip_dir.assert_called()
 
 
-def test_resume_marks_dir_done():
+def test_resume_returns_walked_dirs_for_caller_to_mark():
+    """walk_tree returns walked_dirs instead of marking them directly.
+    The caller (FilePipeline) is responsible for marking dirs after file scanning."""
     cfg = make_cfg()
     state = MagicMock()
     state.should_skip_dir.return_value = False
@@ -119,9 +127,11 @@ def test_resume_marks_dir_done():
     with patch.object(
         walker.smb_transport, "connect", return_value=smb
     ):
-        walker.walk_tree("//HOST/SHARE")
+        files, walked_dirs = walker.walk_tree("//HOST/SHARE")
 
-    state.mark_dir_done.assert_called_once_with("//HOST/SHARE/")
+    # walk_tree should NOT mark dirs - it returns them for caller to mark later
+    state.mark_dir_done.assert_not_called()
+    assert "//HOST/SHARE/" in walked_dirs
 
 
 def test_should_scan_directory_discard():
