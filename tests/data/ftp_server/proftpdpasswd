@@ -1,0 +1,2 @@
+testuser:$1$abcd1234$xyz:1000:1000::/home/testuser:/bin/bash
+admin:$1$xyz123$abc:1001:1001::/home/admin:/bin/bash

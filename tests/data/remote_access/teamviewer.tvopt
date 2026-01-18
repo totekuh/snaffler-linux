@@ -1,0 +1,17 @@
+[General]
+Version=15
+Language=en
+
+[Connections]
+Connection1_Name=Production Server 01
+Connection1_Host=10.0.1.50
+Connection1_Password=encrypted:ZGVmYXVsdA==
+Connection1_User=admin
+
+Connection2_Name=Development Server
+Connection2_Host=dev.company.com
+Connection2_Password=encrypted:cGFzc3dvcmQxMjM=
+Connection2_User=developer
+
+[Security]
+EncryptionLevel=High

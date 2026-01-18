@@ -1,0 +1,6 @@
+!
+! Startup config without .cfg extension
+version 12.4
+!
+hostname EdgeRouter
+!

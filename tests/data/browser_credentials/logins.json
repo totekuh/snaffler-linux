@@ -1,0 +1,20 @@
+{
+  "logins": [
+    {
+      "id": 1,
+      "hostname": "https://example.com",
+      "httpRealm": null,
+      "formSubmitURL": "https://example.com/login",
+      "usernameField": "username",
+      "passwordField": "password",
+      "encryptedUsername": "MEIEEPgAAAAAAAAAAAAAAAAAAAEwFAYIKoZIhvcNAwcECNpL",
+      "encryptedPassword": "MEoEEPgAAAAAAAAAAAAAAAAAAAEwFAYIKoZIhvcNAwcECPKs",
+      "guid": "{12345678-1234-1234-1234-123456789012}",
+      "encType": 1,
+      "timeCreated": 1234567890000,
+      "timeLastUsed": 1234567890000,
+      "timePasswordChanged": 1234567890000,
+      "timesUsed": 5
+    }
+  ]
+}

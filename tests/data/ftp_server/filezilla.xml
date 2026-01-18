@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FileZillaServer>
+  <Settings>
+    <Item name="Admin port">14147</Item>
+    <Item name="Admin password">encrypted_password_here</Item>
+  </Settings>
+  <Users>
+    <User Name="ftpuser">
+      <Option Name="Pass">hashed_password</Option>
+      <IpFilter>
+        <Allowed>*</Allowed>
+      </IpFilter>
+    </User>
+  </Users>
+</FileZillaServer>

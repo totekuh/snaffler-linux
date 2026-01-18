@@ -1,0 +1,11 @@
+RSA SecurID Token
+Version: 2.1
+Serial: 123456789012
+User: john.doe@company.com
+Seed: A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6
+Token:
+  Type: Software
+  Algorithm: TOTP
+  Interval: 60
+  Digits: 6
+Key: base64encodedkey1234567890abcdefghijklmnopqrstuvwxyz==

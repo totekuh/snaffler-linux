@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ConnectionManager>
+  <Connections>
+    <Connection>
+      <Name>Production SSH</Name>
+      <Protocol>SSH</Protocol>
+      <Host>prod-server.company.com</Host>
+      <Port>22</Port>
+      <Username>admin</Username>
+      <Password>AdminP@ss123!</Password>
+      <PrivateKey>/home/user/.ssh/id_rsa</PrivateKey>
+    </Connection>
+    <Connection>
+      <Name>Staging Database</Name>
+      <Protocol>MySQL</Protocol>
+      <Host>staging-db.company.com</Host>
+      <Port>3306</Port>
+      <Username>dbuser</Username>
+      <Password>DBP@ssw0rd456</Password>
+      <Database>staging_db</Database>
+    </Connection>
+    <Connection>
+      <Name>VNC Server</Name>
+      <Protocol>VNC</Protocol>
+      <Host>10.0.1.200</Host>
+      <Port>5900</Port>
+      <Password>VncP@ss789</Password>
+    </Connection>
+  </Connections>
+</ConnectionManager>

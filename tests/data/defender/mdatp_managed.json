@@ -1,0 +1,13 @@
+{
+  "antivirusEngine": {
+    "enforcementLevel": "real_time",
+    "scanAfterDefinitionUpdate": true,
+    "scanArchives": true,
+    "behaviorMonitoring": "enabled"
+  },
+  "cloudService": {
+    "enabled": true,
+    "diagnosticDataLevel": "optional",
+    "automaticSampleSubmission": true
+  }
+}

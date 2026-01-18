@@ -1,0 +1,17 @@
+Royal TS Document
+Version: 5.0
+Encrypted: True
+
+[Connection:Web-01]
+URI=web01.company.com
+Username=admin
+Password=encrypted:AES256:abc123def456
+Protocol=RDP
+Port=3389
+
+[Connection:DB-01]
+URI=db01.company.com
+Username=dbadmin
+Password=encrypted:AES256:xyz789uvw012
+Protocol=SSH
+Port=22

@@ -1,0 +1,14 @@
+Royal TSX Document
+Version: 4.3
+
+Connections:
+  - Name: Production Web Server
+    Host: 10.0.1.100
+    User: root
+    Password: R0otP@ssw0rd!
+    Type: SSH
+  - Name: Staging Database
+    Host: staging-db.company.com
+    User: postgres
+    Password: DBp@ss123
+    Type: PostgreSQL

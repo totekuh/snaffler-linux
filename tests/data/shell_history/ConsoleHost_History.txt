@@ -1,0 +1,3 @@
+Import-Module ActiveDirectory
+$password = ConvertTo-SecureString 'AdminP@ss789' -AsPlainText -Force
+Get-ADUser -Filter *

@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "sensorId": "12345678-1234-1234-1234-123456789012",
+  "orgId": "abcdef01-2345-6789-abcd-ef0123456789",
+  "serverUrl": "https://defender.microsoft.com",
+  "settings": {
+    "cloudBlockLevel": "high",
+    "tamperProtection": true
+  }
+}

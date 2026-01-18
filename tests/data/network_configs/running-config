@@ -1,0 +1,8 @@
+!
+! Running config without .cfg extension
+version 12.4
+!
+hostname CoreRouter
+!
+enable password 7 08204E
+!

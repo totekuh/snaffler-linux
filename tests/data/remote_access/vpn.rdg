@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RDCMan programVersion="2.7" schemaVersion="3">
+  <file>
+    <credentialsProfiles />
+    <properties>
+      <expanded>True</expanded>
+      <name>Production Servers</name>
+    </properties>
+    <server>
+      <properties>
+        <displayName>Web Server 01</displayName>
+        <name>web01.prod.company.com</name>
+      </properties>
+      <logonCredentials inherit="None">
+        <profileName scope="Local">Custom</profileName>
+        <userName>Administrator</userName>
+        <password>AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA</password>
+        <domain>COMPANY</domain>
+      </logonCredentials>
+    </server>
+    <server>
+      <properties>
+        <displayName>Database Server</displayName>
+        <name>db01.prod.company.com</name>
+      </properties>
+      <logonCredentials inherit="None">
+        <profileName scope="Local">Custom</profileName>
+        <userName>sa_admin</userName>
+        <password>P@ssw0rd123!DB</password>
+        <domain>COMPANY</domain>
+      </logonCredentials>
+    </server>
+  </file>
+</RDCMan>
