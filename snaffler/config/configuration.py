@@ -25,6 +25,9 @@ class AuthConfig:
     kerberos: bool = False
     use_kcache: bool = False
 
+    # SOCKS proxy
+    socks_proxy: Optional[str] = None
+
 
 # ---------------- TARGETING ----------------
 

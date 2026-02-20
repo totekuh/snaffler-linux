@@ -123,6 +123,11 @@ def main(
             help="Use Kerberos credentials from ccache (KRB5CCNAME)",
             rich_help_panel="Authentication",
         ),
+        socks_proxy: Optional[str] = typer.Option(
+            None, "--socks",
+            help="SOCKS proxy for pivoting (e.g. socks5://127.0.0.1:1080)",
+            rich_help_panel="Authentication",
+        ),
 
         unc_targets: Optional[List[str]] = typer.Option(
             None, "--unc",
@@ -390,6 +395,15 @@ def main(
         log_to_console=True,
         log_type=cfg.output.log_type,
     )
+
+    # ---------- SOCKS proxy ----------
+    if socks_proxy:
+        cfg.auth.socks_proxy = socks_proxy
+        try:
+            from snaffler.transport.socks import setup_socks_proxy
+            setup_socks_proxy(socks_proxy)
+        except (ImportError, ValueError) as exc:
+            raise typer.BadParameter(str(exc))
 
     # ---------- run ----------
     snaff = SnafflerRunner(cfg)

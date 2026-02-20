@@ -30,6 +30,7 @@ packages = { find = {} }
 snaffler = ["rules/*.toml"]
 
 [project.optional-dependencies]
+socks = ["pysocks>=1.7.0"]
 test = [
     "pytest>=8.0",
     "pytest-cov",

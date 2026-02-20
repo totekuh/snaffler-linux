@@ -74,6 +74,13 @@ as targets.
 .B \-\-use\-kcache
 Use Kerberos credentials from ccache (reads \fBKRB5CCNAME\fR environment
 variable).
+.TP
+.BI \-\-socks " URL"
+Route all connections through a SOCKS proxy for pivoting. Accepts
+\fBsocks5://host:port\fR, \fBsocks4://host:port\fR, or bare \fBhost:port\fR
+(defaults to SOCKS5). Authenticated proxies use \fBsocks5://user:pass@host:port\fR.
+Requires the \fBpysocks\fR package (\fBpip install pysocks\fR).
+DNS resolution is performed on the proxy side so internal hostnames resolve correctly.
 .SS Targeting
 .TP
 .BI \-\-unc " TEXT"
@@ -210,6 +217,14 @@ Resume interrupted scan:
 .RS 4
 .nf
 snaffler -u admin -p pass --computer-file targets.txt --resume
+.fi
+.RE
+.PP
+Pivot through a SOCKS proxy (e.g. Chisel, Ligolo, SSH tunnel):
+.PP
+.RS 4
+.nf
+snaffler -u admin -p pass -d CORP.LOCAL --socks socks5://127.0.0.1:1080
 .fi
 .RE
 .SH TRIAGE LEVELS

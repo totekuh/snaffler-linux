@@ -29,6 +29,7 @@ Depends: ${python3:Depends},
          python3-rich (>= 13.0.0),
          python3-tomlkit,
          python3-cryptography
+Recommends: python3-socks
 Description: SMB share credential and sensitive data scanner
  Impacket port of Snaffler, a post-exploitation tool that discovers readable
  SMB shares, walks directory trees, and identifies credentials and sensitive

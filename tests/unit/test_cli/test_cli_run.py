@@ -93,6 +93,25 @@ def test_cli_no_color_sets_flag():
     logger_mod.NO_COLOR = original
 
 
+def test_cli_socks_calls_setup():
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"), \
+            patch("snaffler.transport.socks.setup_socks_proxy") as mock_setup:
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--unc", "//HOST/SHARE",
+                "--socks", "socks5://127.0.0.1:1080",
+            ],
+        )
+
+    assert result.exit_code == 0
+    mock_setup.assert_called_once_with("socks5://127.0.0.1:1080")
+
+
 def test_cli_load_config_file(tmp_path):
     cfg = tmp_path / "config.toml"
     cfg.write_text("""
