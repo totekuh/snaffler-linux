@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Optional
 
 
+NO_COLOR = False
+
+
 class FindingsOnlyFilter(logging.Filter):
     def filter(self, record):
         return bool(getattr(record, "is_data", False))
@@ -51,7 +54,8 @@ class SnafflerFormatter(logging.Formatter):
         message = record.getMessage()
 
         use_colors = (
-                sys.stdout.isatty()
+                not NO_COLOR
+                and sys.stdout.isatty()
                 and not _logger_has_file_handler(self.logger)
         )
 
@@ -197,7 +201,8 @@ def log_file_result(
 ):
 
     use_colors = (
-            sys.stdout.isatty()
+            not NO_COLOR
+            and sys.stdout.isatty()
             and not _logger_has_file_handler(logger)
     )
 

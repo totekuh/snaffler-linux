@@ -11,7 +11,6 @@ runner = CliRunner()
 
 def base_args():
     return [
-        "run",
         "--no-banner",
         "--log-level", "info",
     ]
@@ -73,6 +72,25 @@ def test_cli_no_targets_error():
 
     assert result.exit_code != 0
     assert "No targets specified" in result.output
+
+
+def test_cli_no_color_sets_flag():
+    import snaffler.utils.logger as logger_mod
+    original = logger_mod.NO_COLOR
+
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--no-color", "--unc", "//HOST/SHARE"],
+        )
+
+    assert result.exit_code == 0
+    assert logger_mod.NO_COLOR is True
+    logger_mod.NO_COLOR = original
 
 
 def test_cli_load_config_file(tmp_path):

@@ -17,6 +17,7 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 - Resume support via SQLite state database
 - Compatible with original and custom TOML rule sets
 - Deterministic, ingestion-friendly logging (plain / JSON / TSV)
+- Pipe-friendly: accepts NetExec (nxc) `--shares` output via `--stdin`
 
 ## Installation
 
@@ -31,7 +32,7 @@ pip install snaffler-ng
 Providing only a domain triggers full domain discovery:
 
 ```bash
-snaffler run \
+snaffler \
   -u USERNAME \
   -p PASSWORD \
   -d DOMAIN.LOCAL
@@ -48,7 +49,7 @@ This will automatically:
 When using Kerberos, set `KRB5CCNAME` to a valid ticket cache and use hostnames/FQDNs:
 
 ```bash
-snaffler run \
+snaffler \
 -k \
 --use-kcache \
 -d DOMAIN.LOCAL \
@@ -61,7 +62,7 @@ snaffler run \
 
 Scan a specific UNC path (no discovery):
 ```bash
-snaffler run \
+snaffler \
   -u USERNAME \
   -p PASSWORD \
   --unc //192.168.1.10/Share
@@ -71,7 +72,7 @@ snaffler run \
 
 Scan multiple computers (share discovery enabled):
 ```bash
-snaffler run \
+snaffler \
   -u USERNAME \
   -p PASSWORD \
   --computer 192.168.1.10 \
@@ -80,11 +81,21 @@ snaffler run \
 
 Load target computers from file:
 ```bash
-snaffler run \
+snaffler \
   -u USERNAME \
   -p PASSWORD \
   --computer-file targets.txt
 ```
+
+### Pipe from NetExec (nxc)
+
+Pipe `nxc smb --shares` output directly into snaffler-ng with `--stdin`:
+
+```bash
+nxc smb 10.8.50.20 -u user -p pass --shares | snaffler -u user -p pass --stdin
+```
+
+This parses NXC's share output, extracts UNC paths, and feeds them into the file scanner. Snaffler's existing share/directory rules handle filtering.
 
 ## Logging & Output Formats
 
@@ -101,7 +112,7 @@ Large environments are expected.
 You can resume interrupted scans using the `--resume` argument:
 
 ```bash
-snaffler run \
+snaffler \
 -u USERNAME \
 -p PASSWORD \
 --computer-file targets.txt \

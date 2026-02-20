@@ -256,3 +256,23 @@ def test_runner_progress_passed_to_pipelines():
 
     assert runner.share_pipeline.progress is runner.progress
     assert runner.file_pipeline.progress is runner.progress
+
+
+def test_runner_unc_seeds_progress_counters():
+    """UNC branch should seed computer/share counters from paths."""
+    cfg = make_cfg()
+    cfg.targets.unc_targets = [
+        "//10.0.0.1/Share1",
+        "//10.0.0.1/Share2",
+        "//10.0.0.2/Data",
+    ]
+
+    runner = SnafflerRunner(cfg)
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    assert runner.progress.computers_total == 2
+    assert runner.progress.computers_done == 2
+    assert runner.progress.shares_found == 3

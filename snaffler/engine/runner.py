@@ -74,7 +74,14 @@ class SnafflerRunner:
         try:
             # ---------- Direct UNC paths ----------
             if self.cfg.targets.unc_targets:
-                self.file_pipeline.run(self.cfg.targets.unc_targets)
+                paths = self.cfg.targets.unc_targets
+                # Seed progress counters from UNC paths so summary stats
+                # include computer/share counts even without SharePipeline.
+                hosts = {p.split("/")[2] for p in paths if p.startswith("//")}
+                self.progress.computers_total = len(hosts)
+                self.progress.computers_done = len(hosts)
+                self.progress.shares_found = len(paths)
+                self.file_pipeline.run(paths)
 
             # ---------- Explicit computer list ----------
             elif self.cfg.targets.computer_targets:

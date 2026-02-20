@@ -10,7 +10,6 @@ def test_dual_output_console_and_file(tmp_path):
     result = subprocess.run(
         [
             sys.executable, "-m", "snaffler.cli.main",
-            "run",
             "-q",                          # no banner
             "-u", "test",
             "-p", "test",
@@ -42,7 +41,6 @@ def test_output_file_only_no_console_loss(tmp_path):
     result = subprocess.run(
         [
             sys.executable, "-m", "snaffler.cli.main",
-            "run",
             "-q",
             "-u", "test",
             "-p", "test",

@@ -40,8 +40,61 @@ jobs:
           name: dist
           path: dist/
 
-  release:
+  build-binary:
     needs: test-build
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Build binary
+        run: |
+          pyinstaller --onefile --name snaffler-linux-x86_64 \
+            --exclude-module matplotlib \
+            --exclude-module PyQt5 \
+            --exclude-module PyQt6 \
+            --exclude-module PySide6 \
+            --exclude-module tkinter \
+            --exclude-module _tkinter \
+            --exclude-module PIL \
+            --exclude-module numpy \
+            --exclude-module pygame \
+            --exclude-module IPython \
+            --exclude-module pytest \
+            --exclude-module jedi \
+            --exclude-module astroid \
+            --exclude-module impacket.examples.ntlmrelayx \
+            --exclude-module impacket.examples.mssqlshell \
+            --exclude-module impacket.examples.ldap_shell \
+            --exclude-module impacket.mqtt \
+            --exclude-module impacket.Dot11Crypto \
+            --exclude-module impacket.Dot11KeyManager \
+            snaffler/cli/main.py
+
+      - name: Smoke test
+        run: ./dist/snaffler-linux-x86_64 --version
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary
+          path: dist/snaffler-linux-x86_64
+
+  release:
+    needs: [test-build, build-binary]
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
@@ -62,6 +115,12 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary
+          path: binary/
+
       - name: Publish to PyPI
         continue-on-error: true
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -78,4 +137,6 @@ jobs:
           tag_name: v${{ steps.version.outputs.version }}
           name: v${{ steps.version.outputs.version }}
           generate_release_notes: true
-          files: dist/*
+          files: |
+            dist/*
+            binary/snaffler-linux-x86_64

@@ -12,9 +12,16 @@ from snaffler.engine.runner import SnafflerRunner
 from snaffler.utils.logger import setup_logging
 
 
+def _get_version() -> str:
+    try:
+        return pkg_version("snaffler-ng")
+    except Exception:
+        return "1.1.0"  # fallback for PyInstaller builds
+
+
 def _version_callback(value: bool):
     if value:
-        typer.echo(f"snaffler-ng {pkg_version('snaffler-ng')}")
+        typer.echo(f"snaffler-ng {_get_version()}")
         raise typer.Exit()
 
 
@@ -56,7 +63,7 @@ def banner():
     """)
 
 
-@app.callback(invoke_without_command=True)
+@app.command()
 def main(
         version: bool = typer.Option(
             False, "-V", "--version",
@@ -64,12 +71,7 @@ def main(
             callback=_version_callback,
             is_eager=True,
         ),
-):
-    pass
 
-
-@app.command()
-def run(
         # ---------------- AUTH ----------------
         username: str = typer.Option(
             None, "-u", "--username",
@@ -148,6 +150,12 @@ def run(
             help="Don't skip disabled/stale computer accounts (by default, disabled and machines inactive for 4+ months are skipped)",
             rich_help_panel="Targeting",
         ),
+        stdin_mode: bool = typer.Option(
+            False,
+            "--stdin",
+            help="Read NXC SMB --shares output from stdin and use as UNC targets",
+            rich_help_panel="Targeting",
+        ),
 
         output_file: Optional[Path] = typer.Option(
             None, "-o", "--output",
@@ -174,6 +182,12 @@ def run(
             False,
             "-q", "--no-banner",
             help="Disable startup banner",
+            rich_help_panel="Output",
+        ),
+        no_color: bool = typer.Option(
+            False,
+            "--no-color",
+            help="Disable colored output",
             rich_help_panel="Output",
         ),
 
@@ -274,6 +288,24 @@ def run(
         cfg.targets.computer_targets = [
             l.strip() for l in computer_file.read_text().splitlines() if l.strip()
         ]
+
+    # ---------- STDIN (NXC) ----------
+    if stdin_mode:
+        if cfg.targets.unc_targets or cfg.targets.computer_targets:
+            raise typer.BadParameter(
+                "--stdin is mutually exclusive with --unc, --computer, and --computer-file"
+            )
+        import sys
+        from snaffler.utils.nxc_parser import parse_nxc_shares
+
+        raw = sys.stdin.read()
+        parsed = parse_nxc_shares(raw)
+        if not parsed:
+            raise typer.BadParameter(
+                "No shares found in stdin (expected NXC SMB --shares output)"
+            )
+        cfg.targets.unc_targets = parsed
+
     # ---------- TARGET MODE VALIDATION ----------
     has_unc = bool(cfg.targets.unc_targets)
     has_computers = bool(cfg.targets.computer_targets)
@@ -283,7 +315,7 @@ def run(
     if not (has_unc or has_computers or has_domain):
         raise typer.BadParameter(
             "No targets specified. Use one of: "
-            "--unc, --computer/--computer-file, or --domain"
+            "--unc, --computer/--computer-file, --stdin, or --domain"
         )
     # ---------- SCANNING ----------
     cfg.scanning.min_interest = min_interest
@@ -311,6 +343,10 @@ def run(
     cfg.output.output_file = str(output_file) if output_file else None
     cfg.output.log_level = log_level
     cfg.output.log_type = log_type
+
+    if no_color:
+        from snaffler.utils import logger as _logger_mod
+        _logger_mod.NO_COLOR = True
 
     # ---------- RESUME ----------
     if resume:
