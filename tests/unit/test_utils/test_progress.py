@@ -10,11 +10,13 @@ def test_format_status_defaults():
     status = ps.format_status()
     assert "elapsed=" in status
     assert "mem=" in status
-    # No counters set — should not show computers/shares/files/matched
+    # No counters set — should not show computers/shares/files/matched/severity
     assert "computers=" not in status
     assert "shares=" not in status
     assert "files=" not in status
     assert "matched=" not in status
+    assert "Black=" not in status
+    assert "Red=" not in status
 
 
 def test_format_status_with_counters():
@@ -31,6 +33,34 @@ def test_format_status_with_counters():
     assert "shares=7" in status
     assert "files=42/100" in status
     assert "matched=5" in status
+
+
+def test_format_status_severity_counts():
+    ps = ProgressState()
+    ps.files_total = 100
+    ps.files_scanned = 100
+    ps.files_matched = 10
+    ps.severity_black = 1
+    ps.severity_red = 3
+    ps.severity_yellow = 4
+    ps.severity_green = 2
+
+    status = ps.format_status()
+    assert "Black=1 Red=3 Yellow=4 Green=2" in status
+
+
+def test_format_status_severity_omits_zeroes():
+    ps = ProgressState()
+    ps.files_total = 50
+    ps.files_scanned = 50
+    ps.files_matched = 3
+    ps.severity_red = 2
+    ps.severity_green = 1
+
+    status = ps.format_status()
+    assert "Red=2 Green=1" in status
+    assert "Black" not in status
+    assert "Yellow" not in status
 
 
 def test_format_status_elapsed_format():

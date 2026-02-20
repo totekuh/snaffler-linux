@@ -10,6 +10,7 @@ from snaffler.classifiers.loader import RuleLoader
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.engine.runner import SnafflerRunner
 from snaffler.utils.logger import setup_logging
+from snaffler.utils.target_parser import expand_targets
 
 
 def _get_version() -> str:
@@ -130,7 +131,7 @@ def main(
         ),
         computer: Optional[List[str]] = typer.Option(
             None, "--computer",
-            help="Target computer(s) by hostname or FQDN (note that Kerberos requires names, not IPs)",
+            help="Target computer(s) by hostname, IP, CIDR (10.0.0.0/24), or range (10.0.0.1-50)",
             rich_help_panel="Targeting",
         ),
 
@@ -282,12 +283,13 @@ def main(
         raise typer.BadParameter("Use either --computer or --computer-file, not both")
 
     if computer:
-        cfg.targets.computer_targets = computer
+        cfg.targets.computer_targets = expand_targets(computer)
 
     if computer_file:
-        cfg.targets.computer_targets = [
+        raw_targets = [
             l.strip() for l in computer_file.read_text().splitlines() if l.strip()
         ]
+        cfg.targets.computer_targets = expand_targets(raw_targets)
 
     # ---------- STDIN (NXC) ----------
     if stdin_mode:

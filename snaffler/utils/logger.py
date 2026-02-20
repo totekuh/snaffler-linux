@@ -289,6 +289,9 @@ def print_completion_stats(start_time, progress=None):
             parts.append(f"Matched: {progress.files_matched}")
         if parts:
             logger.info(" | ".join(parts))
+        sev = progress._format_severity()
+        if sev:
+            logger.info(f"Findings: {sev}")
     logger.info("-" * 60)
 
 

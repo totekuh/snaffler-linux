@@ -112,9 +112,24 @@ class FilePipeline:
                         results_count += 1
                         if self.progress:
                             self.progress.files_matched += 1
+                            self._count_severity(result)
 
                 except Exception as e:
                     logger.debug(f"Error scanning {file_path}: {e}")
 
         logger.info(f"Scan completed: {results_count} files matched")
         return results_count
+
+    def _count_severity(self, result):
+        """Increment the per-severity counter on progress state."""
+        from snaffler.classifiers.rules import Triage
+
+        triage = result.triage
+        if triage == Triage.BLACK:
+            self.progress.severity_black += 1
+        elif triage == Triage.RED:
+            self.progress.severity_red += 1
+        elif triage == Triage.YELLOW:
+            self.progress.severity_yellow += 1
+        elif triage == Triage.GREEN:
+            self.progress.severity_green += 1
