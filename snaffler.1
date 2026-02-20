@@ -1,0 +1,248 @@
+.TH SNAFFLER 1 "February 2026" "snaffler-ng 1.1.0" "User Commands"
+.SH NAME
+snaffler \- discover credentials and sensitive data on SMB shares
+.SH SYNOPSIS
+.B snaffler
+.RB [ \-u
+.IR USERNAME ]
+.RB [ \-p
+.IR PASSWORD ]
+.RB [ \-d
+.IR DOMAIN ]
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B snaffler
+(snaffler-ng) is a post-exploitation tool that discovers readable SMB shares,
+walks directory trees, and identifies credentials and sensitive data on Windows
+systems. It is an Impacket-based Python port of the original C# Snaffler.
+.PP
+The tool operates in three pipeline stages:
+.IP 1. 4
+.B Domain Discovery
+\- queries Active Directory via LDAP for computer objects and DFS namespaces
+.IP 2. 4
+.B Share Discovery
+\- enumerates SMB shares on target hosts and checks readability
+.IP 3. 4
+.B File Scanning
+\- walks directory trees and classifies files using rule-based matching
+.PP
+Findings are assigned a triage severity:
+.B Black
+(critical),
+.B Red
+(high),
+.B Yellow
+(medium), or
+.B Green
+(low).
+.SH OPTIONS
+.SS General
+.TP
+.BR \-V ", " \-\-version
+Show version and exit.
+.TP
+.B \-\-help
+Show help message and exit.
+.SS Authentication
+.TP
+.BR \-u ", " \-\-username " " \fITEXT\fR
+Username for authentication.
+.TP
+.BR \-p ", " \-\-password " " \fITEXT\fR
+Password for authentication (NTLM).
+.TP
+.BI \-\-hash " TEXT"
+NT hash for Pass-the-Hash authentication.
+.TP
+.BR \-d ", " \-\-domain " " \fITEXT\fR
+Target Active Directory domain or Kerberos realm (e.g. CORP.LOCAL).
+When provided without \fB\-\-computer\fR or \fB\-\-unc\fR, triggers full domain
+discovery via LDAP.
+.TP
+.BI \-\-dc\-host " TEXT"
+Domain controller hostname, FQDN, or IP address.
+Hostnames are required for Kerberos LDAP.
+.TP
+.BR \-e ", " \-\-timeout " " \fIINTEGER\fR
+SMB timeout in seconds. Default: 5.
+.TP
+.BR \-k ", " \-\-kerberos
+Use Kerberos authentication. Requires \fB\-\-domain\fR and hostnames/FQDNs
+as targets.
+.TP
+.B \-\-use\-kcache
+Use Kerberos credentials from ccache (reads \fBKRB5CCNAME\fR environment
+variable).
+.SS Targeting
+.TP
+.BI \-\-unc " TEXT"
+Direct UNC path(s) to scan. Disables computer/share discovery. Can be
+specified multiple times.
+.TP
+.BI \-\-computer " TEXT"
+Target computer(s) by hostname, FQDN, or IP. Can be specified multiple times.
+Kerberos requires names, not IPs.
+.TP
+.BI \-\-computer\-file " PATH"
+File containing computer names, one per line.
+.TP
+.BR \-a ", " \-\-shares\-only
+Only enumerate shares, skip filesystem walking.
+.TP
+.B \-\-no\-skip\-disabled
+Don't skip disabled or stale computer accounts. By default, disabled machines
+and those inactive for 4+ months are skipped.
+.TP
+.B \-\-stdin
+Read NetExec (nxc) SMB \fB\-\-shares\fR output from stdin and use as UNC targets.
+.SS Output
+.TP
+.BR \-o ", " \-\-output " " \fIPATH\fR
+Write results to file.
+.TP
+.BI \-\-log\-level " [debug|info|data]"
+Log level. Default: info.
+.TP
+.BR \-t ", " \-\-log\-type " " \fITEXT\fR
+Log format: plain, json, or tsv. Default: plain.
+.TP
+.BR \-q ", " \-\-no\-banner
+Disable startup banner.
+.TP
+.B \-\-no\-color
+Disable colored output.
+.SS Scanning
+.TP
+.BR \-b ", " \-\-min\-interest " " \fIINTEGER\fR
+Minimum interest level to report. 0=Green (all), 1=Yellow, 2=Red, 3=Black
+(critical only). Default: 0.
+.TP
+.BR \-r ", " \-\-max\-read\-bytes " " \fIINTEGER\fR
+Maximum bytes to read from a file for content scanning. Default: 2097152 (2 MB).
+.TP
+.BR \-l ", " \-\-max\-file\-bytes " " \fIINTEGER\fR
+Maximum file size allowed for scanning and downloading. Default: 10485760 (10 MB).
+.TP
+.BR \-m ", " \-\-snaffle\-path " " \fIPATH\fR
+Directory to copy interesting files into.
+.TP
+.BR \-j ", " \-\-context " " \fIINTEGER\fR
+Bytes of context around matched strings. Default: 200.
+.SS Advanced
+.TP
+.BR \-x ", " \-\-max\-threads " " \fIINTEGER\fR
+Maximum total worker threads, split equally across share/tree/file stages.
+Default: 60.
+.TP
+.BR \-z ", " \-\-config " " \fIPATH\fR
+Path to TOML configuration file.
+.TP
+.BR \-R ", " \-\-rule\-dir " " \fIPATH\fR
+Directory containing custom TOML rule files.
+.SS Resume
+.TP
+.B \-\-resume
+Resume a previous scan from SQLite state database.
+.TP
+.BI \-\-state " PATH"
+Path to resume state database (SQLite).
+.SH EXAMPLES
+Full domain discovery (LDAP computer enumeration + DFS + share scan):
+.PP
+.RS 4
+.nf
+snaffler -u jsmith -p 'P@ssw0rd' -d CORP.LOCAL
+.fi
+.RE
+.PP
+Scan specific UNC paths:
+.PP
+.RS 4
+.nf
+snaffler -u admin -p pass --unc //10.0.0.5/HR --unc //10.0.0.5/Finance
+.fi
+.RE
+.PP
+Scan multiple computers with share discovery:
+.PP
+.RS 4
+.nf
+snaffler -u admin -p pass --computer dc01 --computer fs01
+.fi
+.RE
+.PP
+Pass-the-Hash authentication:
+.PP
+.RS 4
+.nf
+snaffler -u admin --hash aad3b435b51404eeaad3b435b51404ee -d CORP.LOCAL
+.fi
+.RE
+.PP
+Kerberos with ccache:
+.PP
+.RS 4
+.nf
+export KRB5CCNAME=/tmp/krb5cc_jsmith
+snaffler -k --use-kcache -d CORP.LOCAL --dc-host CORP-DC01
+.fi
+.RE
+.PP
+Pipe from NetExec:
+.PP
+.RS 4
+.nf
+nxc smb 10.0.0.0/24 -u admin -p pass --shares | snaffler -u admin -p pass --stdin
+.fi
+.RE
+.PP
+JSON output, Red+ findings only, write to file:
+.PP
+.RS 4
+.nf
+snaffler -u admin -p pass -d CORP.LOCAL -t json -b 2 -o findings.json
+.fi
+.RE
+.PP
+Resume interrupted scan:
+.PP
+.RS 4
+.nf
+snaffler -u admin -p pass --computer-file targets.txt --resume
+.fi
+.RE
+.SH TRIAGE LEVELS
+.TP
+.B Black (3)
+Critical: credentials, private keys, hash dumps.
+.TP
+.B Red (2)
+High: config files with secrets, connection strings.
+.TP
+.B Yellow (1)
+Medium: potentially interesting files.
+.TP
+.B Green (0)
+Low: mildly interesting.
+.SH FILES
+.TP
+.I snaffler_state.db
+Default SQLite resume state database (created in current directory).
+.TP
+.I rules/*.toml
+Custom TOML rule files loaded via \fB\-\-rule\-dir\fR.
+.SH ENVIRONMENT
+.TP
+.B KRB5CCNAME
+Path to Kerberos credential cache, used with \fB\-\-use\-kcache\fR.
+.SH AUTHORS
+totekuh <totekuh@protonmail.com>
+.SH SEE ALSO
+.BR nxc (1),
+.BR smbclient (1),
+.BR impacket\-smbclient (1)
+.PP
+Project homepage: https://github.com/totekuh/snaffler-ng
+.br
+Original C# Snaffler: https://github.com/SnaffCon/Snaffler

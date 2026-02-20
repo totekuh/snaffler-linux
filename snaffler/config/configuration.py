@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-import toml
+import tomlkit
 import typer
 
 
@@ -156,7 +156,8 @@ class SnafflerConfiguration:
     # ---------- TOML ----------
 
     def load_from_toml(self, path: str):
-        data = toml.load(path)
+        with open(path, "r") as f:
+            data = tomlkit.load(f)
 
         for section, values in data.items():
             if hasattr(self, section):

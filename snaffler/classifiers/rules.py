@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
-import toml
+import tomlkit
 
 
 class EnumerationScope(Enum):
@@ -161,7 +161,7 @@ def load_rules_from_toml(toml_path: str) -> List[ClassifierRule]:
         List of ClassifierRule objects
     """
     with open(toml_path, 'r') as f:
-        data = toml.load(f)
+        data = tomlkit.load(f)
 
     rules = []
     if 'ClassifierRules' in data:
