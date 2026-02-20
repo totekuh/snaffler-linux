@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from snaffler.analysis.model.file_context import FileContext
 from snaffler.classifiers.evaluator import RuleEvaluator, RuleDecision
@@ -25,7 +25,7 @@ def make_ctx(
         name=name,
         ext=ext,
         size=size,
-        modified=modified or datetime.utcfromtimestamp(0),
+        modified=modified or datetime.fromtimestamp(0, timezone.utc),
     )
 
 

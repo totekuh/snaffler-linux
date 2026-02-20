@@ -5,3 +5,4 @@ __pycache__
 snaffler.db
 .pytest_cache
 build
+CLAUDE.md

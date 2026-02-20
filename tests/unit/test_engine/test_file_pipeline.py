@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 from snaffler.engine.file_pipeline import FilePipeline
+from snaffler.utils.progress import ProgressState
 
 
 # ---------- helpers ----------
@@ -96,3 +97,53 @@ def test_file_pipeline_marks_files_done():
     pipeline.run(["//HOST/SHARE"])
 
     state.mark_file_done.assert_called_once_with("//HOST/SHARE/a.txt")
+
+
+# ---------- progress ----------
+
+def test_file_pipeline_progress_counters():
+    cfg = make_cfg()
+    progress = ProgressState()
+    pipeline = FilePipeline(cfg, progress=progress)
+
+    fake_files = [
+        ("//HOST/SHARE/a.txt", object()),
+        ("//HOST/SHARE/b.txt", object()),
+        ("//HOST/SHARE/c.txt", object()),
+    ]
+
+    pipeline.tree_walker.walk_tree = MagicMock(return_value=fake_files)
+    pipeline.file_scanner.scan_file = MagicMock(
+        side_effect=[None, object(), object()]  # 2 matches
+    )
+
+    pipeline.run(["//HOST/SHARE"])
+
+    assert progress.files_total == 3
+    assert progress.files_scanned == 3
+    assert progress.files_matched == 2
+
+
+def test_file_pipeline_progress_with_resume():
+    cfg = make_cfg()
+    progress = ProgressState()
+
+    state = MagicMock()
+    state.should_skip_file.side_effect = lambda p: p.endswith("a.txt")
+
+    pipeline = FilePipeline(cfg, state=state, progress=progress)
+
+    fake_files = [
+        ("//HOST/SHARE/a.txt", object()),
+        ("//HOST/SHARE/b.txt", object()),
+    ]
+
+    pipeline.tree_walker.walk_tree = MagicMock(return_value=fake_files)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # files_total should reflect post-resume count
+    assert progress.files_total == 1
+    assert progress.files_scanned == 1
+    assert progress.files_matched == 0

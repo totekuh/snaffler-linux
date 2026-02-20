@@ -6,7 +6,8 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 
 ## Features
 
-- SMB share discovery (RPC / SMB)
+- SMB share discovery via SRVSVC (NetShareEnum)
+- DFS namespace discovery via LDAP (v1 + v2), merged and deduplicated with share enumeration
 - Recursive directory tree walking
 - Regex-based file and content classification
 - NTLM authentication (password or pass-the-hash)
@@ -39,7 +40,9 @@ snaffler run \
 This will automatically:
 
 - Query Active Directory for computer objects
+- Discover DFS namespace targets via LDAP (v1 `fTDfs` + v2 `msDFS-Linkv2`)
 - Enumerate SMB shares on discovered hosts
+- Merge and deduplicate DFS and SMB share paths
 - Scan all readable shares
 
 When using Kerberos, set `KRB5CCNAME` to a valid ticket cache and use hostnames/FQDNs:

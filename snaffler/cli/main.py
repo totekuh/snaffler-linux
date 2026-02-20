@@ -122,6 +122,12 @@ def run(
             help="Only enumerate shares, skip filesystem walking",
             rich_help_panel="Targeting",
         ),
+        no_skip_disabled: bool = typer.Option(
+            False,
+            "--no-skip-disabled",
+            help="Don't skip disabled/stale computer accounts (by default, disabled and machines inactive for 4+ months are skipped)",
+            rich_help_panel="Targeting",
+        ),
 
         output_file: Optional[Path] = typer.Option(
             None, "-o", "--output",
@@ -236,6 +242,7 @@ def run(
     # ---------- TARGETING ----------
     cfg.targets.unc_targets = unc_targets or []
     cfg.targets.shares_only = shares_only
+    cfg.targets.skip_disabled_computers = not no_skip_disabled
 
     if computer and computer_file:
         raise typer.BadParameter("Use either --computer or --computer-file, not both")

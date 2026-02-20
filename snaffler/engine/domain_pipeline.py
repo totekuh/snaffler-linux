@@ -56,3 +56,13 @@ class DomainPipeline:
             )
 
         return computers
+
+    def get_dfs_shares(self) -> List[str]:
+        """Query AD for DFS namespace targets, applying exclusion filters."""
+        dfs_paths = self.ad.get_dfs_targets()
+        if self.exclusions:
+            dfs_paths = [
+                p for p in dfs_paths
+                if not any(exc.lower() in p.lower() for exc in self.exclusions)
+            ]
+        return dfs_paths

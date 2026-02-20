@@ -9,14 +9,16 @@ from typing import List, Tuple
 
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.discovery.shares import ShareFinder
+from snaffler.utils.progress import ProgressState
 
 logger = logging.getLogger("snaffler")
 
 
 class SharePipeline:
 
-    def __init__(self, cfg: SnafflerConfiguration):
+    def __init__(self, cfg: SnafflerConfiguration, progress: ProgressState | None = None):
         self.cfg = cfg
+        self.progress = progress
 
         self.max_workers = self.cfg.advanced.share_threads
         self.shares_only = self.cfg.targets.shares_only
@@ -39,6 +41,9 @@ class SharePipeline:
         """
         logger.info(f"Starting share discovery on {len(computers)} computers")
 
+        if self.progress:
+            self.progress.computers_total = len(computers)
+
         all_shares: List[Tuple[str, object]] = []
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -54,8 +59,13 @@ class SharePipeline:
                     if shares:
                         all_shares.extend(shares)
                         logger.info(f"Found {len(shares)} readable shares on {computer}")
+                        if self.progress:
+                            self.progress.shares_found += len(shares)
                 except Exception as e:
                     logger.debug(f"Error processing {computer}: {e}")
+                finally:
+                    if self.progress:
+                        self.progress.computers_done += 1
 
         if not all_shares:
             logger.warning("No readable shares found")

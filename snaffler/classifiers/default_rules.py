@@ -691,6 +691,17 @@ def get_deploy_image_rules() -> List[ClassifierRule]:
             triage=Triage.YELLOW,
             description="Files with these extensions are a little interesting."
         ),
+
+        ClassifierRule(
+            rule_name="KeepVMDisksByExtension",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_EXTENSION,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=['.vmdk', '.vdi', '.vhd', '.vhdx'],
+            triage=Triage.RED,
+            description="Virtual machine disk images - may contain extractable credentials."
+        ),
     ]
 
 

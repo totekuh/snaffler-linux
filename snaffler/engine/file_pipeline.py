@@ -8,6 +8,7 @@ from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.discovery.tree import TreeWalker
 from snaffler.resume.scan_state import ScanState
+from snaffler.utils.progress import ProgressState
 
 logger = logging.getLogger("snaffler")
 
@@ -17,9 +18,11 @@ class FilePipeline:
             self,
             cfg: SnafflerConfiguration,
             state: ScanState | None = None,
+            progress: ProgressState | None = None,
     ):
         self.cfg = cfg
         self.state = state
+        self.progress = progress
 
         self.tree_threads = cfg.advanced.tree_threads
         self.file_threads = cfg.advanced.file_threads
@@ -79,6 +82,9 @@ class FilePipeline:
             logger.info("No files left to scan after resume filtering")
             return 0
 
+        if self.progress:
+            self.progress.files_total = len(all_files)
+
         # ---------- File scanning ----------
         results_count = 0
 
@@ -99,8 +105,13 @@ class FilePipeline:
                     if self.state:
                         self.state.mark_file_done(file_path)
 
+                    if self.progress:
+                        self.progress.files_scanned += 1
+
                     if result:
                         results_count += 1
+                        if self.progress:
+                            self.progress.files_matched += 1
 
                 except Exception as e:
                     logger.debug(f"Error scanning {file_path}: {e}")

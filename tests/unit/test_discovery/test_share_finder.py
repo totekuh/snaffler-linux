@@ -31,9 +31,9 @@ def make_smb(shares=None, readable=True):
         smb.listShares.return_value = shares
 
     if readable:
-        smb.connectTree.return_value = 1
+        smb.listPath.return_value = []
     else:
-        smb.connectTree.side_effect = SessionError(0, "denied")
+        smb.listPath.side_effect = SessionError(0, "denied")
 
     return smb
 
@@ -76,7 +76,7 @@ def test_get_smb_reconnect_on_dead():
     assert b is smb_new
 
 
-def test_enumerate_shares_smb():
+def test_enumerate_shares():
     cfg = make_cfg()
     finder = ShareFinder(cfg)
 
@@ -91,11 +91,24 @@ def test_enumerate_shares_smb():
     )
 
     with patch.object(finder, "_get_smb", return_value=smb):
-        shares = finder.enumerate_shares_smb("HOST")
+        shares = finder.enumerate_shares("HOST")
 
     assert len(shares) == 1
     assert shares[0].name == "DATA$"
     assert isinstance(shares[0], ShareInfo)
+
+
+def test_enumerate_shares_session_error():
+    cfg = make_cfg()
+    finder = ShareFinder(cfg)
+
+    smb = MagicMock()
+    smb.listShares.side_effect = SessionError(0, "access denied")
+
+    with patch.object(finder, "_get_smb", return_value=smb):
+        shares = finder.enumerate_shares("HOST")
+
+    assert shares == []
 
 
 def test_is_share_readable_true():
@@ -106,6 +119,8 @@ def test_is_share_readable_true():
 
     with patch.object(finder, "_get_smb", return_value=smb):
         assert finder.is_share_readable("HOST", "DATA") is True
+
+    smb.listPath.assert_called_once_with("DATA", "*")
 
 
 def test_is_share_readable_false():
@@ -123,12 +138,9 @@ def test_get_computer_shares_basic():
     finder = ShareFinder(cfg)
 
     share = ShareInfo("DATA", 0, "Data")
-    share.readable = True
 
     with patch.object(
-        finder, "enumerate_shares_rpc", return_value=[]
-    ), patch.object(
-        finder, "enumerate_shares_smb", return_value=[share]
+        finder, "enumerate_shares", return_value=[share]
     ), patch.object(
         finder, "is_share_readable", return_value=True
     ):
@@ -141,10 +153,27 @@ def test_get_computer_shares_never_scan():
     cfg = make_cfg()
     finder = ShareFinder(cfg)
 
-    share = ShareInfo("IPC$", 0, "")
+    ipc = ShareInfo("IPC$", 0, "")
+    data = ShareInfo("DATA", 0, "Data")
 
     with patch.object(
-        finder, "enumerate_shares_rpc", return_value=[share]
+        finder, "enumerate_shares", return_value=[ipc, data]
+    ), patch.object(
+        finder, "is_share_readable", return_value=True
+    ):
+        result = finder.get_computer_shares("HOST")
+
+    # IPC$ should be skipped
+    assert len(result) == 1
+    assert result[0][0] == "//HOST/DATA"
+
+
+def test_get_computer_shares_no_shares():
+    cfg = make_cfg()
+    finder = ShareFinder(cfg)
+
+    with patch.object(
+        finder, "enumerate_shares", return_value=[]
     ):
         result = finder.get_computer_shares("HOST")
 

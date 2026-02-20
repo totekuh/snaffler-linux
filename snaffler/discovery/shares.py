@@ -1,12 +1,12 @@
 """
 Share enumeration using Impacket SMB client
+Uses listShares() (SRVSVC NetShareEnum) — same method as NetExec/CrackMapExec.
 """
 
 import logging
 import threading
 from typing import List, Tuple
 
-from impacket.dcerpc.v5 import transport, srvs
 from impacket.smbconnection import SessionError
 
 from snaffler.config.configuration import SnafflerConfiguration
@@ -78,55 +78,11 @@ class ShareFinder:
         cache[computer] = smb
         return smb
 
-    def enumerate_shares_rpc(self, target: str) -> List[ShareInfo]:
-        shares = []
-
-        try:
-            # Build RPC connection string
-            string_binding = f"ncacn_np:{target}[\\pipe\\srvsvc]"
-
-            # Create transport
-            rpctransport = transport.DCERPCTransportFactory(string_binding)
-            auth = self.cfg.auth
-            rpctransport.set_credentials(
-                auth.username,
-                auth.password or "",
-                auth.domain or "",
-                "",
-                auth.nthash or ""
-            )
-
-            # Set timeouts
-            rpctransport.set_connect_timeout(10)
-
-            # Connect and bind
-            dce = rpctransport.get_dce_rpc()
-            dce.connect()
-            dce.bind(srvs.MSRPC_UUID_SRVS)
-
-            # NetShareEnum
-            resp = srvs.hNetrShareEnum(dce, 1)
-
-            for share in resp['InfoStruct']['ShareInfo']['Level1']['Buffer']:
-                share_name = share['shi1_netname'][:-1]  # Remove null terminator
-                share_type = share['shi1_type']
-                share_remark = share['shi1_remark'][:-1] if share['shi1_remark'] else ""
-
-                share_info = ShareInfo(
-                    name=share_name,
-                    share_type=share_type,
-                    remark=share_remark
-                )
-                shares.append(share_info)
-
-            dce.disconnect()
-
-        except Exception as e:
-            logger.debug(f"Error enumerating shares on {target} via RPC: {e}")
-
-        return shares
-
-    def enumerate_shares_smb(self, target: str) -> List[ShareInfo]:
+    def enumerate_shares(self, target: str) -> List[ShareInfo]:
+        """
+        Enumerate shares via SMB listShares() (SRVSVC NetShareEnum RPC).
+        This reuses the authenticated SMB session, so Kerberos/NTLM/PTH all work.
+        """
         shares = []
         try:
             smb = self._get_smb(target)
@@ -140,8 +96,10 @@ class ShareFinder:
                     share_type=share_type,
                     remark=share_remark
                 ))
+        except SessionError as e:
+            logger.warning(f"[{target}] Share enumeration failed (access denied): {e}")
         except Exception as e:
-            logger.debug(f"Error enumerating shares on {target} via SMB: {e}")
+            logger.warning(f"[{target}] Share enumeration failed: {e}")
         return shares
 
     def _classify_share(self, unc_path: str) -> bool:
@@ -179,14 +137,21 @@ class ShareFinder:
 
     def get_computer_shares(self, computer: str) -> List[Tuple[str, ShareInfo]]:
         """
-        Get all readable shares from a computer
+        Get all readable shares from a computer.
+        Uses listShares() which calls SRVSVC NetShareEnum over the existing
+        authenticated SMB session (same approach as NetExec/CrackMapExec).
         """
         logger.debug(f"Enumerating shares on {computer}")
 
-        # Try RPC first, fall back to SMB
-        shares = self.enumerate_shares_rpc(computer)
-        if not shares:
-            shares = self.enumerate_shares_smb(computer)
+        shares = self.enumerate_shares(computer)
+
+        if shares:
+            share_names = [s.name for s in shares]
+            logger.info(f"[{computer}] Enumerated {len(shares)} shares: {share_names}")
+        else:
+            logger.warning(f"[{computer}] No shares found")
+            return []
+
         results: List[Tuple[str, ShareInfo]] = []
 
         for share in shares:
@@ -194,6 +159,7 @@ class ShareFinder:
 
             # Hard skip
             if share_name in self.NEVER_SCAN:
+                logger.debug(f"[{computer}] Skipping {share.name} (in NEVER_SCAN list)")
                 continue
 
             unc_path = f"//{computer}/{share.name}"
@@ -229,7 +195,14 @@ class ShareFinder:
                 logger.info(f"Readable share: {unc_path}")
                 results.append((unc_path, share))
             else:
-                logger.debug(f"Unreadable share: {unc_path}")
+                logger.info(f"Unreadable share (access denied): {unc_path}")
+
+        # Summary for diagnostics
+        if shares:
+            logger.debug(
+                f"[{computer}] Share discovery summary: "
+                f"{len(shares)} enumerated, {len(results)} readable"
+            )
 
         return results
 
@@ -240,14 +213,15 @@ class ShareFinder:
         try:
             smb = self._get_smb(computer)
 
-            # Tree connect is the correct readability check
-            tid = smb.connectTree(share_name)
-            smb.disconnectTree(tid)
+            # listPath tests actual directory listing — not just tree connect.
+            # A share might accept connectTree but deny directory reads.
+            # This matches what NetExec does for readability checks.
+            smb.listPath(share_name, "*")
 
             return True
 
         except SessionError as e:
-            logger.debug(f"Cannot access share {computer}\\{share_name}: {e}")
+            logger.debug(f"Cannot read share {computer}\\{share_name}: {e}")
             return False
         except Exception as e:
             logger.debug(f"Error testing share {computer}\\{share_name}: {e}")

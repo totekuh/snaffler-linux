@@ -66,3 +66,44 @@ def test_domain_pipeline_empty_result():
         result = pipeline.run()
 
     assert result == []
+
+
+def test_get_dfs_shares_delegates():
+    cfg = make_cfg()
+
+    with patch(
+        "snaffler.engine.domain_pipeline.ADDiscovery"
+    ) as ad_cls:
+        ad = ad_cls.return_value
+        ad.get_dfs_targets.return_value = [
+            "//nas01.corp.local/data",
+            "//fileserver.domain.com/docs",
+        ]
+
+        pipeline = DomainPipeline(cfg)
+        result = pipeline.get_dfs_shares()
+
+    assert result == [
+        "//nas01.corp.local/data",
+        "//fileserver.domain.com/docs",
+    ]
+    ad.get_dfs_targets.assert_called_once()
+
+
+def test_get_dfs_shares_applies_exclusions():
+    cfg = make_cfg()
+    cfg.targets.exclusions = ["nas01"]
+
+    with patch(
+        "snaffler.engine.domain_pipeline.ADDiscovery"
+    ) as ad_cls:
+        ad = ad_cls.return_value
+        ad.get_dfs_targets.return_value = [
+            "//nas01.corp.local/data",
+            "//fileserver.domain.com/docs",
+        ]
+
+        pipeline = DomainPipeline(cfg)
+        result = pipeline.get_dfs_shares()
+
+    assert result == ["//fileserver.domain.com/docs"]

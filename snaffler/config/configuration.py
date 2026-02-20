@@ -41,6 +41,9 @@ class TargetingConfig:
     ldap_filter: str = "(objectClass=computer)"
     exclusions: List[str] = field(default_factory=list)
 
+    skip_disabled_computers: bool = True
+    max_computer_staleness_months: int = 4
+
 
 # ---------------- SCANNING ----------------
 
@@ -56,7 +59,9 @@ class ScanningConfig:
     cert_passwords: List[str] = field(default_factory=lambda: [
         "", "password", "mimikatz", "1234", "abcd", "secret",
         "MyPassword", "myPassword", "MyClearTextPassword",
-        "P@ssw0rd", "testpassword", "changeme", "changeit"
+        "P@ssw0rd", "testpassword", "changeme", "changeit",
+        "SolarWinds.R0cks", "ThePasswordToKeyonPFXFile",
+        "@OurPassword1", "@de08nt2128",
     ])
 
 
