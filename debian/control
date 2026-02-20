@@ -1,0 +1,40 @@
+Source: snaffler-ng
+Section: misc
+Priority: optional
+Maintainer: Kali Developers <devel@kali.org>
+Uploaders: totekuh <totekuh@protonmail.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               python3-all,
+               python3-setuptools,
+               pybuild-plugin-pyproject,
+               python3-impacket (>= 0.11.0),
+               python3-typer (>= 0.12.0),
+               python3-rich (>= 13.0.0),
+               python3-tomlkit,
+               python3-cryptography
+Standards-Version: 4.7.3
+Homepage: https://github.com/totekuh/snaffler-ng
+Vcs-Browser: https://gitlab.com/kalilinux/packages/snaffler-ng
+Vcs-Git: https://gitlab.com/kalilinux/packages/snaffler-ng.git
+Rules-Requires-Root: no
+
+Package: snaffler-ng
+Architecture: all
+Multi-Arch: foreign
+Depends: ${python3:Depends},
+         ${misc:Depends},
+         python3-impacket (>= 0.11.0),
+         python3-typer (>= 0.12.0),
+         python3-rich (>= 13.0.0),
+         python3-tomlkit,
+         python3-cryptography
+Description: SMB share credential and sensitive data scanner
+ Impacket port of Snaffler, a post-exploitation tool that discovers readable
+ SMB shares, walks directory trees, and identifies credentials and sensitive
+ data on Windows file systems.
+ .
+ Features include NTLM and Kerberos authentication, DFS namespace discovery,
+ regex-based file and content classification with 50+ built-in rules, triage
+ severity levels (Black/Red/Yellow/Green), resume support via SQLite, and
+ multiple output formats (plain, JSON, TSV).

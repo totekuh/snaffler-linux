@@ -16,7 +16,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.1.0"  # fallback for PyInstaller builds
+        return "1.1.1"  # fallback for PyInstaller builds
 
 
 def _version_callback(value: bool):

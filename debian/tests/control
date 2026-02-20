@@ -1,0 +1,3 @@
+Test-Command: snaffler --help
+Depends: @
+Restrictions: superficial

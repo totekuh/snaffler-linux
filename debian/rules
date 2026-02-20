@@ -1,0 +1,6 @@
+#!/usr/bin/make -f
+
+export PYBUILD_NAME=snaffler-ng
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild

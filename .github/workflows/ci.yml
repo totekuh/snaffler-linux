@@ -93,8 +93,35 @@ jobs:
           name: binary
           path: dist/snaffler-linux-x86_64
 
+  build-deb:
+    needs: test-build
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debhelper dh-python pybuild-plugin-pyproject \
+            python3-all python3-setuptools python3-cryptography python3-rich
+          # These may not be in ubuntu-latest; install via pip as fallback
+          sudo apt-get install -y python3-impacket python3-typer python3-tomlkit || \
+            pip install impacket typer tomlkit
+
+      - name: Build .deb
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: ../snaffler-ng_*.deb
+
   release:
-    needs: [test-build, build-binary]
+    needs: [test-build, build-binary, build-deb]
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
@@ -121,6 +148,12 @@ jobs:
           name: binary
           path: binary/
 
+      - name: Download deb
+        uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: deb/
+
       - name: Publish to PyPI
         continue-on-error: true
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -140,3 +173,4 @@ jobs:
           files: |
             dist/*
             binary/snaffler-linux-x86_64
+            deb/*.deb

@@ -1,0 +1,8 @@
+snaffler-ng (1.1.1-0kali1) kali-dev; urgency=medium
+
+  * Add Debian packaging, man page, Apache 2.0 LICENSE
+  * Swap toml dependency for tomlkit (available in Kali as python3-tomlkit)
+  * Add integration tests
+  * Build .deb in CI and attach to GitHub Releases
+
+ -- totekuh <totekuh@protonmail.com>  Thu, 20 Feb 2026 21:00:00 +0000
