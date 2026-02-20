@@ -105,14 +105,15 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y debhelper dh-python pybuild-plugin-pyproject \
-            python3-all python3-setuptools python3-cryptography python3-rich
-          # These may not be in ubuntu-latest; install via pip as fallback
-          sudo apt-get install -y python3-impacket python3-typer python3-tomlkit || \
+          sudo apt-get install -y build-essential debhelper dh-python \
+            pybuild-plugin-pyproject python3-all python3-setuptools \
+            python3-cryptography python3-rich
+          # These may not be in ubuntu repos; install via pip as fallback
+          sudo apt-get install -y python3-impacket python3-typer python3-tomlkit 2>/dev/null || \
             pip install impacket typer tomlkit
 
       - name: Build .deb
-        run: dpkg-buildpackage -us -uc -b
+        run: dpkg-buildpackage -us -uc -b -d
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
