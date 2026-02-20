@@ -113,13 +113,15 @@ jobs:
             pip install impacket typer tomlkit
 
       - name: Build .deb
-        run: dpkg-buildpackage -us -uc -b -d
+        run: |
+          dpkg-buildpackage -us -uc -b -d
+          cp ../snaffler-ng_*.deb .
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
         with:
           name: deb
-          path: ../snaffler-ng_*.deb
+          path: snaffler-ng_*.deb
 
   release:
     needs: [test-build, build-binary, build-deb]
