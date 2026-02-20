@@ -107,7 +107,7 @@ class SnafflerRunner:
                 logger.error("No targets specified")
                 return
 
-            print_completion_stats(start_time=self.start_time)
+            print_completion_stats(start_time=self.start_time, progress=self.progress)
 
         except KeyboardInterrupt:
             logger.warning("Interrupted by user")

@@ -11,6 +11,7 @@ runner = CliRunner()
 
 def base_args():
     return [
+        "run",
         "--no-banner",
         "--log-level", "info",
     ]

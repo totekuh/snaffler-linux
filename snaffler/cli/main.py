@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Optional, List
 
@@ -9,6 +10,13 @@ from snaffler.classifiers.loader import RuleLoader
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.engine.runner import SnafflerRunner
 from snaffler.utils.logger import setup_logging
+
+
+def _version_callback(value: bool):
+    if value:
+        typer.echo(f"snaffler-ng {pkg_version('snaffler-ng')}")
+        raise typer.Exit()
+
 
 app = typer.Typer(
     add_completion=False,
@@ -46,6 +54,18 @@ def banner():
  |_____/|_| \_/_/    \_\_|    |_|    |______|______|_|  \_\
                                                   Impacket Port
     """)
+
+
+@app.callback(invoke_without_command=True)
+def main(
+        version: bool = typer.Option(
+            False, "-V", "--version",
+            help="Show version and exit",
+            callback=_version_callback,
+            is_eager=True,
+        ),
+):
+    pass
 
 
 @app.command()
@@ -329,7 +349,7 @@ def run(
         log_level=cfg.output.log_level,
         log_to_file=cfg.output.to_file,
         log_file_path=cfg.output.output_file,
-        log_to_console=not cfg.output.to_file,
+        log_to_console=True,
         log_type=cfg.output.log_type,
     )
 

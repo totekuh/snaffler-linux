@@ -252,7 +252,7 @@ def log_file_result(
     logger.warning(message, extra=extra)
 
 
-def print_completion_stats(start_time):
+def print_completion_stats(start_time, progress=None):
     if not start_time:
         return
 
@@ -272,6 +272,18 @@ def print_completion_stats(start_time):
         f"Duration: {m}m {s}s" if m else
         f"Duration: {s}s"
     )
+    if progress:
+        parts = []
+        if progress.computers_total:
+            parts.append(f"Computers: {progress.computers_done}/{progress.computers_total}")
+        if progress.shares_found:
+            parts.append(f"Shares: {progress.shares_found}")
+        if progress.files_total:
+            parts.append(f"Files scanned: {progress.files_scanned}/{progress.files_total}")
+        if progress.files_matched:
+            parts.append(f"Matched: {progress.files_matched}")
+        if parts:
+            logger.info(" | ".join(parts))
     logger.info("-" * 60)
 
 
