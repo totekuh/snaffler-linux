@@ -1,13 +1,39 @@
 """
 Thread-safe progress counters for periodic status reporting.
 """
+import ctypes
+import os
 import threading
-
-try:
-    import resource
-except ImportError:
-    resource = None  # Windows — no resource module
 from datetime import datetime
+
+
+def _get_rss_mb() -> int:
+    """Return current RSS in MB, cross-platform."""
+    if os.name == "nt":
+        # Windows: kernel32 GetProcessMemoryInfo via ctypes (no extra deps)
+        class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("PageFaultCount", ctypes.c_ulong),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        pmc = PROCESS_MEMORY_COUNTERS()
+        pmc.cb = ctypes.sizeof(pmc)
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(pmc), pmc.cb):
+            return pmc.WorkingSetSize // (1024 * 1024)
+        return 0
+    else:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
 
 
 class ProgressState:
@@ -41,10 +67,7 @@ class ProgressState:
             m, s = divmod(r, 60)
             elapsed_str = f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
 
-            if resource is not None:
-                rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
-            else:
-                rss_mb = 0
+            rss_mb = _get_rss_mb()
 
             parts = [f"elapsed={elapsed_str}"]
 
