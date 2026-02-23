@@ -29,7 +29,7 @@ def test_completion_stats_with_progress(caplog):
     assert "Files scanned: 1203/1203" in output
     assert "Matched: 15" in output
     assert "Duration:" in output
-    assert "Findings: Black=2 Red=5 Yellow=6 Green=2" in output
+    assert "Findings: Black: 2 | Red: 5 | Yellow: 6 | Green: 2" in output
 
 
 def test_completion_stats_no_progress(caplog):
@@ -97,6 +97,6 @@ def test_completion_stats_partial_severity(caplog):
         print_completion_stats(start, progress=progress)
 
     output = caplog.text
-    assert "Findings: Red=3 Yellow=4" in output
+    assert "Findings: Red: 3 | Yellow: 4" in output
     assert "Black" not in output
     assert "Green" not in output
