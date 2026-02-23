@@ -106,6 +106,8 @@ def test_share_pipeline_progress_counters():
         ]
     )
 
+    # Runner sets computers_total before calling SharePipeline.run()
+    progress.computers_total = 2
     pipeline.run(["H1", "H2"])
 
     assert progress.computers_total == 2
@@ -125,9 +127,58 @@ def test_share_pipeline_progress_counts_failures():
 
     pipeline.share_finder.get_computer_shares = MagicMock(side_effect=side_effect)
 
+    # Runner sets computers_total before calling SharePipeline.run()
+    progress.computers_total = 2
     pipeline.run(["BAD", "GOOD"])
 
     # Both computers counted as done (even the failed one)
     assert progress.computers_total == 2
     assert progress.computers_done == 2
     assert progress.shares_found == 1
+
+
+# ---------- resume: per-computer marking ----------
+
+def test_share_pipeline_marks_computers_in_state():
+    """SharePipeline marks each computer done in state DB incrementally."""
+    cfg = make_cfg()
+    state = MagicMock()
+    pipeline = SharePipeline(cfg, state=state)
+
+    pipeline.share_finder.get_computer_shares = MagicMock(
+        side_effect=[
+            [("//H1/S1", object())],
+            [("//H2/S1", object()), ("//H2/S2", object())],
+        ]
+    )
+
+    pipeline.run(["H1", "H2"])
+
+    # Each computer marked done individually
+    assert state.mark_computer_done.call_count == 2
+    state.mark_computer_done.assert_any_call("H1")
+    state.mark_computer_done.assert_any_call("H2")
+
+    # Shares stored incrementally per-computer
+    assert state.store_shares.call_count == 2
+
+
+def test_share_pipeline_marks_failed_computer_in_state():
+    """Failed computers are marked done (no DNS, access denied, etc.) — no point retrying."""
+    cfg = make_cfg()
+    state = MagicMock()
+    pipeline = SharePipeline(cfg, state=state)
+
+    def side_effect(host):
+        if host == "BAD":
+            raise RuntimeError("boom")
+        return [("//GOOD/SHARE", object())]
+
+    pipeline.share_finder.get_computer_shares = MagicMock(side_effect=side_effect)
+
+    pipeline.run(["BAD", "GOOD"])
+
+    # Both marked done — errors are permanent, only KeyboardInterrupt skips marking
+    assert state.mark_computer_done.call_count == 2
+    state.mark_computer_done.assert_any_call("BAD")
+    state.mark_computer_done.assert_any_call("GOOD")

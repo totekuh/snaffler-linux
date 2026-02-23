@@ -43,12 +43,19 @@ class ProgressState:
         self._lock = threading.Lock()
         self.start_time = datetime.now()
 
+        # DNS pre-resolution stage
+        self.dns_total = 0
+        self.dns_resolved = 0
+        self.dns_filtered = 0
+
         # Share discovery stage
         self.computers_total = 0
         self.computers_done = 0
         self.shares_found = 0
 
-        # File scanning stage
+        # Tree walking / file scanning stage
+        self.shares_total = 0
+        self.shares_walked = 0
         self.files_total = 0
         self.files_scanned = 0
         self.files_matched = 0
@@ -69,21 +76,30 @@ class ProgressState:
 
             rss_mb = _get_rss_mb()
 
-            parts = [f"elapsed={elapsed_str}"]
+            parts = [f"Elapsed: {elapsed_str}"]
 
+            if self.dns_total:
+                remaining = self.dns_total - self.dns_resolved - self.dns_filtered
+                parts.append(
+                    f"DNS: {self.dns_resolved} up, "
+                    f"{self.dns_filtered} filtered, "
+                    f"{remaining} to go"
+                )
             if self.computers_total:
-                parts.append(f"computers={self.computers_done}/{self.computers_total}")
-            if self.shares_found:
-                parts.append(f"shares={self.shares_found}")
+                parts.append(f"Computers: {self.computers_done}/{self.computers_total}")
+            if self.shares_total:
+                parts.append(f"Shares: {self.shares_walked}/{self.shares_total}")
+            elif self.shares_found:
+                parts.append(f"Shares: {self.shares_found}")
             if self.files_total:
-                parts.append(f"files={self.files_scanned}/{self.files_total}")
+                parts.append(f"Files: {self.files_scanned}/{self.files_total}")
             if self.files_matched:
-                parts.append(f"matched={self.files_matched}")
+                parts.append(f"Matched: {self.files_matched}")
             sev = self._format_severity()
             if sev:
                 parts.append(sev)
 
-            parts.append(f"mem={rss_mb}MB")
+            parts.append(f"Mem: {rss_mb}MB")
 
             return " | ".join(parts)
 

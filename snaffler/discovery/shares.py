@@ -55,6 +55,7 @@ class ShareFinder:
             logger.warning("No credentials provided (NTLM or Kerberos) – continuing with NULL session")
 
         self._thread_local = threading.local()
+        self._sysvol_lock = threading.Lock()
 
     def _get_smb(self, computer: str):
         if not hasattr(self._thread_local, "smb_cache"):
@@ -74,7 +75,7 @@ class ShareFinder:
                     pass
                 cache.pop(computer, None)
 
-        smb = self.smb_transport.connect(computer, timeout=10)
+        smb = self.smb_transport.connect(computer, timeout=self.cfg.auth.smb_timeout)
         cache[computer] = smb
         return smb
 
@@ -167,21 +168,25 @@ class ShareFinder:
             # --- SYSVOL / NETLOGON handling ---
             apply_classifiers = True
 
-            if share_name == "SYSVOL":
+            if share_name in ("SYSVOL", "NETLOGON"):
                 apply_classifiers = False
-                if not self.cfg.targets.scan_sysvol:
-                    logger.debug(f"Skipping SYSVOL replica at {unc_path}")
+                with self._sysvol_lock:
+                    if share_name == "SYSVOL":
+                        if not self.cfg.targets.scan_sysvol:
+                            skip = True
+                        else:
+                            skip = False
+                            self.cfg.targets.scan_sysvol = False
+                    else:
+                        if not self.cfg.targets.scan_netlogon:
+                            skip = True
+                        else:
+                            skip = False
+                            self.cfg.targets.scan_netlogon = False
+                if skip:
+                    logger.debug(f"Skipping {share_name} replica at {unc_path}")
                     continue
-                self.cfg.targets.scan_sysvol = False
-                logger.debug(f"Scanning first SYSVOL replica at {unc_path}")
-
-            elif share_name == "NETLOGON":
-                apply_classifiers = False
-                if not self.cfg.targets.scan_netlogon:
-                    logger.debug(f"Skipping NETLOGON replica at {unc_path}")
-                    continue
-                self.cfg.targets.scan_netlogon = False
-                logger.debug(f"Scanning first NETLOGON replica at {unc_path}")
+                logger.debug(f"Scanning first {share_name} replica at {unc_path}")
 
             # --- Share classifiers ---
             if apply_classifiers and self._classify_share(unc_path):

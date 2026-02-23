@@ -83,7 +83,7 @@ def test_get_domain_computers_dns_hostname():
     ):
         result = discovery.get_domain_computers()
 
-    assert result == ["host1.example.com"]
+    assert result == ["HOST1.EXAMPLE.COM"]
 
 
 def test_get_domain_computers_name_fallback():
@@ -106,7 +106,7 @@ def test_get_domain_computers_name_fallback():
     ):
         result = discovery.get_domain_computers()
 
-    assert result == ["HOST2.example.com"]
+    assert result == ["HOST2.EXAMPLE.COM"]
 
 
 def test_get_domain_users_filters():
@@ -181,7 +181,7 @@ def test_skip_disabled_computer():
     ):
         result = discovery.get_domain_computers()
 
-    assert result == ["active.example.com"]
+    assert result == ["ACTIVE.EXAMPLE.COM"]
     assert discovery._skipped_disabled == 1
 
 
@@ -208,7 +208,7 @@ def test_skip_stale_computer():
     ):
         result = discovery.get_domain_computers()
 
-    assert result == ["recent.example.com"]
+    assert result == ["RECENT.EXAMPLE.COM"]
     assert discovery._skipped_stale == 1
 
 
@@ -235,8 +235,8 @@ def test_no_skip_disabled_flag():
         result = discovery.get_domain_computers()
 
     assert len(result) == 2
-    assert "disabled.example.com" in result
-    assert "stale.example.com" in result
+    assert "DISABLED.EXAMPLE.COM" in result
+    assert "STALE.EXAMPLE.COM" in result
     assert discovery._skipped_disabled == 0
     assert discovery._skipped_stale == 0
 

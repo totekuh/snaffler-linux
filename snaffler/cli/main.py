@@ -303,13 +303,13 @@ def main(
         raise typer.BadParameter("Use either --computer or --computer-file, not both")
 
     if computer:
-        cfg.targets.computer_targets = expand_targets(computer)
+        cfg.targets.computer_targets = [h.upper() for h in expand_targets(computer)]
 
     if computer_file:
         raw_targets = [
             l.strip() for l in computer_file.read_text().splitlines() if l.strip()
         ]
-        cfg.targets.computer_targets = expand_targets(raw_targets)
+        cfg.targets.computer_targets = [h.upper() for h in expand_targets(raw_targets)]
 
     # ---------- STDIN (NXC) ----------
     if stdin_mode:
@@ -440,7 +440,10 @@ def main(
 
     # ---------- run ----------
     snaff = SnafflerRunner(cfg)
-    snaff.execute()
+    try:
+        snaff.execute()
+    except KeyboardInterrupt:
+        raise typer.Exit(code=130)
 
 
 if __name__ == "__main__":

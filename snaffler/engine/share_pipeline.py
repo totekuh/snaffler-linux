@@ -9,6 +9,7 @@ from typing import List, Tuple
 
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.discovery.shares import ShareFinder
+from snaffler.resume.scan_state import ScanState
 from snaffler.utils.progress import ProgressState
 
 logger = logging.getLogger("snaffler")
@@ -16,8 +17,14 @@ logger = logging.getLogger("snaffler")
 
 class SharePipeline:
 
-    def __init__(self, cfg: SnafflerConfiguration, progress: ProgressState | None = None):
+    def __init__(
+        self,
+        cfg: SnafflerConfiguration,
+        state: ScanState | None = None,
+        progress: ProgressState | None = None,
+    ):
         self.cfg = cfg
+        self.state = state
         self.progress = progress
 
         self.max_workers = self.cfg.advanced.share_threads
@@ -41,9 +48,6 @@ class SharePipeline:
         """
         logger.info(f"Starting share discovery on {len(computers)} computers")
 
-        if self.progress:
-            self.progress.computers_total = len(computers)
-
         all_shares: List[Tuple[str, object]] = []
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -52,20 +56,34 @@ class SharePipeline:
                 for computer in computers
             }
 
-            for future in as_completed(future_to_computer):
-                computer = future_to_computer[future]
-                try:
-                    shares = future.result()
-                    if shares:
-                        all_shares.extend(shares)
-                        logger.info(f"Found {len(shares)} readable shares on {computer}")
+            try:
+                for future in as_completed(future_to_computer):
+                    computer = future_to_computer[future]
+                    try:
+                        shares = future.result()
+                        if shares:
+                            all_shares.extend(shares)
+                            logger.info(f"Found {len(shares)} readable shares on {computer}")
+                            if self.progress:
+                                self.progress.shares_found += len(shares)
+                            # Store shares incrementally for resume
+                            if self.state:
+                                self.state.store_shares(
+                                    [unc for unc, _ in shares]
+                                )
+                    except Exception as e:
+                        logger.debug(f"Error processing {computer}: {e}")
+                    finally:
                         if self.progress:
-                            self.progress.shares_found += len(shares)
-                except Exception as e:
-                    logger.debug(f"Error processing {computer}: {e}")
-                finally:
-                    if self.progress:
-                        self.progress.computers_done += 1
+                            self.progress.computers_done += 1
+                        # Mark done on success or error (no DNS, access denied — no point retrying).
+                        # On KeyboardInterrupt the for-loop breaks, so un-yielded futures
+                        # never reach here and their computers get retried on resume.
+                        if self.state:
+                            self.state.mark_computer_done(computer)
+            except KeyboardInterrupt:
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
 
         if not all_shares:
             logger.warning("No readable shares found")

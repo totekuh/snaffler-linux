@@ -734,9 +734,35 @@ def get_deploy_image_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.FILE_EXTENSION,
             wordlist_type=MatchListType.EXACT,
-            wordlist=['.vmdk', '.vdi', '.vhd', '.vhdx'],
+            wordlist=[
+                '.vmdk', '.vdi', '.vhd', '.vhdx',
+                '.qcow2', '.qcow',   # KVM/QEMU
+                '.avhd', '.avhdx',    # Hyper-V snapshots
+                '.vma',               # Proxmox backup
+                '.vmx',               # VMware config
+                '.img',               # raw disk image
+                '.e01',               # EnCase forensic image
+                '.dd',                # dd disk copy
+            ],
             triage=Triage.RED,
-            description="Virtual machine disk images - may contain extractable credentials."
+            description="Virtual machine disk images and forensic copies - may contain extractable credentials."
+        ),
+
+        ClassifierRule(
+            rule_name="KeepBackupImagesByExtension",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_EXTENSION,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=[
+                '.tib',               # Acronis True Image
+                '.v2i',               # Symantec Ghost
+                '.mrimg',             # Macrium Reflect
+                '.bkf',               # Windows Backup
+                '.iso',               # CD/DVD boot/OS images
+            ],
+            triage=Triage.YELLOW,
+            description="Backup and disk image files from common backup tools."
         ),
     ]
 

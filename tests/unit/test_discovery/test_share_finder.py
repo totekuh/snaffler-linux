@@ -53,7 +53,7 @@ def test_get_smb_cached():
         b = finder._get_smb("HOST")
 
     assert a is b
-    connect.assert_called_once_with("HOST", timeout=10)
+    connect.assert_called_once_with("HOST", timeout=cfg.auth.smb_timeout)
 
 
 def test_get_smb_reconnect_on_dead():

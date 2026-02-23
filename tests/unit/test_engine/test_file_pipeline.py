@@ -58,6 +58,7 @@ def test_file_pipeline_resume_skips_files():
     cfg = make_cfg()
 
     state = MagicMock()
+    state.should_skip_share.return_value = False
     state.should_skip_file.side_effect = lambda p: p.endswith("a.txt")
 
     pipeline = FilePipeline(cfg, state=state)
@@ -83,6 +84,7 @@ def test_file_pipeline_marks_files_done():
     cfg = make_cfg()
 
     state = MagicMock()
+    state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
 
     pipeline = FilePipeline(cfg, state=state)
@@ -97,6 +99,50 @@ def test_file_pipeline_marks_files_done():
     pipeline.run(["//HOST/SHARE"])
 
     state.mark_file_done.assert_called_once_with("//HOST/SHARE/a.txt")
+
+
+def test_file_pipeline_marks_share_done_after_file_scanning():
+    """mark_share_done is called after all files are scanned, not after tree walking."""
+    cfg = make_cfg()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+
+    call_order = []
+    state.mark_file_done.side_effect = lambda p: call_order.append(("file", p))
+    state.mark_share_done.side_effect = lambda p: call_order.append(("share", p))
+
+    pipeline = FilePipeline(cfg, state=state)
+
+    fake_files = [("//HOST/SHARE/a.txt", object())]
+    pipeline.tree_walker.walk_tree = MagicMock(return_value=fake_files)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # Files must be marked before shares
+    file_indices = [i for i, (t, _) in enumerate(call_order) if t == "file"]
+    share_indices = [i for i, (t, _) in enumerate(call_order) if t == "share"]
+    assert file_indices, "mark_file_done should have been called"
+    assert share_indices, "mark_share_done should have been called"
+    assert max(file_indices) < min(share_indices), \
+        "shares should be marked done only after all files are scanned"
+
+
+def test_file_pipeline_marks_share_done_on_empty_walk():
+    """Shares with no files are still marked done (tree walk succeeded)."""
+    cfg = make_cfg()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+
+    pipeline = FilePipeline(cfg, state=state)
+    pipeline.tree_walker.walk_tree = MagicMock(return_value=[])
+
+    pipeline.run(["//HOST/SHARE"])
+
+    state.mark_share_done.assert_called_once_with("//HOST/SHARE")
 
 
 # ---------- progress ----------
@@ -129,6 +175,7 @@ def test_file_pipeline_progress_with_resume():
     progress = ProgressState()
 
     state = MagicMock()
+    state.should_skip_share.return_value = False
     state.should_skip_file.side_effect = lambda p: p.endswith("a.txt")
 
     pipeline = FilePipeline(cfg, state=state, progress=progress)
@@ -143,7 +190,7 @@ def test_file_pipeline_progress_with_resume():
 
     pipeline.run(["//HOST/SHARE"])
 
-    # files_total should reflect post-resume count
-    assert progress.files_total == 1
-    assert progress.files_scanned == 1
+    # files_total includes previously-scanned files from resume
+    assert progress.files_total == 2
+    assert progress.files_scanned == 2
     assert progress.files_matched == 0

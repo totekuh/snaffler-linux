@@ -127,7 +127,7 @@ class ADDiscovery:
                 except (ValueError, TypeError, OverflowError):
                     logger.debug(f"Could not parse lastLogonTimeStamp for {hostname}")
 
-        self._computers.append(hostname)
+        self._computers.append(hostname.upper())
 
     def get_domain_computers(
             self,
@@ -170,7 +170,7 @@ class ADDiscovery:
             logger.info(
                 f"Skipped {self._skipped_disabled} disabled and "
                 f"{self._skipped_stale} stale computer accounts "
-                f"(use --no-skip-disabled to include them)"
+                f"(use --include-disabled to include them)"
             )
         logger.info(f"Found {len(self._computers)} live computers in AD")
         return self._computers

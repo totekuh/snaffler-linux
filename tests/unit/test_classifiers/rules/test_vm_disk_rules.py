@@ -13,7 +13,17 @@ from snaffler.classifiers.rules import (
 
 DATA_ROOT = Path(__file__).parents[3] / "data" / "vm_disks"
 
-EXTENSIONS = [".vmdk", ".vdi", ".vhd", ".vhdx"]
+VM_DISK_EXTENSIONS = [
+    ".vmdk", ".vdi", ".vhd", ".vhdx",
+    ".qcow2", ".qcow",
+    ".avhd", ".avhdx",
+    ".vma", ".vmx",
+    ".img", ".e01", ".dd",
+]
+
+BACKUP_IMAGE_EXTENSIONS = [
+    ".tib", ".v2i", ".mrimg", ".bkf", ".iso",
+]
 
 
 @pytest.fixture(scope="session")
@@ -36,7 +46,7 @@ def make_ctx(path: Path) -> FileContext:
     )
 
 
-@pytest.mark.parametrize("ext", EXTENSIONS)
+@pytest.mark.parametrize("ext", VM_DISK_EXTENSIONS)
 def test_vm_disk_extensions_trigger_rule(ext, evaluator):
     path = DATA_ROOT / f"test{ext}"
     assert path.exists(), f"Missing test file: {path}"
@@ -58,6 +68,28 @@ def test_vm_disk_extensions_trigger_rule(ext, evaluator):
     ) in hits, f"KeepVMDisksByExtension not triggered. Got: {hits}"
 
 
+@pytest.mark.parametrize("ext", BACKUP_IMAGE_EXTENSIONS)
+def test_backup_image_extensions_trigger_rule(ext, evaluator):
+    path = DATA_ROOT / f"test{ext}"
+    assert path.exists(), f"Missing test file: {path}"
+
+    ctx = make_ctx(path)
+
+    hits = []
+    for rule in evaluator.file_rules:
+        if rule.enumeration_scope != EnumerationScope.FILE_ENUMERATION:
+            continue
+        decision = evaluator.evaluate_file_rule(rule, ctx)
+        if decision:
+            hits.append((rule.rule_name, decision.action))
+
+    assert hits, f"No rules matched {path.name}"
+    assert (
+        "KeepBackupImagesByExtension",
+        MatchAction.SNAFFLE,
+    ) in hits, f"KeepBackupImagesByExtension not triggered. Got: {hits}"
+
+
 def test_non_vm_disk_not_matched(evaluator):
     """A regular file shouldn't trigger the VM disk rule."""
     path = DATA_ROOT / "test.vmdk"
@@ -71,7 +103,7 @@ def test_non_vm_disk_not_matched(evaluator):
     )
 
     for rule in evaluator.file_rules:
-        if rule.rule_name != "KeepVMDisksByExtension":
+        if rule.rule_name not in ("KeepVMDisksByExtension", "KeepBackupImagesByExtension"):
             continue
         decision = evaluator.evaluate_file_rule(rule, ctx)
-        assert decision is None, f".txt should not match KeepVMDisksByExtension"
+        assert decision is None, f".txt should not match {rule.rule_name}"
