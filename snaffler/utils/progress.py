@@ -1,8 +1,12 @@
 """
 Thread-safe progress counters for periodic status reporting.
 """
-import resource
 import threading
+
+try:
+    import resource
+except ImportError:
+    resource = None  # Windows — no resource module
 from datetime import datetime
 
 
@@ -37,7 +41,10 @@ class ProgressState:
             m, s = divmod(r, 60)
             elapsed_str = f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
 
-            rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+            if resource is not None:
+                rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+            else:
+                rss_mb = 0
 
             parts = [f"elapsed={elapsed_str}"]
 
@@ -61,11 +68,11 @@ class ProgressState:
         """Format per-severity counts, omitting zeroes."""
         counts = []
         if self.severity_black:
-            counts.append(f"Black={self.severity_black}")
+            counts.append(f"Black: {self.severity_black}")
         if self.severity_red:
-            counts.append(f"Red={self.severity_red}")
+            counts.append(f"Red: {self.severity_red}")
         if self.severity_yellow:
-            counts.append(f"Yellow={self.severity_yellow}")
+            counts.append(f"Yellow: {self.severity_yellow}")
         if self.severity_green:
-            counts.append(f"Green={self.severity_green}")
-        return " ".join(counts)
+            counts.append(f"Green: {self.severity_green}")
+        return " | ".join(counts)
