@@ -33,7 +33,8 @@ def _deduplicate_paths(share_paths: List[str], dfs_paths: List[str]) -> List[str
 
 
 _STATUS_INTERVAL = 30  # seconds
-_PORT_CHECK_TIMEOUT = 2  # seconds — TCP probe during DNS pre-resolution
+_PORT_CHECK_TIMEOUT = 3  # seconds — TCP probe during DNS pre-resolution
+_DNS_THREADS = 100  # DNS+port probes are lightweight — no need to throttle
 
 _PHASE_COMPUTERS = "computer_discovery_done"
 _PHASE_DNS = "dns_resolution_done"
@@ -177,9 +178,7 @@ class SnafflerRunner:
         prev_timeout = socket.getdefaulttimeout()
         socket.setdefaulttimeout(self.cfg.auth.smb_timeout)
         try:
-            with ThreadPoolExecutor(
-                max_workers=self.cfg.advanced.share_threads,
-            ) as pool:
+            with ThreadPoolExecutor(max_workers=_DNS_THREADS) as pool:
                 futures = {
                     pool.submit(resolve_one, h): h for h in to_resolve
                 }
