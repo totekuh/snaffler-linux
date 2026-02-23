@@ -42,6 +42,8 @@ def get_default_rules() -> List[ClassifierRule]:
     rules.extend(get_pcap_rules())
     rules.extend(get_defender_rules())
     rules.extend(get_sccm_rules())
+    rules.extend(get_gpp_rules())
+    rules.extend(get_multilingual_filename_rules())
     rules.extend(get_content_grep_rules())
     rules.extend(get_postmatch_rules())
 
@@ -290,6 +292,17 @@ def get_key_and_cert_rules() -> List[ClassifierRule]:
             triage=Triage.RED,
             description="Files with these extensions will be parsed as x509 certificates to see if they have private keys."
         ),
+
+        ClassifierRule(
+            rule_name="KeepExtExactYellow",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_EXTENSION,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=['.key', '.keypair', '.jks'],
+            triage=Triage.YELLOW,
+            description="Generic key/keystore files — may contain private keys or secrets."
+        ),
     ]
 
 
@@ -386,6 +399,29 @@ def get_config_rules() -> List[ClassifierRule]:
             wordlist=['.git-credentials'],
             triage=Triage.RED,
             description="Files with these exact names are very interesting."
+        ),
+
+        ClassifierRule(
+            rule_name="KeepPathContainsRed",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_PATH,
+            wordlist_type=MatchListType.CONTAINS,
+            wordlist=['/.purple/accounts.xml', '/.gem/credentials', 'config/hub'],
+            triage=Triage.RED,
+            description="Pidgin XMPP creds, RubyGems auth tokens, GitHub CLI OAuth tokens."
+        ),
+
+        ClassifierRule(
+            rule_name="KeepFilenameExactRed",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=['otr.private_key', 'Favorites.plist', 'proxy.config', 'keystore',
+                      'keyring', '.gitconfig', '.dockercfg', 'key3.db', 'key4.db', 'Login Data'],
+            triage=Triage.RED,
+            description="Browser credential DBs, Docker auth, Java keystores, GNOME keyring, OTR keys."
         ),
     ]
 
@@ -824,6 +860,114 @@ def get_sccm_rules() -> List[ClassifierRule]:
 
 
 # ==============================================================================
+# GROUP POLICY PREFERENCES (GPP) — cpassword detection
+# ==============================================================================
+
+def get_gpp_rules() -> List[ClassifierRule]:
+    """Rules for Group Policy Preference XML files containing cpassword."""
+    return [
+        ClassifierRule(
+            rule_name="KeepGPPCredsByName",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.RELAY,
+            content_rule_names=["KeepGPPCpasswordContent"],
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=['Groups.xml', 'ScheduledTasks.xml', 'Services.xml',
+                      'DataSources.xml', 'Printers.xml', 'Drives.xml'],
+            triage=Triage.GREEN,
+            description="GPP XML files relayed to content scan for cpassword attribute."
+        ),
+    ]
+
+
+# ==============================================================================
+# MULTILINGUAL FILENAME PATTERNS (German / French / Spanish / Dutch / Italian)
+# ==============================================================================
+
+def get_multilingual_filename_rules() -> List[ClassifierRule]:
+    """Rules for non-English filenames containing password/credential keywords."""
+    return [
+        # German keywords in filenames
+        ClassifierRule(
+            rule_name="KeepGermanPasswordFilenames",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.CONTAINS,
+            wordlist=[
+                'passwort', 'kennwort', 'kennwörter', 'passwörter',
+                'zugangsdaten', 'zugänge', 'anmeldedaten',
+                'schlüssel', 'geheimnis',
+                'konto', 'konten', 'türcode', 'torcode',
+                'anmeldung', 'logindaten',
+            ],
+            triage=Triage.RED,
+            description="German filename patterns: passwords, credentials, keys, secrets."
+        ),
+
+        # French keywords in filenames
+        ClassifierRule(
+            rule_name="KeepFrenchPasswordFilenames",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.CONTAINS,
+            wordlist=[
+                'mot_de_passe', 'motdepasse', 'mots_de_passe',
+                'identifiants', 'identifiant',
+            ],
+            triage=Triage.RED,
+            description="French filename patterns: passwords, credentials."
+        ),
+
+        # Spanish keywords in filenames
+        ClassifierRule(
+            rule_name="KeepSpanishPasswordFilenames",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.CONTAINS,
+            wordlist=[
+                'contraseña', 'contrasena', 'contraseñas', 'contrasenas',
+                'credenciales',
+            ],
+            triage=Triage.RED,
+            description="Spanish filename patterns: passwords, credentials."
+        ),
+
+        # Dutch keywords in filenames
+        ClassifierRule(
+            rule_name="KeepDutchPasswordFilenames",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.CONTAINS,
+            wordlist=[
+                'wachtwoord', 'wachtwoorden',
+                'inloggegevens', 'toegangsgegevens',
+            ],
+            triage=Triage.RED,
+            description="Dutch filename patterns: passwords, credentials."
+        ),
+
+        # Italian keywords in filenames
+        ClassifierRule(
+            rule_name="KeepItalianPasswordFilenames",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.CONTAINS,
+            wordlist=[
+                'credenziali',
+            ],
+            triage=Triage.RED,
+            description="Italian filename patterns: credentials."
+        ),
+    ]
+
+
+# ==============================================================================
 # CONTENT GREP RULES
 # ==============================================================================
 
@@ -1138,6 +1282,20 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             ],
             triage=Triage.RED,
             description="Files with contents matching these regexes are very interesting."
+        ),
+
+        # GPP cpassword in XML
+        ClassifierRule(
+            rule_name="KeepGPPCpasswordContent",
+            enumeration_scope=EnumerationScope.CONTENTS_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_CONTENT_AS_STRING,
+            wordlist_type=MatchListType.REGEX,
+            wordlist=[
+                r'cpassword="[A-Za-z0-9+/=]+"'
+            ],
+            triage=Triage.BLACK,
+            description="GPP XML files containing AES-encrypted cpassword (trivially decryptable with published key)."
         ),
 
         # RDP Passwords

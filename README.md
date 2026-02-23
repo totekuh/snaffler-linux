@@ -17,12 +17,30 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 - Resume support via SQLite state database
 - Compatible with original and custom TOML rule sets
 - Deterministic, ingestion-friendly logging (plain / JSON / TSV)
+- Custom DNS resolution (`--nameserver`) for internal AD hostname resolution through SOCKS tunnels
 - Pipe-friendly: accepts NetExec (nxc) `--shares` output via `--stdin`
 
 ## Installation
 
+### pip
+
 ```bash
 pip install snaffler-ng
+```
+
+### Standalone Binary
+
+Pre-built single-file executables (no Python required) are attached to each [GitHub Release](https://github.com/totekuh/snaffler-ng/releases):
+
+| Platform | File |
+|----------|------|
+| Linux x86_64 | `snaffler-linux-x86_64` |
+| Windows x86_64 | `snaffler-windows-x86_64.exe` |
+
+### Kali / Debian
+
+```bash
+sudo dpkg -i snaffler-ng_*.deb
 ```
 
 ## Quick Start
@@ -97,6 +115,19 @@ nxc smb 10.8.50.20 -u user -p pass --shares | snaffler -u user -p pass --stdin
 
 This parses NXC's share output, extracts UNC paths, and feeds them into the file scanner. Snaffler's existing share/directory rules handle filtering.
 
+### Custom DNS Server
+
+Use `--nameserver` (or `--ns`) to resolve hostnames through a specific DNS server instead of the system resolver. Useful for lab environments, split DNS, or any setup where the system resolver can't reach the target domain:
+
+```bash
+# Point at the DC for name resolution
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --dc-host 192.168.201.11 --ns 192.168.201.11
+
+# Combine with SOCKS — DNS queries use TCP and route through the tunnel automatically
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --dc-host 192.168.201.11 \
+  --socks socks5://127.0.0.1:1080 --ns 192.168.201.11
+```
+
 ## Logging & Output Formats
 
 snaffler-ng supports three output formats, each with a distinct purpose:
@@ -127,3 +158,5 @@ State tracks processed shares, directories, and files to avoid re-scanning.
 - NTLM pass-the-hash (`--hash`)
 - Kerberos (`-k`)
 - Kerberos via existing ccache (`--use-kcache`)
+- SOCKS proxy pivoting (`--socks`)
+- Custom DNS server (`--nameserver` / `--ns`)

@@ -1,0 +1,5 @@
+VPN Anmeldung Extern
+Server: vpn.corp.de
+Benutzer: extern01
+Passwort: Vpn$3cur3!
+Profil: AnyConnect

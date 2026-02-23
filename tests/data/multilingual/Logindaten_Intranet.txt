@@ -1,0 +1,4 @@
+Logindaten Intranet Portal
+URL: https://intranet.corp.de
+Benutzer: webadmin
+Passwort: 1ntr@n3t!Adm1n

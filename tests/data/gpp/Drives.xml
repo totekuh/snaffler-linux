@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Drives clsid="{8FDDCC1A-0C3C-43cd-A6B4-71A6DF20163A}">
+  <Drive clsid="{935D1B74-9CB8-4e3c-9914-7DD559B7A417}" name="S:" image="0" changed="2024-05-20 16:30:00" uid="{E5F6A7B8-C9D0-1234-EFAB-567890123456}">
+    <Properties action="C" thisDrive="SHOW" allDrives="NOCHANGE" userName="CORP\svc_fileshare" cpassword="p/CaG3WMWdo8Z20qFXfLp5TSTLaaAMp/9YRyz2ckSnO=" path="\\fileserver\share$" label="Corporate Share" persistent="1" />
+  </Drive>
+</Drives>

@@ -3,6 +3,8 @@ Active Directory discovery via LDAP (Impacket, paged)
 """
 
 import logging
+import random
+import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import List
@@ -51,6 +53,26 @@ class ADDiscovery:
         self._skipped_disabled: int = 0
         self._skipped_stale: int = 0
         self._users: List[str] = []
+
+    # ------------------------------------------------------------------
+    # LDAP anti-detection (--stealth)
+    # ------------------------------------------------------------------
+
+    def _pad_attrs(self, attrs: List[str]) -> List[str]:
+        """Pad LDAP attribute list with 1-4 random GUIDs to break query sigs.
+
+        Only active when ``--stealth`` is set.  AD silently ignores
+        properties that don't exist in the schema, so responses are
+        unaffected — but every query looks different, defeating static
+        IDS rules that fingerprint the tool by the exact set of
+        requested attributes.
+        """
+        if not self.cfg.advanced.stealth:
+            return attrs
+        padded = list(attrs)
+        for _ in range(random.randint(1, 4)):
+            padded.append(str(uuid.uuid4()))
+        return padded
 
     # ------------------------------------------------------------------
     # Computers
@@ -116,7 +138,9 @@ class ADDiscovery:
         self._skipped_disabled = 0
         self._skipped_stale = 0
 
-        attrs = ["dNSHostName", "name", "userAccountControl", "lastLogonTimeStamp"]
+        attrs = self._pad_attrs(
+            ["dNSHostName", "name", "userAccountControl", "lastLogonTimeStamp"]
+        )
 
         try:
             ldap = self.ldap_transport.connect()
@@ -193,7 +217,7 @@ class ADDiscovery:
             ldap.search(
                 searchBase=self.base_dn,
                 searchFilter="(&(objectClass=user)(objectCategory=person))",
-                attributes=["sAMAccountName"],
+                attributes=self._pad_attrs(["sAMAccountName"]),
                 sizeLimit=0,
                 searchControls=[paged],
                 perRecordCallback=lambda item: self._user_callback(
@@ -277,7 +301,7 @@ class ADDiscovery:
             ldap.search(
                 searchBase=self.base_dn,
                 searchFilter="(objectClass=fTDfs)",
-                attributes=["remoteServerName"],
+                attributes=self._pad_attrs(["remoteServerName"]),
                 sizeLimit=0,
                 searchControls=[paged],
                 perRecordCallback=self._dfs_v1_callback,
@@ -295,7 +319,7 @@ class ADDiscovery:
             ldap.search(
                 searchBase=self.base_dn,
                 searchFilter="(|(objectClass=msDFS-Namespacev2)(objectClass=msDFS-Linkv2))",
-                attributes=["msDFS-TargetListv2"],
+                attributes=self._pad_attrs(["msDFS-TargetListv2"]),
                 sizeLimit=0,
                 searchControls=[paged],
                 perRecordCallback=self._dfs_v2_callback,

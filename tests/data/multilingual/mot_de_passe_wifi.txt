@@ -1,0 +1,5 @@
+Réseau WiFi Bureau
+SSID: CORP-SECURE
+Clé WPA2: P@risOffice2024!
+SSID: CORP-GUEST
+Clé WPA2: Bienvenue2024

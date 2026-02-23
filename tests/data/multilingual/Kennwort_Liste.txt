@@ -1,0 +1,4 @@
+=== IT-Abteilung Kennwörter ===
+Domänenadmin: DA_admin / Geh3im!2024
+SQL-Server: sa / SqlPr0d#99
+VPN Gateway: vpnadmin / V3rbindung!

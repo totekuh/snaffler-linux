@@ -1,0 +1,4 @@
+Server Wachtwoorden IT-Afdeling
+Databaseserver: db01.corp.nl
+Gebruiker: beheerder
+Wachtwoord: W@chtw00rd!2024

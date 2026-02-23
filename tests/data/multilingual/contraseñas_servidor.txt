@@ -1,0 +1,5 @@
+Servidor de Base de Datos
+Host: db-prod.corp.local
+Usuario: dba_admin
+Contraseña: Pr0duccion#2024
+Puerto: 1433

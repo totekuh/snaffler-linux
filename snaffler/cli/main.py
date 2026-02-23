@@ -17,7 +17,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.1.1"  # fallback for PyInstaller builds
+        return "1.1.2"  # fallback for PyInstaller builds
 
 
 def _version_callback(value: bool):
@@ -41,8 +41,8 @@ DEFAULT_MAX_READ_BYTES = 2 * MB  # 2 MB
 DEFAULT_MAX_FILE_BYTES = 10 * MB  # 10 MB
 DEFAULT_MATCH_CONTEXT = 200  # bytes
 
-# Auth
-DEFAULT_TIMEOUT_MINUTES = 5
+# Network
+DEFAULT_TIMEOUT_SECONDS = 5
 
 # Threads
 DEFAULT_MAX_THREADS = 60
@@ -91,31 +91,12 @@ def main(
         ),
         domain: Optional[str] = typer.Option(
             None, "-d", "--domain",
-            help="Target Active Directory domain / Kerberos realm (e.g. CORP.LOCAL)",
-            rich_help_panel="Authentication",
+            help="AD domain for LDAP discovery, or Kerberos realm (e.g. CORP.LOCAL)",
+            rich_help_panel="Targeting",
         ),
-        dc_host: Optional[str] = typer.Option(
-            None,
-            "--dc-host",
-            help=(
-                    "Domain controller hostname, FQDN or IP address. "
-                    "Hostnames are required for Kerberos LDAP. "
-            ),
-            rich_help_panel="Authentication",
-        ),
-        smb_timeout: int = typer.Option(
-            DEFAULT_TIMEOUT_MINUTES,
-            "-e", "--timeout",
-            help="SMB timeout in seconds",
-            rich_help_panel="Authentication",
-        ),
-
         kerberos: bool = typer.Option(
             False, "-k", "--kerberos",
-            help=(
-                    "Use Kerberos authentication. "
-                    "Requires --domain and hostnames/FQDNs as targets."
-            ),
+            help="Use Kerberos authentication (requires -d and hostnames as targets)",
             rich_help_panel="Authentication",
         ),
         use_kcache: bool = typer.Option(
@@ -123,19 +104,15 @@ def main(
             help="Use Kerberos credentials from ccache (KRB5CCNAME)",
             rich_help_panel="Authentication",
         ),
-        socks_proxy: Optional[str] = typer.Option(
-            None, "--socks",
-            help="SOCKS proxy for pivoting (e.g. socks5://127.0.0.1:1080)",
-            rich_help_panel="Authentication",
-        ),
 
+        # ---------------- TARGETING ----------------
         unc_targets: Optional[List[str]] = typer.Option(
             None, "--unc",
             help="Direct UNC path(s) to scan (disables computer/share discovery)",
             rich_help_panel="Targeting",
         ),
         computer: Optional[List[str]] = typer.Option(
-            None, "--computer",
+            None, "-c", "--computer",
             help="Target computer(s) by hostname, IP, CIDR (10.0.0.0/24), or range (10.0.0.1-50)",
             rich_help_panel="Targeting",
         ),
@@ -150,10 +127,10 @@ def main(
             help="Only enumerate shares, skip filesystem walking",
             rich_help_panel="Targeting",
         ),
-        no_skip_disabled: bool = typer.Option(
+        include_disabled: bool = typer.Option(
             False,
-            "--no-skip-disabled",
-            help="Don't skip disabled/stale computer accounts (by default, disabled and machines inactive for 4+ months are skipped)",
+            "--include-disabled",
+            help="Include disabled and stale (4+ months inactive) computer accounts",
             rich_help_panel="Targeting",
         ),
         stdin_mode: bool = typer.Option(
@@ -163,6 +140,31 @@ def main(
             rich_help_panel="Targeting",
         ),
 
+        # ---------------- NETWORK ----------------
+        dc_host: Optional[str] = typer.Option(
+            None,
+            "--dc-host",
+            help="Domain controller hostname, FQDN or IP (required for Kerberos LDAP)",
+            rich_help_panel="Network",
+        ),
+        smb_timeout: int = typer.Option(
+            DEFAULT_TIMEOUT_SECONDS,
+            "--timeout",
+            help=f"SMB connection timeout in seconds (default: {DEFAULT_TIMEOUT_SECONDS})",
+            rich_help_panel="Network",
+        ),
+        socks_proxy: Optional[str] = typer.Option(
+            None, "--socks",
+            help="SOCKS proxy for pivoting (e.g. socks5://127.0.0.1:1080)",
+            rich_help_panel="Network",
+        ),
+        nameserver: Optional[str] = typer.Option(
+            None, "--nameserver", "--ns",
+            help="Custom DNS server for hostname resolution (e.g. DC IP)",
+            rich_help_panel="Network",
+        ),
+
+        # ---------------- OUTPUT ----------------
         output_file: Optional[Path] = typer.Option(
             None, "-o", "--output",
             help="Write results to file",
@@ -171,18 +173,22 @@ def main(
         log_level: str = typer.Option(
             DEFAULT_LOG_LEVEL,
             "--log-level",
-            help="Log level: debug | info | data",
+            help="Log verbosity: debug | info | data (data = findings only)",
             rich_help_panel="Output",
             click_type=click.Choice(
                 ["debug", "info", "data"],
                 case_sensitive=False,
             ),
         ),
-        log_type: str = typer.Option(
-            DEFAULT_LOG_TYPE,
+        log_type: Optional[str] = typer.Option(
+            None,
             "-t", "--log-type",
-            help="Log format: plain | json | tsv",
+            help="Output format (auto-detected from -o extension if omitted)",
             rich_help_panel="Output",
+            click_type=click.Choice(
+                ["plain", "json", "tsv"],
+                case_sensitive=False,
+            ),
         ),
         no_banner: bool = typer.Option(
             False,
@@ -197,6 +203,7 @@ def main(
             rich_help_panel="Output",
         ),
 
+        # ---------------- SCANNING ----------------
         min_interest: int = typer.Option(
             DEFAULT_MIN_INTEREST,
             "-b", "--min-interest",
@@ -229,6 +236,8 @@ def main(
             help=f"Bytes of context around matched strings (default: {DEFAULT_MATCH_CONTEXT})",
             rich_help_panel="Scanning",
         ),
+
+        # ---------------- ADVANCED ----------------
         max_threads: int = typer.Option(
             DEFAULT_MAX_THREADS,
             "-x", "--max-threads",
@@ -245,18 +254,24 @@ def main(
             help="Directory containing custom TOML rule files",
             rich_help_panel="Advanced",
         ),
+        stealth: bool = typer.Option(
+            False,
+            "--stealth",
+            help="OPSEC mode: pad LDAP queries with random attributes to break IDS signatures",
+            rich_help_panel="Advanced",
+        ),
         resume: bool = typer.Option(
             False,
             "--resume",
-            help="Resume a previous scan",
-            rich_help_panel="Resume",
+            help="Resume a previous scan (uses ./snaffler.db unless --state is set)",
+            rich_help_panel="Advanced",
         ),
 
         state: Optional[Path] = typer.Option(
             None,
             "--state",
             help="Path to resume state database (SQLite)",
-            rich_help_panel="Resume",
+            rich_help_panel="Advanced",
         ),
 
 ):
@@ -282,7 +297,7 @@ def main(
     # ---------- TARGETING ----------
     cfg.targets.unc_targets = unc_targets or []
     cfg.targets.shares_only = shares_only
-    cfg.targets.skip_disabled_computers = not no_skip_disabled
+    cfg.targets.skip_disabled_computers = not include_disabled
 
     if computer and computer_file:
         raise typer.BadParameter("Use either --computer or --computer-file, not both")
@@ -336,6 +351,7 @@ def main(
 
     # ---------- ADVANCED ----------
     cfg.advanced.max_threads = max_threads
+    cfg.advanced.stealth = stealth
 
     per_bucket = max(1, max_threads // 3)
     cfg.advanced.share_threads = per_bucket
@@ -349,7 +365,14 @@ def main(
     cfg.output.to_file = output_file is not None
     cfg.output.output_file = str(output_file) if output_file else None
     cfg.output.log_level = log_level
-    cfg.output.log_type = log_type
+    # Auto-detect format from output file extension when --log-type not explicit
+    if log_type is None and output_file:
+        ext = output_file.suffix.lower()
+        if ext == ".json":
+            log_type = "json"
+        elif ext == ".tsv":
+            log_type = "tsv"
+    cfg.output.log_type = log_type or DEFAULT_LOG_TYPE
 
     if no_color:
         from snaffler.utils import logger as _logger_mod
@@ -397,11 +420,21 @@ def main(
     )
 
     # ---------- SOCKS proxy ----------
+    # SOCKS must be set up before custom DNS so that DNS-over-TCP
+    # queries to an internal nameserver route through the tunnel.
     if socks_proxy:
         cfg.auth.socks_proxy = socks_proxy
         try:
             from snaffler.transport.socks import setup_socks_proxy
             setup_socks_proxy(socks_proxy)
+        except (ImportError, ValueError) as exc:
+            raise typer.BadParameter(str(exc))
+
+    # ---------- custom DNS ----------
+    if nameserver:
+        try:
+            from snaffler.transport.dns import setup_custom_dns
+            setup_custom_dns(nameserver)
         except (ImportError, ValueError) as exc:
             raise typer.BadParameter(str(exc))
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Printers clsid="{1F577D12-3044-471e-A299-3BCD50C05D03}">
+  <SharedPrinter clsid="{9A5E9697-9095-436d-A0EE-4D128FDFBCE5}" name="CorpPrinter" image="0" changed="2024-06-12 10:00:00" uid="{F6A7B8C9-D0E1-2345-FABC-678901234567}">
+    <Properties action="C" comment="" path="\\printserver\HP-LaserJet" default="NO" skipLocal="0" deleteAll="0" persistent="0" port="" />
+  </SharedPrinter>
+</Printers>

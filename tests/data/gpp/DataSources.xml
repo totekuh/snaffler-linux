@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<DataSources clsid="{380F820F-BD55-4BE0-A7E3-6B1C5E8A1F6A}">
+  <DataSource clsid="{B1BFE33A-E6B3-4C2C-9B6A-2D2F8F1A5C7D}" name="CorpDB" image="0" changed="2024-04-05 11:00:00" uid="{D4E5F6A7-B8C9-0123-DEFA-456789012345}">
+    <Properties action="C" dsn="CorpDB" driver="SQL Server" server="sql01.corp.local" cpassword="VPe/o9YRyz2ckSnOhGAppy10ykba1fXfLp5TSTLaaAM=" />
+  </DataSource>
+</DataSources>

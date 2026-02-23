@@ -1,0 +1,4 @@
+Credenciales VPN Corporativa
+Servidor: vpn.corp.es
+Usuario: admin.vpn
+Clave: VPN@cceso2024!

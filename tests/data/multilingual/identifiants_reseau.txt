@@ -1,0 +1,4 @@
+Identifiants Réseau Interne
+Proxy: proxy.corp.fr:8080
+Utilisateur: svc_proxy
+Mot de passe: Pr0xy@ccess!

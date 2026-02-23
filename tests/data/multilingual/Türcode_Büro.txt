@@ -1,0 +1,4 @@
+Türcode Bürogebäude
+Haupteingang: 4523
+Serverraum: 8891
+Archiv: 2210

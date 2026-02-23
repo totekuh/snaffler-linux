@@ -48,11 +48,12 @@ def fake_computer(dns=None, name=None, uac=0, llts=None):
     return FakeEntry(attrs)
 
 
-def _make_cfg(domain="example.com", skip_disabled=True, staleness_months=4):
+def _make_cfg(domain="example.com", skip_disabled=True, staleness_months=4, stealth=False):
     cfg = MagicMock()
     cfg.auth.domain = domain
     cfg.targets.skip_disabled_computers = skip_disabled
     cfg.targets.max_computer_staleness_months = staleness_months
+    cfg.advanced.stealth = stealth
     return cfg
 
 
@@ -393,3 +394,82 @@ def test_get_dfs_targets_ldap_error():
         result = discovery.get_dfs_targets()
 
     assert result == []
+
+
+# ---------- LDAP anti-detection (--stealth) tests ----------
+
+def test_pad_attrs_stealth_off():
+    """Without --stealth, _pad_attrs returns the original list unchanged."""
+    cfg = _make_cfg(stealth=False)
+    discovery = ADDiscovery(cfg)
+
+    attrs = ["dNSHostName", "name"]
+    result = discovery._pad_attrs(attrs)
+
+    assert result is attrs  # same object, not a copy
+    assert result == ["dNSHostName", "name"]
+
+
+def test_pad_attrs_stealth_on():
+    """With --stealth, _pad_attrs adds 1-4 random UUID strings."""
+    import uuid
+
+    cfg = _make_cfg(stealth=True)
+    discovery = ADDiscovery(cfg)
+
+    attrs = ["dNSHostName", "name"]
+    result = discovery._pad_attrs(attrs)
+
+    # Original attrs should be preserved at the start
+    assert result[:2] == ["dNSHostName", "name"]
+
+    # 1-4 UUIDs appended
+    extra = result[2:]
+    assert 1 <= len(extra) <= 4
+
+    # Each extra entry should be a valid UUID
+    for entry in extra:
+        uuid.UUID(entry)  # raises ValueError if not valid
+
+
+def test_pad_attrs_stealth_randomness():
+    """Two calls with --stealth produce different padding."""
+    cfg = _make_cfg(stealth=True)
+    discovery = ADDiscovery(cfg)
+
+    results = set()
+    for _ in range(10):
+        padded = discovery._pad_attrs(["name"])
+        results.add(tuple(padded[1:]))
+
+    # With 10 attempts generating 1-4 random UUIDs each,
+    # getting the same result every time is astronomically unlikely
+    assert len(results) > 1
+
+
+def test_stealth_pads_computer_query_attrs():
+    """With --stealth, the LDAP search for computers gets padded attributes."""
+    cfg = _make_cfg(stealth=True)
+    discovery = ADDiscovery(cfg)
+    ldap = MagicMock()
+
+    captured_attrs = []
+
+    def search(**kwargs):
+        captured_attrs.extend(kwargs["attributes"])
+
+    ldap.search.side_effect = search
+
+    with patch.object(
+        discovery.ldap_transport, "connect", return_value=ldap
+    ), patch(
+        "snaffler.discovery.ad.ldapasn1.SearchResultEntry",
+        AcceptAll(),
+    ):
+        discovery.get_domain_computers()
+
+    # Should have the 4 real attrs + 1-4 GUIDs
+    assert len(captured_attrs) >= 5
+    assert len(captured_attrs) <= 8
+    assert "dNSHostName" in captured_attrs
+    assert "name" in captured_attrs

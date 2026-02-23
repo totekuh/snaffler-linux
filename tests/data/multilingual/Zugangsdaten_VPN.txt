@@ -1,0 +1,4 @@
+FortiGate VPN Zugangsdaten
+Benutzer: fw-admin
+Passwort: F0rti!Gate2024
+Portal: https://vpn.corp.local/sslvpn

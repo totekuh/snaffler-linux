@@ -1,0 +1,4 @@
+github.com:
+  - user: devops-admin
+    oauth_token: ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    protocol: https

@@ -1,0 +1,4 @@
+Credenziali di Accesso Server
+Host: srv-app01.corp.it
+Utente: amministratore
+Password: Amm1n!str@2024

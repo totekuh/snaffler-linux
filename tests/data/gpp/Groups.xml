@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Groups clsid="{3125E937-EB16-4b4c-9934-544FC6D24D26}">
+  <User clsid="{DF5F1855-51E5-4d24-8B1A-D9BDE98BA1D1}" name="LocalAdmin" image="0" changed="2024-01-15 09:30:00" uid="{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}">
+    <Properties action="C" fullName="Local Admin" description="GPO-pushed local admin" cpassword="AzVJmXh/J9KrU5n0czX1uBPLSUjzFE8PcrtBEqb1eRU=" changeLogon="0" noChange="0" neverExpires="1" acctDisabled="0" userName="LocalAdmin"/>
+  </User>
+</Groups>

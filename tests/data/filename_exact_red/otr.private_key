@@ -1,0 +1,15 @@
+(privkeys
+  (account
+    (name "admin@corp.local")
+    (protocol prpl-jabber)
+    (private-key
+      (dsa
+        (p #00DEADBEEF01234567890ABCDEF#)
+        (q #00CAFEBABE#)
+        (g #00FEEDFACE#)
+        (y #00BAADF00D#)
+        (x #00C0FFEE42#)
+      )
+    )
+  )
+)

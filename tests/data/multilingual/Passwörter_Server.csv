@@ -1,0 +1,4 @@
+Server;Benutzer;Passwort
+srv-db01.corp.local;sa;Sommer2024!
+srv-web03.corp.local;admin;Willkommen123
+srv-file02.corp.local;backup_svc;B@ckup#2024

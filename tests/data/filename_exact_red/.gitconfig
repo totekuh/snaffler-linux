@@ -1,0 +1,7 @@
+[user]
+    name = Admin User
+    email = admin@corp.local
+[credential]
+    helper = store
+[http]
+    proxy = http://proxy.corp.local:8080

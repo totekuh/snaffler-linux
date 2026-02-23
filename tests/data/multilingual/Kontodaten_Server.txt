@@ -1,0 +1,4 @@
+Kontodaten IT-Server
+Server: srv-db01.corp.de
+Benutzer: sa
+Passwort: D@tenb4nk!2024

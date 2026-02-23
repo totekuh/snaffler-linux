@@ -1,0 +1,5 @@
+<account>
+  <protocol>prpl-jabber</protocol>
+  <name>admin@corp.local</name>
+  <password>S3cretXMPP!</password>
+</account>
