@@ -7,8 +7,7 @@ name = "snaffler-ng"
 version = "1.1.2"
 description = "Snaffler Impacket port - find credentials and sensitive data on SMB shares"
 readme = "README.md"
-license = "Apache-2.0"
-license-files = ["LICENSE"]
+license = {text = "Apache-2.0"}
 authors = [
     { name = "totekuh", email = "totekuh@protonmail.com" }
 ]
