@@ -4,6 +4,7 @@ Directory tree walking over SMB with resume support
 
 import logging
 import threading
+from concurrent.futures import CancelledError
 
 from impacket.smbconnection import SessionError
 
@@ -170,7 +171,7 @@ class TreeWalker:
         (e.g. ['/subdir1', '/subdir2']). Does NOT recurse.
         """
         if cancel and cancel.is_set():
-            return []
+            raise CancelledError("walk cancelled")
 
         if not path.endswith("/"):
             path += "/"
@@ -211,9 +212,13 @@ class TreeWalker:
                     if on_file:
                         on_file(unc_full, size, mtime)
 
-        except Exception as e:
-            self._invalidate_smb(server)
-            logger.debug(f"Error walking {unc_dir}: {e}")
+        except SessionError as e:
+            # Access denied on individual entries — partial results are OK
+            logger.debug(f"Session error walking {unc_dir}: {e}")
+            return subdir_paths
+        except Exception:
+            # Transport/connection errors — let walk_directory handle it
+            raise
 
         return subdir_paths
 

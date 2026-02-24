@@ -1,6 +1,8 @@
 import threading
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from snaffler.discovery.tree import TreeWalker
 from snaffler.classifiers.rules import MatchAction, EnumerationScope, MatchLocation
 
@@ -331,7 +333,9 @@ def test_walk_directory_on_dir_callback():
 
 
 def test_walk_directory_cancel():
-    """walk_directory() returns empty when cancel is set."""
+    """walk_directory() raises CancelledError when cancel is set."""
+    from concurrent.futures import CancelledError
+
     cfg = make_cfg()
     walker = TreeWalker(cfg)
 
@@ -343,9 +347,9 @@ def test_walk_directory_cancel():
 
     with patch.object(walker.smb_transport, "connect", return_value=smb):
         on_file, files = collect_callback()
-        subdirs = walker.walk_directory("//HOST/SHARE", on_file, cancel=cancel)
+        with pytest.raises(CancelledError):
+            walker.walk_directory("//HOST/SHARE", on_file, cancel=cancel)
 
-    assert subdirs == []
     assert files == []
     smb.listPath.assert_not_called()
 

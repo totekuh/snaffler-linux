@@ -205,6 +205,8 @@ class FilePipeline:
                     share_for_future = {}
                     # Per-share pending futures count
                     share_pending = {}
+                    # Shares that had at least one walk error (don't mark done)
+                    shares_with_errors = set()
                     # Cancel events per share root
                     cancel_events = {}
                     pending = set()
@@ -272,6 +274,8 @@ class FilePipeline:
                                 except Exception as e:
                                     logger.debug(f"Error walking {dir_unc}: {e}")
                                     subdirs = []
+                                    if share_root:
+                                        shares_with_errors.add(share_root)
 
                                 # Only mark walked on success — failed dirs retry on resume
                                 if self.state and dir_unc and walk_ok:
@@ -293,7 +297,9 @@ class FilePipeline:
                                 if share_root:
                                     share_pending[share_root] -= 1
                                     if share_pending[share_root] == 0:
-                                        walked_shares.append(share_root)
+                                        # Don't mark shares with errors as done — retry on resume
+                                        if share_root not in shares_with_errors:
+                                            walked_shares.append(share_root)
                                         if self.progress:
                                             self.progress.shares_walked += 1
 

@@ -496,6 +496,49 @@ def test_file_pipeline_walk_error_does_not_mark_walked():
     # mark_dir_walked should NOT have been called for the failed dir
     state.mark_dir_walked.assert_not_called()
 
+    # mark_share_done should NOT have been called — share had errors
+    state.mark_share_done.assert_not_called()
+
+
+def test_file_pipeline_partial_share_error_does_not_mark_done():
+    """A share where some dirs fail should NOT be marked done on resume."""
+    cfg = make_cfg()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state)
+
+    call_count = [0]
+
+    def walk_partial_fail(path, on_file=None, on_dir=None, cancel=None):
+        call_count[0] += 1
+        if path == "//HOST/SHARE":
+            # Root succeeds, returns one subdir
+            if on_dir:
+                on_dir("//HOST/SHARE/subdir")
+            return ["//HOST/SHARE/subdir"]
+        # Subdir fails
+        raise ConnectionError("SMB session expired")
+
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=walk_partial_fail
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # Root dir was walked OK, but subdir failed
+    walked_dirs = [c[0][0] for c in state.mark_dir_walked.call_args_list]
+    assert "//HOST/SHARE" in walked_dirs
+    assert "//HOST/SHARE/subdir" not in walked_dirs
+
+    # Share should NOT be marked done due to subdir error
+    state.mark_share_done.assert_not_called()
+
 
 # ---------- helpers ----------
 
