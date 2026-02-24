@@ -16,6 +16,7 @@ from snaffler.engine.domain_pipeline import DomainPipeline
 from snaffler.engine.file_pipeline import FilePipeline
 from snaffler.engine.share_pipeline import SharePipeline
 from snaffler.resume.scan_state import SQLiteStateStore, ScanState
+from snaffler.utils.hotkeys import start_hotkey_listener, stop_hotkey_listener
 from snaffler.utils.logger import print_completion_stats, set_finding_store
 from snaffler.utils.progress import ProgressState
 
@@ -323,6 +324,7 @@ class SnafflerRunner:
         logger.info(f"Starting Snaffler at {self.start_time:%Y-%m-%d %H:%M:%S}")
 
         self._start_status_thread()
+        start_hotkey_listener(self._stop_event)
         interrupted = False
         try:
             # ---------- Direct UNC paths ----------
@@ -388,6 +390,7 @@ class SnafflerRunner:
                 prev_handler = signal.getsignal(signal.SIGINT)
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
+                stop_hotkey_listener()
                 self._stop_status_thread()
                 self._sync_progress_from_state()
                 try:
