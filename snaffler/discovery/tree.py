@@ -181,44 +181,35 @@ class TreeWalker:
 
         subdir_paths = []
         try:
-            try:
-                entries = smb.listPath(share, path + "*")
-            except SessionError as e:
-                logger.debug(f"Cannot list {unc_dir}: {e}")
-                return []
-
-            for entry in entries:
-                name = entry.get_longname()
-                if name in (".", ".."):
-                    continue
-
-                entry_path = path + name
-                unc_full = f"//{server}/{share}{entry_path}"
-
-                if entry.is_directory():
-                    if self._should_scan_directory(unc_full):
-                        subdir_paths.append(entry_path)
-                        if on_dir:
-                            on_dir(unc_full)
-                else:
-                    try:
-                        size = entry.get_filesize()
-                    except Exception:
-                        size = 0
-                    try:
-                        mtime = entry.get_mtime_epoch()
-                    except Exception:
-                        mtime = 0.0
-                    if on_file:
-                        on_file(unc_full, size, mtime)
-
+            entries = smb.listPath(share, path + "*")
         except SessionError as e:
-            # Access denied on individual entries — partial results are OK
-            logger.debug(f"Session error walking {unc_dir}: {e}")
-            return subdir_paths
-        except Exception:
-            # Transport/connection errors — let walk_directory handle it
-            raise
+            logger.debug(f"Cannot list {unc_dir}: {e}")
+            return []
+
+        for entry in entries:
+            name = entry.get_longname()
+            if name in (".", ".."):
+                continue
+
+            entry_path = path + name
+            unc_full = f"//{server}/{share}{entry_path}"
+
+            if entry.is_directory():
+                if self._should_scan_directory(unc_full):
+                    subdir_paths.append(entry_path)
+                    if on_dir:
+                        on_dir(unc_full)
+            else:
+                try:
+                    size = entry.get_filesize()
+                except Exception:
+                    size = 0
+                try:
+                    mtime = entry.get_mtime_epoch()
+                except Exception:
+                    mtime = 0.0
+                if on_file:
+                    on_file(unc_full, size, mtime)
 
         return subdir_paths
 
