@@ -185,7 +185,10 @@ class FileScanner:
     ) -> Optional[FileResult]:
         smb_path = ctx.smb_path
 
-        data = self.file_accessor.read(server, share, smb_path)
+        data = self.file_accessor.read(
+            server, share, smb_path,
+            max_bytes=self.cfg.scanning.max_read_bytes,
+        )
         if not data:
             return None
 
@@ -248,7 +251,10 @@ class FileScanner:
             modified: datetime,
     ) -> Optional[FileResult]:
 
-        data = self.file_accessor.read(server, share, smb_path)
+        data = self.file_accessor.read(
+            server, share, smb_path,
+            max_bytes=self.cfg.scanning.max_read_bytes,
+        )
         if not data:
             return None
 
