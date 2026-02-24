@@ -63,7 +63,7 @@ def get_share_rules() -> List[ClassifierRule]:
             match_action=MatchAction.DISCARD,
             match_location=MatchLocation.SHARE_NAME,
             wordlist_type=MatchListType.ENDS_WITH,
-            wordlist=['/PRINT', '/IPC'],
+            wordlist=['PRINT', 'IPC'],
             triage=Triage.GREEN,
             description="Skips scanning inside shares ending with these words."
         ),
@@ -74,7 +74,7 @@ def get_share_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.SHARE_NAME,
             wordlist_type=MatchListType.ENDS_WITH,
-            wordlist=['/C', '/ADMIN'],
+            wordlist=['C', 'ADMIN'],
             triage=Triage.BLACK,
             description="Notifies the user that they can read C$ or ADMIN$."
         ),
@@ -85,7 +85,7 @@ def get_share_rules() -> List[ClassifierRule]:
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.SHARE_NAME,
             wordlist_type=MatchListType.ENDS_WITH,
-            wordlist=['/SCCMContentLib'],
+            wordlist=['SCCMContentLib'],
             triage=Triage.YELLOW,
             description="Notifies the user that they can read SCCMContentLib$ so they can take CMLoot for a spin."
         ),

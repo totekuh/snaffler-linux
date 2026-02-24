@@ -39,18 +39,24 @@ class SMBFileAccessor(FileAccessor):
         try:
             smb = self._get_smb(server)
             tid = smb.connectTree(share)
-            fid = smb.openFile(
-                tid,
-                path,
-                desiredAccess=FILE_READ_DATA | FILE_READ_ATTRIBUTES,
-                shareMode=FILE_SHARE_READ,
-            )
             try:
-                data = smb.readFile(tid, fid, offset=0, bytesToRead=max_bytes or 0)
-                return data if data else b""
+                fid = smb.openFile(
+                    tid,
+                    path,
+                    desiredAccess=FILE_READ_DATA | FILE_READ_ATTRIBUTES,
+                    shareMode=FILE_SHARE_READ,
+                )
+                try:
+                    data = smb.readFile(tid, fid, offset=0, bytesToRead=max_bytes or 0)
+                    return data if data else b""
+                finally:
+                    smb.closeFile(tid, fid)
             finally:
-                smb.closeFile(tid, fid)
+                smb.disconnectTree(tid)
         except Exception:
+            cache = getattr(self._thread_local, "smb_cache", None)
+            if cache:
+                cache.pop(server, None)
             return None
 
     def copy_to_local(self, server, share, path, dest_root):
