@@ -102,6 +102,20 @@ class SnafflerRunner:
         except Exception:
             pass
 
+    # ---------- thread rebalancing ----------
+
+    def _rebalance_file_threads(self):
+        """Give the share thread budget to file scanning (shares are done)."""
+        bonus = self.cfg.advanced.share_threads
+        half = bonus // 2
+        self.file_pipeline.tree_threads += half
+        self.file_pipeline.file_threads += bonus - half
+        logger.info(
+            f"Thread rebalance: +{bonus} share threads → "
+            f"tree={self.file_pipeline.tree_threads}, "
+            f"file={self.file_pipeline.file_threads}"
+        )
+
     # ---------- share filtering ----------
 
     def _filter_paths_by_share(self, paths: List[str]) -> List[str]:
@@ -337,6 +351,7 @@ class SnafflerRunner:
                 self.progress.computers_done = len(hosts)
                 self.progress.shares_found = len(paths)
                 if paths:
+                    self._rebalance_file_threads()
                     self.file_pipeline.run(paths)
 
             # ---------- Explicit computer list ----------
@@ -346,6 +361,7 @@ class SnafflerRunner:
                 )
                 share_paths = self._resume_share_discovery(resolved) if resolved else []
                 if share_paths:
+                    self._rebalance_file_threads()
                     self.file_pipeline.run(share_paths)
 
             # ---------- Domain discovery ----------
@@ -372,6 +388,7 @@ class SnafflerRunner:
                 self.progress.shares_found = len(all_paths)
 
                 if all_paths and not self.cfg.targets.shares_only:
+                    self._rebalance_file_threads()
                     self.file_pipeline.run(all_paths)
 
             else:
