@@ -4,6 +4,7 @@ Thread-safe progress counters for periodic status reporting.
 import ctypes
 import os
 import threading
+import time
 from datetime import datetime
 
 
@@ -47,6 +48,7 @@ class ProgressState:
         self.dns_total = 0
         self.dns_resolved = 0
         self.dns_filtered = 0
+        self.dns_start = None  # set when DNS phase begins
 
         # Share discovery stage
         self.computers_total = 0
@@ -80,11 +82,15 @@ class ProgressState:
 
             if self.dns_total:
                 remaining = self.dns_total - self.dns_resolved - self.dns_filtered
-                parts.append(
+                dns_str = (
                     f"DNS: {self.dns_resolved} up, "
                     f"{self.dns_filtered} filtered, "
                     f"{remaining} to go"
                 )
+                eta = self._dns_eta(remaining)
+                if eta:
+                    dns_str += f" (~{eta})"
+                parts.append(dns_str)
             if self.computers_total:
                 parts.append(f"Computers: {self.computers_done}/{self.computers_total}")
             if self.shares_total:
@@ -102,6 +108,26 @@ class ProgressState:
             parts.append(f"Mem: {rss_mb}MB")
 
             return " | ".join(parts)
+
+    def _dns_eta(self, remaining: int) -> str:
+        """Estimate time remaining for DNS phase, or empty string if too early."""
+        if not self.dns_start or remaining <= 0:
+            return ""
+        done = self.dns_resolved + self.dns_filtered
+        if done < 10:
+            return ""  # too early for a meaningful estimate
+        elapsed = time.monotonic() - self.dns_start
+        if elapsed < 1:
+            return ""
+        rate = done / elapsed
+        eta_secs = int(remaining / rate)
+        if eta_secs < 60:
+            return f"{eta_secs}s"
+        m, s = divmod(eta_secs, 60)
+        if m < 60:
+            return f"{m}m{s:02d}s"
+        h, m = divmod(m, 60)
+        return f"{h}h{m:02d}m"
 
     def _format_severity(self) -> str:
         """Format per-severity counts, omitting zeroes."""

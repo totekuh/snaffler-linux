@@ -145,6 +145,7 @@ class SnafflerRunner:
 
         self.progress.dns_total = len(computers)
         self.progress.dns_resolved = len(already_resolved)
+        self.progress.dns_start = time.monotonic()
 
         def resolve_one(hostname: str):
             try:

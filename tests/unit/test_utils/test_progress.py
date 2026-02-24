@@ -1,4 +1,5 @@
 import threading
+import time
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -27,6 +28,46 @@ def test_format_status_dns_counters():
 
     status = ps.format_status()
     assert "DNS: 80 up, 20 filtered, 0 to go" in status
+
+
+def test_format_status_dns_eta():
+    """ETA shown when enough samples and remaining > 0."""
+    ps = ProgressState()
+    ps.dns_total = 1000
+    ps.dns_resolved = 400
+    ps.dns_filtered = 100
+    # Simulate 50s elapsed — 500 done in 50s = 10/s, 500 remaining = ~50s
+    ps.dns_start = time.monotonic() - 50
+
+    status = ps.format_status()
+    assert "500 to go" in status
+    assert "(~" in status  # ETA present
+
+
+def test_format_status_dns_eta_too_early():
+    """No ETA when fewer than 10 hosts checked."""
+    ps = ProgressState()
+    ps.dns_total = 1000
+    ps.dns_resolved = 5
+    ps.dns_filtered = 2
+    ps.dns_start = time.monotonic() - 1
+
+    status = ps.format_status()
+    assert "993 to go" in status
+    assert "~" not in status  # no ETA yet
+
+
+def test_format_status_dns_eta_done():
+    """No ETA when remaining is 0."""
+    ps = ProgressState()
+    ps.dns_total = 100
+    ps.dns_resolved = 80
+    ps.dns_filtered = 20
+    ps.dns_start = time.monotonic() - 30
+
+    status = ps.format_status()
+    assert "0 to go" in status
+    assert "~" not in status
 
 
 def test_format_status_no_dns_when_zero():
