@@ -34,22 +34,6 @@ def make_accessor(smb_mock):
 
 # ---------- tests ----------
 
-def test_can_read_success():
-    smb = make_smb_mock()
-    accessor = make_accessor(smb)
-
-    assert accessor.can_read("srv", "share", "\\test.txt") is True
-
-
-def test_can_read_failure():
-    smb = make_smb_mock()
-    accessor = make_accessor(smb)
-
-    accessor._get_smb = MagicMock(side_effect=Exception("fail"))
-
-    assert accessor.can_read("srv", "share", "\\test.txt") is False
-
-
 def test_read_success():
     smb = make_smb_mock(b"ABC")
     accessor = make_accessor(smb)
@@ -139,7 +123,9 @@ def test_smb_reconnect_on_dead_connection():
 
         accessor = SMBFileAccessor(cfg)
 
-        accessor.can_read("srv", "share", "\\file.txt")
+        # First read triggers connection to smb_dead, which fails on getServerName
+        # causing reconnect to smb_new
+        accessor.read("srv", "share", "\\file.txt")
 
         data = accessor.read("srv", "share", "\\file.txt")
 

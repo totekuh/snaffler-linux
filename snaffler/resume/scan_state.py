@@ -6,6 +6,8 @@ class ScanState:
     def __init__(self, store):
         self.store = store
         self.aborted = False  # reserved for cooperative shutdown
+        # In-memory cache of checked files for O(1) lookups (case-insensitive)
+        self._checked_files: set = store.load_checked_files()
 
     # ---------- phase flags ----------
 
@@ -55,9 +57,10 @@ class ScanState:
     # ---------- files ----------
 
     def should_skip_file(self, unc_path: str) -> bool:
-        return self.store.has_checked_file(unc_path)
+        return unc_path.lower() in self._checked_files
 
     def mark_file_done(self, unc_path: str):
+        self._checked_files.add(unc_path.lower())
         self.store.mark_file_checked(unc_path)
 
     # ---------- findings ----------
@@ -249,13 +252,11 @@ class SQLiteStateStore:
 
     # ---------- files ----------
 
-    def has_checked_file(self, unc_path: str) -> bool:
+    def load_checked_files(self) -> set:
         with self.lock:
-            cur = self.conn.execute(
-                "SELECT 1 FROM checked_file WHERE unc_path = ?",
-                (unc_path,),
-            )
-            return cur.fetchone() is not None
+            rows = self.conn.execute("SELECT unc_path FROM checked_file").fetchall()
+            return {r[0].lower() for r in rows}
+
 
     def mark_file_checked(self, unc_path: str):
         with self.lock:

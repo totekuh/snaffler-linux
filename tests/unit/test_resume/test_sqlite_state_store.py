@@ -2,7 +2,7 @@ import tempfile
 import os
 import sqlite3
 
-from snaffler.resume.scan_state import SQLiteStateStore
+from snaffler.resume.scan_state import SQLiteStateStore, ScanState
 
 
 def test_sqlite_store_file_tracking():
@@ -12,14 +12,14 @@ def test_sqlite_store_file_tracking():
     try:
         store = SQLiteStateStore(path)
 
-        assert store.has_checked_file("//HOST/file") is False
+        assert "//host/file" not in store.load_checked_files()
 
         store.mark_file_checked("//HOST/file")
-        assert store.has_checked_file("//HOST/file") is True
+        assert "//host/file" in store.load_checked_files()
 
         # idempotent
         store.mark_file_checked("//HOST/file")
-        assert store.has_checked_file("//HOST/file") is True
+        assert "//host/file" in store.load_checked_files()
 
         store.close()
 
@@ -397,9 +397,8 @@ def test_case_insensitive_checked_file():
         store = SQLiteStateStore(path)
 
         store.mark_file_checked("//HOST/Share/File.txt")
-        assert store.has_checked_file("//HOST/Share/File.txt") is True
-        assert store.has_checked_file("//host/share/file.txt") is True
-        assert store.has_checked_file("//HOST/SHARE/FILE.TXT") is True
+        checked = store.load_checked_files()
+        assert "//host/share/file.txt" in checked
 
         # Duplicate with different case is ignored (same file on NTFS)
         store.mark_file_checked("//host/share/file.txt")
@@ -453,6 +452,111 @@ def test_case_insensitive_target_share():
         store.store_shares(["//host/share"])
         loaded = store.load_shares()
         assert len(loaded) == 1
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- in-memory checked_file set (P1-E) ----------
+
+
+def test_load_checked_files_returns_correct_set():
+    """load_checked_files() returns all checked file paths as a lowercase set."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.mark_file_checked("//HOST/Share/File1.txt")
+        store.mark_file_checked("//HOST/Share/File2.TXT")
+
+        result = store.load_checked_files()
+
+        assert isinstance(result, set)
+        assert result == {"//host/share/file1.txt", "//host/share/file2.txt"}
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_load_checked_files_empty_db():
+    """load_checked_files() returns empty set on fresh DB."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        result = store.load_checked_files()
+        assert result == set()
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_scan_state_should_skip_file_uses_in_memory_set():
+    """ScanState.should_skip_file() uses in-memory set, not SQL query."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+        store.mark_file_checked("//HOST/Share/existing.txt")
+
+        state = ScanState(store)
+
+        # should_skip_file uses in-memory set — no SQL after init
+        assert state.should_skip_file("//HOST/Share/existing.txt") is True
+        assert state.should_skip_file("//host/share/existing.txt") is True
+        assert state.should_skip_file("//HOST/Share/new.txt") is False
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_scan_state_mark_file_done_updates_both_db_and_set():
+    """mark_file_done() writes to both SQLite and in-memory set."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+        state = ScanState(store)
+
+        assert state.should_skip_file("//HOST/Share/new.txt") is False
+
+        state.mark_file_done("//HOST/Share/new.txt")
+
+        # In-memory set is updated immediately
+        assert state.should_skip_file("//HOST/Share/new.txt") is True
+
+        # SQLite is also updated (for persistence across runs)
+        assert "//host/share/new.txt" in store.load_checked_files()
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_scan_state_checked_files_case_insensitive():
+    """In-memory checked file set is case-insensitive."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+        state = ScanState(store)
+
+        state.mark_file_done("//HOST/Share/CamelCase.TXT")
+
+        assert state.should_skip_file("//HOST/Share/CamelCase.TXT") is True
+        assert state.should_skip_file("//host/share/camelcase.txt") is True
+        assert state.should_skip_file("//HOST/SHARE/CAMELCASE.TXT") is True
 
         store.close()
     finally:

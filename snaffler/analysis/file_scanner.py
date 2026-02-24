@@ -81,10 +81,6 @@ class FileScanner:
             server, share, smb_path, file_name, file_ext = parsed
             modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch else None
 
-            if not self.file_accessor.can_read(server, share, smb_path):
-                logger.debug(f"Can't read {unc_path}")
-                return
-
             ctx = FileContext(
                 unc_path=unc_path,
                 smb_path=smb_path,
@@ -145,6 +141,10 @@ class FileScanner:
                     result, server, share, smb_path
                 )
                 best_result = FileResult.pick_best(best_result, result)
+
+            # Black (level 3) is the maximum severity — skip content scan
+            if best_result and best_result.triage == Triage.BLACK:
+                return best_result
 
             # ---------------- Content rules
             if content_rule_names:

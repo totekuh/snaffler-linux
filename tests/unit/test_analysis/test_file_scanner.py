@@ -41,12 +41,23 @@ def make_rule(
 
 # ---------------- tests ----------------
 
-def test_scan_file_not_readable():
+def test_scan_file_unreadable_content():
+    """When read() returns None (access denied), content scan is skipped gracefully."""
     accessor = MagicMock()
-    accessor.can_read.return_value = False
+    accessor.read.return_value = None
 
-    evaluator = MagicMock()
-    evaluator.file_rules = []
+    rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        location=MatchLocation.FILE_CONTENT_AS_STRING,
+        triage=Triage.YELLOW,
+        name="ContentRule",
+    )
+
+    evaluator = RuleEvaluator(
+        file_rules=[],
+        content_rules=[rule],
+        postmatch_rules=[],
+    )
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
@@ -57,11 +68,12 @@ def test_scan_file_not_readable():
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert result is None
+    accessor.read.assert_called_once()
 
 
 def test_scan_file_discard_rule():
     accessor = MagicMock()
-    accessor.can_read.return_value = True
+
 
     rule = make_rule(action=MatchAction.DISCARD)
 
@@ -84,7 +96,7 @@ def test_scan_file_discard_rule():
 
 def test_scan_file_snaffle_rule():
     accessor = MagicMock()
-    accessor.can_read.return_value = True
+
 
     rule = make_rule(
         action=MatchAction.SNAFFLE,
@@ -117,7 +129,7 @@ def test_scan_file_snaffle_rule():
 
 def test_scan_file_check_for_keys():
     accessor = MagicMock()
-    accessor.can_read.return_value = True
+
     accessor.read.return_value = b"CERTDATA"
 
     rule = make_rule(action=MatchAction.CHECK_FOR_KEYS)
@@ -149,7 +161,7 @@ def test_scan_file_check_for_keys():
 
 def test_scan_file_content_rule():
     accessor = MagicMock()
-    accessor.can_read.return_value = True
+
     accessor.read.return_value = b"this contains password=123"
 
     rule = make_rule(
@@ -189,7 +201,7 @@ def test_scan_file_content_rule():
 def test_scan_file_zero_mtime():
     """mtime_epoch=0 should result in modified=None."""
     accessor = MagicMock()
-    accessor.can_read.return_value = True
+
 
     evaluator = MagicMock()
     evaluator.file_rules = []
@@ -205,3 +217,46 @@ def test_scan_file_zero_mtime():
 
     # No rules match → None result, but we just verify it doesn't crash
     assert result is None
+
+
+def test_scan_file_black_triage_skips_content_scan():
+    """Black-triage file match should skip content scanning entirely (no read() call)."""
+    accessor = MagicMock()
+
+    file_rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        triage=Triage.BLACK,
+        name="KeepNtdsBlack",
+    )
+
+    content_rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        location=MatchLocation.FILE_CONTENT_AS_STRING,
+        triage=Triage.YELLOW,
+        name="ContentRule",
+    )
+
+    evaluator = MagicMock()
+    evaluator.file_rules = [file_rule]
+    evaluator.content_rules = [content_rule]
+    evaluator.should_discard_postmatch.return_value = False
+    evaluator.evaluate_file_rule.return_value = RuleDecision(
+        action=MatchAction.SNAFFLE,
+        match="ntds.dit",
+    )
+
+    scanner = FileScanner(make_cfg(), accessor, evaluator)
+
+    with patch(
+        "snaffler.analysis.file_scanner.parse_unc_path",
+        return_value=("srv", "share", "/ntds.dit", "ntds.dit", ".dit"),
+    ), patch(
+        "snaffler.analysis.file_scanner.log_file_result"
+    ):
+        result = scanner.scan_file("//srv/share/ntds.dit", 100, 1700000000.0)
+
+    assert isinstance(result, FileResult)
+    assert result.triage == Triage.BLACK
+    assert result.rule_name == "KeepNtdsBlack"
+    # read() should NOT have been called — content scan was skipped
+    accessor.read.assert_not_called()

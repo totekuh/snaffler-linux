@@ -6,10 +6,6 @@ from typing import Optional
 
 class FileAccessor(ABC):
     @abstractmethod
-    def can_read(self, server: str, share: str, path: str) -> bool:
-        ...
-
-    @abstractmethod
     def read(self, server: str, share: str, path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
         ...
 

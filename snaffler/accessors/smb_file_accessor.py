@@ -35,22 +35,6 @@ class SMBFileAccessor(FileAccessor):
         cache[server] = smb
         return smb
 
-    def can_read(self, server: str, share: str, path: str) -> bool:
-        try:
-            smb = self._get_smb(server)
-
-            tid = smb.connectTree(share)
-            fid = smb.openFile(
-                tid,
-                path,
-                desiredAccess=FILE_READ_DATA | FILE_READ_ATTRIBUTES,
-                shareMode=FILE_SHARE_READ,
-            )
-            smb.closeFile(tid, fid)
-            return True
-        except Exception:
-            return False
-
     def read(self, server: str, share: str, path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
         try:
             smb = self._get_smb(server)
