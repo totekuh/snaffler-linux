@@ -402,11 +402,15 @@ class SQLiteStateStore:
 
     def mark_dir_walked(self, unc_path: str):
         with self.lock:
+            # Extract //server/share from UNC path for INSERT fallback
+            parts = unc_path.replace("\\", "/").split("/")
+            parts = [p for p in parts if p]
+            share = f"//{parts[0]}/{parts[1]}" if len(parts) >= 2 else ""
             # Upsert: batch writer may not have flushed the INSERT yet
             self.conn.execute(
-                "INSERT INTO target_dir (unc_path, share, walked) VALUES (?, '', 1) "
+                "INSERT INTO target_dir (unc_path, share, walked) VALUES (?, ?, 1) "
                 "ON CONFLICT(unc_path) DO UPDATE SET walked = 1",
-                (unc_path,),
+                (unc_path, share),
             )
             self.conn.commit()
 

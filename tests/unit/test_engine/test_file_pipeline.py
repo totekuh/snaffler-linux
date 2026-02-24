@@ -469,6 +469,34 @@ def test_batch_writer_flushes_on_interval():
     assert state.store_files.called
 
 
+# ---------- error handling ----------
+
+def test_file_pipeline_walk_error_does_not_mark_walked():
+    """A failed walk_directory should NOT mark the dir as walked (retried on resume)."""
+    cfg = make_cfg()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state)
+
+    def walk_exploding(path, on_file=None, on_dir=None, cancel=None):
+        raise ConnectionError("SMB connection failed")
+
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=walk_exploding
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # mark_dir_walked should NOT have been called for the failed dir
+    state.mark_dir_walked.assert_not_called()
+
+
 # ---------- helpers ----------
 
 def test_extract_share_unc():

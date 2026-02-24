@@ -168,12 +168,10 @@ class FilePipeline:
 
         walked_shares: list = []
         results_count = 0
-        skipped_files = 0
         producer_error = []  # captures KeyboardInterrupt from producer
 
         # ---------- Producer: parallel tree walking → queue ----------
         def _producer():
-            skip_count = [0]
             batch_writer = None
 
             if self.state:
@@ -183,7 +181,6 @@ class FilePipeline:
             def on_file(unc_path, size, mtime):
                 """Callback invoked by TreeWalker for each file discovered."""
                 if self.state and self.state.should_skip_file(unc_path):
-                    skip_count[0] += 1
                     if self.progress:
                         self.progress.files_total += 1
                         self.progress.files_scanned += 1
@@ -268,14 +265,16 @@ class FilePipeline:
                                 dir_unc = dir_for_future.pop(future, None)
                                 share_root = share_for_future.pop(future, None)
 
+                                walk_ok = False
                                 try:
                                     subdirs = future.result(timeout=self.walk_timeout)
+                                    walk_ok = True
                                 except Exception as e:
                                     logger.debug(f"Error walking {dir_unc}: {e}")
                                     subdirs = []
 
-                                # Mark directory as walked
-                                if self.state and dir_unc:
+                                # Only mark walked on success — failed dirs retry on resume
+                                if self.state and dir_unc and walk_ok:
                                     self.state.mark_dir_walked(dir_unc)
 
                                 # Submit subdirectories
@@ -304,8 +303,6 @@ class FilePipeline:
                         executor.shutdown(wait=False, cancel_futures=True)
                         producer_error.append(KeyboardInterrupt())
             finally:
-                nonlocal skipped_files
-                skipped_files = skip_count[0]
                 if batch_writer:
                     batch_writer.stop()
                 # Push sentinels so consumers exit
