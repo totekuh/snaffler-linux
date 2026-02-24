@@ -271,6 +271,41 @@ def test_walk_directory_discard_rule():
     assert len(files) == 1
 
 
+def test_walk_directory_session_error_propagates():
+    """SessionError from listPath propagates so the caller can track the failure."""
+    from impacket.smbconnection import SessionError
+    from impacket.nt_errors import STATUS_ACCESS_DENIED
+
+    cfg = make_cfg()
+    walker = TreeWalker(cfg)
+
+    smb = MagicMock()
+    smb.listPath.side_effect = SessionError(STATUS_ACCESS_DENIED)
+
+    with patch.object(walker.smb_transport, "connect", return_value=smb):
+        with pytest.raises(SessionError):
+            walker.walk_directory("//HOST/SHARE")
+
+    # Connection should NOT be invalidated for SessionError — it's still valid
+    smb.logoff.assert_not_called()
+
+
+def test_walk_directory_connection_error_invalidates():
+    """Non-SessionError (e.g. connection drop) invalidates the cached connection."""
+    cfg = make_cfg()
+    walker = TreeWalker(cfg)
+
+    smb = MagicMock()
+    smb.listPath.side_effect = OSError("connection reset")
+
+    with patch.object(walker.smb_transport, "connect", return_value=smb):
+        with pytest.raises(OSError):
+            walker.walk_directory("//HOST/SHARE")
+
+    # Connection should be invalidated on non-SessionError
+    smb.logoff.assert_called_once()
+
+
 def test_walk_directory_invalid_unc():
     """walk_directory() with invalid UNC returns empty list."""
     cfg = make_cfg()

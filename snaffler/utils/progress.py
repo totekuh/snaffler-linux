@@ -103,8 +103,8 @@ class ProgressState:
                 if eta:
                     dns_str += f" (~{eta})"
                 parts.append(dns_str)
-            elif self.dns_total:
-                parts.append(f"DNS: {self.dns_resolved}/{self.dns_total}")
+            elif self.dns_total and not walk_phase and not scan_phase:
+                parts.append(f"DNS: {self.dns_resolved} hosts")
 
             # --- Shares ---
             if share_phase:

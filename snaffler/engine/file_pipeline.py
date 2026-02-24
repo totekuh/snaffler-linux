@@ -318,8 +318,8 @@ class FilePipeline:
                                         # Don't mark shares with errors as done — retry on resume
                                         if share_root not in shares_with_errors:
                                             walked_shares.append(share_root)
-                                        if self.progress:
-                                            self.progress.shares_walked += 1
+                                            if self.progress:
+                                                self.progress.shares_walked += 1
 
                     except KeyboardInterrupt:
                         shutdown.set()

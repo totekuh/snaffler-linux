@@ -45,6 +45,9 @@ def make_cfg():
     cfg.advanced.file_threads = 2
     cfg.advanced.dns_threads = 4
 
+    # ---------- web ----------
+    cfg.web.enabled = False
+
     return cfg
 
 

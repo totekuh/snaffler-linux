@@ -63,7 +63,7 @@ def get_share_rules() -> List[ClassifierRule]:
             match_action=MatchAction.DISCARD,
             match_location=MatchLocation.SHARE_NAME,
             wordlist_type=MatchListType.ENDS_WITH,
-            wordlist=['PRINT$', 'IPC$'],
+            wordlist=['PRINT$', 'IPC$', 'SMSSIG$'],
             triage=Triage.GREEN,
             description="Skips scanning inside shares ending with these words."
         ),
@@ -149,7 +149,7 @@ def get_discard_file_rules() -> List[ClassifierRule]:
             wordlist_type=MatchListType.EXACT,
             wordlist=['.bmp', '.eps', '.gif', '.ico', '.jfi', '.jfif', '.jif', '.jpe', '.jpeg', '.jpg',
                       '.png', '.psd', '.svg', '.tif', '.tiff', '.webp', '.xcf', '.ttf', '.otf', '.lock',
-                      '.css', '.less', '.admx', '.adml', '.xsd', '.nse', '.xsl'],
+                      '.css', '.less', '.admx', '.adml', '.xsd', '.nse', '.xsl', '.lnk', '.url'],
             triage=Triage.GREEN,
             description="Skip any further scanning for files with these extensions."
         ),

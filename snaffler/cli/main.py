@@ -294,6 +294,20 @@ def main(
             rich_help_panel="Advanced",
         ),
 
+        # ---------------- WEB DASHBOARD ----------------
+        web: bool = typer.Option(
+            False,
+            "--web",
+            help="Enable live web dashboard (requires: pip install snaffler-ng[web])",
+            rich_help_panel="Web Dashboard",
+        ),
+        web_port: int = typer.Option(
+            8080,
+            "--web-port",
+            help="Port for web dashboard (default: 8080)",
+            rich_help_panel="Web Dashboard",
+        ),
+
 ):
     if ctx.invoked_subcommand is not None:
         return
@@ -412,6 +426,10 @@ def main(
         state_path.unlink()
     cfg.state.state_db = str(state_path)
     cfg.state.fresh = fresh
+
+    # ---------- WEB DASHBOARD ----------
+    cfg.web.enabled = web
+    cfg.web.port = web_port
 
     # ---------- validate ----------
     cfg.validate()

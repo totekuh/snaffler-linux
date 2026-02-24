@@ -1,0 +1,291 @@
+import sqlite3
+
+import pytest
+from typer.testing import CliRunner
+
+from snaffler.cli.main import app
+from snaffler.cli.results import _render_html
+
+runner = CliRunner()
+
+
+# ---------- helpers ----------
+
+def _create_db(path):
+    """Create a minimal scan DB with schema matching SQLiteStateStore."""
+    conn = sqlite3.connect(str(path))
+    conn.executescript("""
+        CREATE TABLE sync (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE target_computer (
+            name TEXT PRIMARY KEY COLLATE NOCASE,
+            ip TEXT,
+            done INTEGER DEFAULT 0
+        );
+        CREATE TABLE target_share (
+            unc_path TEXT PRIMARY KEY COLLATE NOCASE,
+            done INTEGER DEFAULT 0
+        );
+        CREATE TABLE target_dir (
+            unc_path TEXT PRIMARY KEY COLLATE NOCASE,
+            share TEXT NOT NULL COLLATE NOCASE,
+            walked INTEGER DEFAULT 0
+        );
+        CREATE TABLE target_file (
+            unc_path TEXT PRIMARY KEY COLLATE NOCASE,
+            share TEXT NOT NULL COLLATE NOCASE,
+            size INTEGER,
+            mtime REAL,
+            checked INTEGER DEFAULT 0
+        );
+        CREATE TABLE finding (
+            finding_id TEXT PRIMARY KEY,
+            file_path TEXT NOT NULL,
+            triage TEXT NOT NULL,
+            rule_name TEXT NOT NULL,
+            match_text TEXT,
+            context TEXT,
+            size INTEGER,
+            mtime TEXT,
+            found_at TEXT NOT NULL
+        );
+    """)
+    return conn
+
+
+def _populate_db(conn):
+    """Insert sample data for testing."""
+    conn.executemany(
+        "INSERT INTO target_computer (name, ip, done) VALUES (?, ?, ?)",
+        [
+            ("DC01", "10.0.0.1", 1),
+            ("FS01", "10.0.0.2", 1),
+            ("WEB01", None, 0),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO target_share (unc_path, done) VALUES (?, ?)",
+        [
+            ("//DC01/SYSVOL", 1),
+            ("//DC01/NETLOGON", 1),
+            ("//FS01/Data", 0),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO target_dir (unc_path, share, walked) VALUES (?, ?, ?)",
+        [
+            ("//DC01/SYSVOL", "//DC01/SYSVOL", 1),
+            ("//DC01/SYSVOL/scripts", "//DC01/SYSVOL", 1),
+            ("//FS01/Data", "//FS01/Data", 0),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO target_file (unc_path, share, size, mtime, checked) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("//DC01/SYSVOL/scripts/login.bat", "//DC01/SYSVOL", 512, 1700000000, 1),
+            ("//DC01/SYSVOL/scripts/map.ps1", "//DC01/SYSVOL", 1024, 1700000000, 1),
+            ("//FS01/Data/report.xlsx", "//FS01/Data", 50000, 1700000000, 0),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO finding (finding_id, file_path, triage, rule_name, "
+        "match_text, context, size, mtime, found_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("aaa", "//DC01/IT$/passwords.kdbx", "Black", "KeepPassKDBX",
+             None, None, 2200000, "2025-01-15", "2026-02-24T10:30:00"),
+            ("bbb", "//FS02/deploy$/id_rsa", "Black", "PrivateKey",
+             None, "-----BEGIN RSA PRIVATE KEY-----", 1700, "2025-02-01", "2026-02-24T10:31:00"),
+            ("ccc", "//WEB01/wwwroot$/web.config", "Red", "WebConfig",
+             None, 'connectionString="Server=sql01;..."', 4300, "2025-03-10", "2026-02-24T10:32:00"),
+            ("ddd", "//FS01/Data/notes.txt", "Yellow", "InterestingFile",
+             None, None, 800, "2025-04-01", "2026-02-24T10:33:00"),
+            ("eee", "//FS01/Data/readme.md", "Green", "MildlyInteresting",
+             None, None, 200, "2025-05-01", "2026-02-24T10:34:00"),
+        ],
+    )
+    conn.commit()
+
+
+def _sample_stats():
+    return {
+        "computers": {"total": 3, "done": 2, "resolved": 2},
+        "shares": {"total": 3, "done": 2},
+        "directories": {"total": 3, "walked": 2},
+        "files": {"total": 3, "checked": 2},
+        "findings": {"total": 5, "black": 2, "red": 1, "yellow": 1, "green": 1},
+    }
+
+
+def _sample_findings():
+    return [
+        {"triage": "Black", "rule_name": "KeepPassKDBX",
+         "file_path": "//DC01/IT$/passwords.kdbx", "size": 2200000,
+         "mtime": "2025-01-15", "context": None},
+        {"triage": "Red", "rule_name": "WebConfig",
+         "file_path": "//WEB01/wwwroot$/web.config", "size": 4300,
+         "mtime": "2025-03-10", "context": 'connectionString="Server=sql01;..."'},
+        {"triage": "Green", "rule_name": "MildlyInteresting",
+         "file_path": "//FS01/Data/readme.md", "size": 200,
+         "mtime": "2025-05-01", "context": None},
+    ]
+
+
+# ---------- unit tests for _render_html ----------
+
+class TestRenderHtml:
+    def test_valid_html_structure(self):
+        out = _render_html(_sample_stats(), _sample_findings())
+        assert "<!DOCTYPE html>" in out
+        assert "<html" in out
+        assert "</html>" in out
+        assert "Snaffler Scan Report" in out
+        assert "Generated by snaffler-ng" in out
+
+    def test_stats_cards_present(self):
+        out = _render_html(_sample_stats(), _sample_findings())
+        assert "Computers" in out
+        assert "Shares" in out
+        assert "Directories" in out
+        assert "Files" in out
+        assert "2 / 3" in out  # done / total for computers, shares, etc.
+
+    def test_severity_badges(self):
+        out = _render_html(_sample_stats(), _sample_findings())
+        for color_name in ("Black", "Red", "Yellow", "Green"):
+            assert f">{color_name}</span>" in out
+
+    def test_triage_colors(self):
+        out = _render_html(_sample_stats(), _sample_findings())
+        assert "#888" in out       # Black
+        assert "#e74c3c" in out    # Red
+        assert "#f1c40f" in out    # Yellow
+        assert "#27ae60" in out    # Green
+
+    def test_finding_rows(self):
+        out = _render_html(_sample_stats(), _sample_findings())
+        assert "KeepPassKDBX" in out
+        assert "passwords.kdbx" in out
+        assert "WebConfig" in out
+        assert "web.config" in out
+
+    def test_context_shown(self):
+        out = _render_html(_sample_stats(), _sample_findings())
+        assert "connectionString" in out
+
+    def test_empty_findings(self):
+        stats = _sample_stats()
+        stats["findings"] = {"total": 0, "black": 0, "red": 0, "yellow": 0, "green": 0}
+        out = _render_html(stats, [])
+        assert "<!DOCTYPE html>" in out
+        assert "Findings (0)" in out
+        assert "<tbody>" in out
+
+    def test_xss_escape_filename(self):
+        findings = [{
+            "triage": "Red", "rule_name": "XSSTest",
+            "file_path": '//SRV/<script>alert("xss")</script>.txt',
+            "size": 100, "mtime": "2025-01-01",
+            "context": None,
+        }]
+        out = _render_html(_sample_stats(), findings)
+        assert "&lt;script&gt;" in out
+        assert "&lt;/script&gt;" in out
+        # The unescaped XSS payload must not appear in the output
+        assert '<script>alert(' not in out
+
+    def test_xss_escape_context(self):
+        findings = [{
+            "triage": "Black", "rule_name": "XSSTest",
+            "file_path": "//SRV/share/file.txt",
+            "size": 100, "mtime": "2025-01-01",
+            "context": '<img src=x onerror="alert(1)">',
+        }]
+        out = _render_html(_sample_stats(), findings)
+        assert 'onerror="alert(1)"' not in out
+        assert "&lt;img" in out
+
+    def test_context_truncated(self):
+        long_ctx = "A" * 300
+        findings = [{
+            "triage": "Yellow", "rule_name": "LongCtx",
+            "file_path": "//SRV/share/file.txt",
+            "size": 50, "mtime": "2025-01-01",
+            "context": long_ctx,
+        }]
+        out = _render_html(_sample_stats(), findings)
+        # Table cell truncated to 200 chars with ellipsis
+        assert "A" * 200 + "…" in out
+        # Full context stored in MODAL_DATA JS array for the detail modal
+        assert "A" * 300 in out
+
+    def test_search_input_present(self):
+        out = _render_html(_sample_stats(), _sample_findings())
+        assert 'id="search"' in out
+        assert 'placeholder="Filter findings..."' in out
+
+    def test_filter_script_present(self):
+        out = _render_html(_sample_stats(), _sample_findings())
+        assert "getElementById('search')" in out
+        assert "addEventListener('input'" in out
+        assert "tbody tr" in out
+
+    def test_none_size_and_mtime(self):
+        findings = [{
+            "triage": "Green", "rule_name": "NoMeta",
+            "file_path": "//SRV/share/file.txt",
+            "size": None, "mtime": None,
+            "context": None,
+        }]
+        out = _render_html(_sample_stats(), findings)
+        assert "<!DOCTYPE html>" in out
+        assert "NoMeta" in out
+
+
+# ---------- CLI integration tests ----------
+
+class TestHtmlCli:
+    def test_html_format_via_cli(self, tmp_path):
+        db_path = tmp_path / "snaffler.db"
+        conn = _create_db(db_path)
+        _populate_db(conn)
+        conn.close()
+
+        result = runner.invoke(
+            app, ["results", "--state", str(db_path), "--format", "html"]
+        )
+        assert result.exit_code == 0
+        out = result.output
+        assert "<!DOCTYPE html>" in out
+        assert "Snaffler Scan Report" in out
+        assert "KeepPassKDBX" in out
+        assert "passwords.kdbx" in out
+        assert "Black" in out
+        assert "Red" in out
+
+    def test_html_empty_db(self, tmp_path):
+        db_path = tmp_path / "snaffler.db"
+        conn = _create_db(db_path)
+        conn.close()
+
+        result = runner.invoke(
+            app, ["results", "--state", str(db_path), "--format", "html"]
+        )
+        assert result.exit_code == 0
+        assert "<!DOCTYPE html>" in result.output
+        assert "Findings (0)" in result.output
+
+    def test_html_min_interest_filters(self, tmp_path):
+        db_path = tmp_path / "snaffler.db"
+        conn = _create_db(db_path)
+        _populate_db(conn)
+        conn.close()
+
+        result = runner.invoke(
+            app, ["results", "--state", str(db_path), "--format", "html", "-b", "3"]
+        )
+        assert result.exit_code == 0
+        out = result.output
+        assert "KeepPassKDBX" in out
+        assert "PrivateKey" in out
+        # Yellow/Green findings filtered out
+        assert "InterestingFile" not in out
+        assert "MildlyInteresting" not in out

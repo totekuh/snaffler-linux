@@ -111,6 +111,14 @@ class StateConfig:
     fresh: bool = False
 
 
+# ---------------- WEB DASHBOARD ----------------
+
+@dataclass
+class WebConfig:
+    enabled: bool = False
+    port: int = 8080
+
+
 # ---------------- ROOT CONFIG ----------------
 @dataclass
 class SnafflerConfiguration:
@@ -121,6 +129,7 @@ class SnafflerConfiguration:
     advanced: AdvancedConfig = field(default_factory=AdvancedConfig)
     rules: RulesConfig = field(default_factory=RulesConfig)
     state: StateConfig = field(default_factory=StateConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
     # ---------- validation ----------
     def validate(self):

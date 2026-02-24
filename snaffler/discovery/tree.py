@@ -111,6 +111,11 @@ class TreeWalker:
             )
             # Convert relative paths to full UNC paths
             return [f"//{server}/{share}{p}" for p in subdir_paths]
+        except SessionError as e:
+            # SMB-level error (ACCESS_DENIED, etc.) — connection is still valid,
+            # don't invalidate it.  Re-raise so the caller can track the failure.
+            logger.debug(f"Cannot list {unc_path}: {e}")
+            raise
         except Exception as e:
             self._invalidate_smb(server)
             logger.debug(f"Error walking directory {unc_path}: {e}")
@@ -141,11 +146,7 @@ class TreeWalker:
         logger.debug(f"Walking directory: {unc_dir}")
 
         subdir_paths = []
-        try:
-            entries = smb.listPath(share, path + "*")
-        except SessionError as e:
-            logger.debug(f"Cannot list {unc_dir}: {e}")
-            return []
+        entries = smb.listPath(share, path + "*")
 
         for entry in entries:
             name = entry.get_longname()

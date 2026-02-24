@@ -22,6 +22,7 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler) — a post-exp
 | `cryptography` | Certificate parsing (PEM/DER/PKCS12) — transitive via impacket |
 | `dnspython` | Custom DNS resolution for `--nameserver` — transitive via impacket |
 | `pysocks>=1.7.0` | SOCKS proxy support (optional: `pip install snaffler-ng[socks]`) |
+| `flask>=3.0.0` | Live web dashboard (optional: `pip install snaffler-ng[web]`) |
 | `pytest>=8.0` | Testing (optional: `pip install snaffler-ng[test]`) |
 
 ## Build & Test
@@ -88,7 +89,8 @@ Orchestrated by `SnafflerRunner.execute()` which selects the entry point:
 
 ```
 snaffler/
-├── cli/main.py              # Typer CLI (single command, no subcommands), option parsing, config assembly
+├── cli/main.py              # Typer CLI, option parsing, config assembly
+│   ├── results.py           # `snaffler results` subcommand: stats/findings from scan DB (plain/json/html)
 ├── config/configuration.py  # Dataclass-based config (Auth/Targeting/Scanning/Output/Advanced/Rules/Resume)
 ├── engine/
 │   ├── runner.py            # Top-level orchestrator (SnafflerRunner), DFS merge + dedup, 30s status thread
@@ -98,7 +100,7 @@ snaffler/
 ├── discovery/
 │   ├── ad.py                # ADDiscovery: LDAP queries for computers/users/DFS targets (paged)
 │   ├── shares.py            # ShareFinder: SRVSVC share enumeration (listShares), readability checks
-│   └── tree.py              # TreeWalker: iterative SMB directory listing, parallel subtree walking
+│   └── tree.py              # TreeWalker: SMB directory listing (non-recursive), parallel subtree walking
 ├── transport/
 │   ├── smb.py               # SMBTransport: Impacket SMBConnection (NTLM + Kerberos)
 │   ├── ldap.py              # LDAPTransport: Impacket LDAPConnection (NTLM + Kerberos)
@@ -126,6 +128,9 @@ snaffler/
 │   ├── path_utils.py        # UNC path parsing, modified time extraction
 │   ├── progress.py          # ProgressState: thread-safe counters, severity counts, format_status()
 │   └── target_parser.py     # expand_targets(): CIDR/range expansion for --computer input
+├── web/
+│   ├── server.py            # Flask app + daemon thread launcher (--web), REST API endpoints
+│   └── dashboard.py         # Self-contained live HTML dashboard (polling, dark theme)
 └── rules/
     └── example_custom_rule.toml  # Example custom TOML rule file
 ```
@@ -210,7 +215,7 @@ Integration tests in `tests/integration/` run the full pipeline with only the SM
 Key test directories:
 - `test_classifiers/rules/` — individual rule category tests (12 files)
 - `test_classifiers/` — evaluator logic, loader, rules dataclass
-- `test_cli/` — CLI run, dual output (auto-format), stdin
+- `test_cli/` — CLI run, dual output (auto-format), stdin, HTML report rendering
 - `test_discovery/` — share finder, tree walker, AD discovery
 - `test_engine/` — pipeline and runner tests
 - `test_transport/` — SMB, LDAP, SOCKS transport tests

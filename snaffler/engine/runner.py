@@ -339,6 +339,9 @@ class SnafflerRunner:
 
         self._start_status_thread()
         start_hotkey_listener(self._stop_event)
+        if self.cfg.web.enabled:
+            from snaffler.web.server import start_web_server
+            start_web_server(self.progress, self.cfg.state.state_db, self.start_time, self.cfg.web.port)
         interrupted = False
         try:
             # ---------- Direct UNC paths ----------
@@ -407,6 +410,9 @@ class SnafflerRunner:
                 prev_handler = signal.getsignal(signal.SIGINT)
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
+                if self.cfg.web.enabled:
+                    from snaffler.web.server import stop_web_server
+                    stop_web_server()
                 stop_hotkey_listener()
                 self._stop_status_thread()
                 self._sync_progress_from_state()

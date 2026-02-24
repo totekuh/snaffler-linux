@@ -316,9 +316,9 @@ class ADDiscovery:
             )
             ldap.close()
         except LDAPSessionError as e:
-            logger.error(f"LDAP error during DFS v1 discovery: {e}")
+            logger.error(f"LDAP error during DFS v1 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}")
         except Exception as e:
-            logger.error(f"Unexpected error during DFS v1 discovery: {e}", exc_info=True)
+            logger.error(f"Unexpected error during DFS v1 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}", exc_info=True)
 
         # --- DFS v2: msDFS-Namespacev2 / msDFS-Linkv2 ---
         try:
@@ -334,9 +334,9 @@ class ADDiscovery:
             )
             ldap.close()
         except LDAPSessionError as e:
-            logger.error(f"LDAP error during DFS v2 discovery: {e}")
+            logger.error(f"LDAP error during DFS v2 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}")
         except Exception as e:
-            logger.error(f"Unexpected error during DFS v2 discovery: {e}", exc_info=True)
+            logger.error(f"Unexpected error during DFS v2 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}", exc_info=True)
 
         targets = sorted(self._dfs_targets)
         logger.info(f"Found {len(targets)} DFS target paths in AD")

@@ -92,12 +92,12 @@ def test_format_status_with_counters():
     ps.files_matched = 5
 
     status = ps.format_status()
-    assert "DNS: 80/100" in status  # compact
+    assert "DNS:" not in status  # hidden during scan phase
     assert "Shares: 25" in status  # compact
     assert "Files: 200/500, 300 to go" in status  # detailed
     assert "Matched: 5" in status
     assert "found on" not in status  # not the share discovery format
-    assert "Walking:" not in status  # walking is done
+    assert "Walking" not in status  # walking is done
 
 
 def test_format_status_severity_counts():
@@ -194,6 +194,53 @@ def test_format_status_tree_walking():
     status = ps.format_status()
     assert "Shares: 200" in status
     assert "Walking: 50/200, 150 to go" in status
+
+
+def test_format_status_dns_summary_during_share_phase():
+    """After DNS completes, summary shows during share discovery."""
+    ps = ProgressState()
+    ps.dns_total = 500
+    ps.dns_resolved = 200
+    ps.dns_filtered = 300
+    ps.computers_total = 200
+    ps.computers_done = 50
+    ps.shares_found = 25
+
+    status = ps.format_status()
+    assert "DNS: 200 hosts" in status
+    assert "Shares: 25 found on 50/200 hosts" in status
+
+
+def test_format_status_dns_hidden_during_walk():
+    """DNS summary hidden during walk phase."""
+    ps = ProgressState()
+    ps.dns_total = 500
+    ps.dns_resolved = 200
+    ps.dns_filtered = 300
+    ps.shares_total = 100
+    ps.shares_walked = 50
+    ps.shares_found = 100
+
+    status = ps.format_status()
+    assert "DNS:" not in status
+    assert "Walking: 50/100, 50 to go" in status
+
+
+def test_format_status_dns_hidden_during_scan():
+    """DNS summary hidden during scan phase (walk complete)."""
+    ps = ProgressState()
+    ps.dns_total = 500
+    ps.dns_resolved = 200
+    ps.dns_filtered = 300
+    ps.shares_total = 100
+    ps.shares_walked = 100
+    ps.shares_found = 100
+    ps.files_total = 1000
+    ps.files_scanned = 500
+
+    status = ps.format_status()
+    assert "DNS:" not in status
+    assert "Files: 500/1000" in status
 
 
 def test_format_status_shares_discovery_phase():
