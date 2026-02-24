@@ -16,7 +16,13 @@ class RuleDecision:
 class RuleEvaluator:
     def __init__(self, file_rules, content_rules, postmatch_rules):
         self.file_rules = file_rules
-        self.content_rules = content_rules
+        # Sort content rules by descending triage severity so Black (3)
+        # rules are checked before Red (2), Yellow (1), Green (0).
+        self.content_rules = sorted(
+            content_rules,
+            key=lambda r: r.triage.level,
+            reverse=True,
+        )
         self.postmatch_rules = postmatch_rules
 
         self.content_rules_by_name = {

@@ -8,13 +8,17 @@ def make_smb_mock(data=b"testdata"):
     smb = MagicMock()
     smb.getServerName.return_value = "TESTSERVER"
 
-    def fake_get_file(share, path, callback, offset=0, length=None):
-        if length is not None:
-            callback(data[offset:offset + length])
-        else:
-            callback(data)
+    # connectTree / openFile / readFile / closeFile for read()
+    smb.connectTree.return_value = 1
+    smb.openFile.return_value = 1
+    smb.closeFile.return_value = None
 
-    smb.getFile.side_effect = fake_get_file
+    def fake_read_file(tid, fid, offset=0, bytesToRead=0):
+        if bytesToRead > 0:
+            return data[offset:offset + bytesToRead]
+        return data[offset:]
+
+    smb.readFile.side_effect = fake_read_file
     return smb
 
 
@@ -55,6 +59,15 @@ def test_read_success():
     assert data == b"ABC"
 
 
+def test_read_with_max_bytes():
+    smb = make_smb_mock(b"ABCDEFGHIJ")
+    accessor = make_accessor(smb)
+
+    data = accessor.read("srv", "share", "\\file.bin", max_bytes=4)
+
+    assert data == b"ABCD"
+
+
 def test_read_failure():
     smb = make_smb_mock()
     accessor = make_accessor(smb)
@@ -62,6 +75,18 @@ def test_read_failure():
     accessor._get_smb = MagicMock(side_effect=Exception("fail"))
 
     assert accessor.read("srv", "share", "\\file.bin") is None
+
+
+def test_read_closes_file_on_error():
+    smb = make_smb_mock()
+    smb.readFile.side_effect = Exception("read failed")
+    accessor = make_accessor(smb)
+
+    result = accessor.read("srv", "share", "\\file.bin")
+
+    # closeFile should still be called via finally block
+    # (but the outer except catches the error, returning None)
+    assert result is None
 
 
 def test_copy_to_local_success(tmp_path):

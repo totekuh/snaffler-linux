@@ -1,7 +1,6 @@
 # snaffler/transport/smb_file_accessor.py
 
 import threading
-from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
@@ -55,14 +54,18 @@ class SMBFileAccessor(FileAccessor):
     def read(self, server: str, share: str, path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
         try:
             smb = self._get_smb(server)
-            buf = BytesIO()
-
-            if max_bytes is None:
-                smb.getFile(share, path, buf.write)
-            else:
-                smb.getFile(share, path, buf.write, 0, max_bytes)
-
-            return buf.getvalue()
+            tid = smb.connectTree(share)
+            fid = smb.openFile(
+                tid,
+                path,
+                desiredAccess=FILE_READ_DATA | FILE_READ_ATTRIBUTES,
+                shareMode=FILE_SHARE_READ,
+            )
+            try:
+                data = smb.readFile(tid, fid, offset=0, bytesToRead=max_bytes or 0)
+                return data if data else b""
+            finally:
+                smb.closeFile(tid, fid)
         except Exception:
             return None
 

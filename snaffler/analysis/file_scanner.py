@@ -148,11 +148,15 @@ class FileScanner:
 
             # ---------------- Content rules
             if content_rule_names:
-                content_rules = [
-                    self.rule_evaluator.content_rules_by_name[n]
-                    for n in content_rule_names
-                    if n in self.rule_evaluator.content_rules_by_name
-                ]
+                content_rules = sorted(
+                    (
+                        self.rule_evaluator.content_rules_by_name[n]
+                        for n in content_rule_names
+                        if n in self.rule_evaluator.content_rules_by_name
+                    ),
+                    key=lambda r: r.triage.level,
+                    reverse=True,
+                )
             else:
                 content_rules = self.rule_evaluator.content_rules
 
@@ -177,7 +181,7 @@ class FileScanner:
             ctx: FileContext,
             server: str,
             share: str,
-            rules: set,
+            rules,
     ) -> Optional[FileResult]:
         smb_path = ctx.smb_path
 
@@ -189,6 +193,8 @@ class FileScanner:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             text = data.decode("latin-1", errors="ignore")
+
+        best_result: Optional[FileResult] = None
 
         for rule in rules:
             if rule.match_location != MatchLocation.FILE_CONTENT_AS_STRING:
@@ -220,11 +226,16 @@ class FileScanner:
                 context=text[start:end],
             )
 
-            return self._finalize_result(
+            result = self._finalize_result(
                 result, server, share, smb_path
             )
+            best_result = FileResult.pick_best(best_result, result)
 
-        return None
+            # Black (level 3) is the maximum severity — nothing can beat it
+            if best_result and best_result.triage == Triage.BLACK:
+                break
+
+        return best_result
 
     # -------------------------------------------------------------- Certs
 

@@ -117,20 +117,26 @@ def _build_list_path(share_root: Path):
     return _list_path
 
 
-def _build_get_file(share_root: Path):
-    """Return a getFile callable that reads from the local filesystem."""
+def _build_read_file(share_root: Path):
+    """Return a readFile callable that reads from the local filesystem.
 
-    def _get_file(share_name, path, callback, offset=0, max_bytes=None):
+    The path is resolved via the most recent openFile call on the mock.
+    We store it on the mock itself so readFile can find it.
+    """
+
+    def _read_file(tid, fid, offset=0, bytesToRead=0):
+        # _current_path is set by the openFile side_effect
+        path = getattr(_read_file, "_current_path", None)
+        if path is None:
+            return b""
         rel = path.replace("\\", "/").lstrip("/")
         local = share_root / rel
         data = local.read_bytes()
-        if max_bytes is not None:
-            data = data[offset:offset + max_bytes]
-        else:
-            data = data[offset:]
-        callback(data)
+        if bytesToRead > 0:
+            return data[offset:offset + bytesToRead]
+        return data[offset:]
 
-    return _get_file
+    return _read_file
 
 
 def _make_smb_mock(share_root: Path):
@@ -149,13 +155,20 @@ def _make_smb_mock(share_root: Path):
 
     smb.listPath.side_effect = _build_list_path(share_root)
 
-    # connectTree / openFile / closeFile for can_read()
+    # connectTree / closeFile
     smb.connectTree.return_value = 1
-    smb.openFile.return_value = 1
     smb.closeFile.return_value = None
 
-    # getFile for file content reads
-    smb.getFile.side_effect = _build_get_file(share_root)
+    # readFile backed by local filesystem
+    read_file_fn = _build_read_file(share_root)
+    smb.readFile.side_effect = read_file_fn
+
+    # openFile tracks the path so readFile can resolve it
+    def _open_file(tid, path, desiredAccess=0, shareMode=0):
+        read_file_fn._current_path = path
+        return 1
+
+    smb.openFile.side_effect = _open_file
 
     return smb
 

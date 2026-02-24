@@ -10,7 +10,7 @@ class FileAccessor(ABC):
         ...
 
     @abstractmethod
-    def read(self, server: str, share: str, path: str) -> Optional[bytes]:
+    def read(self, server: str, share: str, path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
         ...
 
     @abstractmethod
