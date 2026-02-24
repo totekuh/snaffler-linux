@@ -1,7 +1,9 @@
+import logging
 from unittest.mock import MagicMock, patch
 
 from impacket.smbconnection import SessionError
 
+from snaffler.classifiers.default_rules import get_share_rules
 from snaffler.discovery.shares import ShareFinder, ShareInfo, share_matches_filter
 
 
@@ -332,3 +334,40 @@ def test_get_computer_shares_filter_case_insensitive():
 
     assert len(result) == 1
     assert result[0][0] == "//HOST/DATA"
+
+
+# ---------- _classify_share with real rules ----------
+
+def test_classify_share_prnproc_dollar_not_flagged():
+    """prnproc$ must not trigger KeepDollarShares (regression for ENDS_WITH FP)."""
+    cfg = make_cfg()
+    cfg.rules.share = get_share_rules()
+    finder = ShareFinder(cfg)
+
+    with patch.object(finder, "is_share_readable", return_value=True):
+        # _classify_share returns True for DISCARD, False otherwise
+        assert finder._classify_share("//DC01/prnproc$") is False
+
+
+def test_classify_share_c_dollar_logged(caplog):
+    """C$ must trigger KeepDollarShares and log the finding."""
+    cfg = make_cfg()
+    cfg.rules.share = get_share_rules()
+    finder = ShareFinder(cfg)
+
+    with patch.object(finder, "is_share_readable", return_value=True), \
+         caplog.at_level(logging.WARNING, logger="snaffler"):
+        result = finder._classify_share("//DC01/C$")
+
+    assert result is False  # SNAFFLE keeps the share for scanning
+    assert "KeepDollarShares" in caplog.text
+    assert "//DC01/C$" in caplog.text
+
+
+def test_classify_share_ipc_dollar_discarded():
+    """IPC$ must trigger DiscardNonFileShares."""
+    cfg = make_cfg()
+    cfg.rules.share = get_share_rules()
+    finder = ShareFinder(cfg)
+
+    assert finder._classify_share("//DC01/IPC$") is True

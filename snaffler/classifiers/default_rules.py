@@ -73,7 +73,7 @@ def get_share_rules() -> List[ClassifierRule]:
             enumeration_scope=EnumerationScope.SHARE_ENUMERATION,
             match_action=MatchAction.SNAFFLE,
             match_location=MatchLocation.SHARE_NAME,
-            wordlist_type=MatchListType.ENDS_WITH,
+            wordlist_type=MatchListType.EXACT,
             wordlist=['C$', 'ADMIN$'],
             triage=Triage.BLACK,
             description="Notifies the user that they can read C$ or ADMIN$."
@@ -505,6 +505,17 @@ def get_remote_access_rules() -> List[ClassifierRule]:
             triage=Triage.BLACK,
             description="Files with these exact names are very very interesting."
         ),
+
+        ClassifierRule(
+            rule_name="KeepWinScpByName",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=['winscp.ini'],
+            triage=Triage.RED,
+            description="WinSCP config stores saved session passwords (trivially decryptable)."
+        ),
     ]
 
 
@@ -537,6 +548,17 @@ def get_shell_history_rules() -> List[ClassifierRule]:
                       '.profile', '.zshrc'],
             triage=Triage.GREEN,
             description="Files with these exact names are very interesting."
+        ),
+
+        ClassifierRule(
+            rule_name="KeepEnvVariantsByName",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=['.env.local', '.env.production', '.env.backup'],
+            triage=Triage.RED,
+            description="Environment file variants often contain production secrets and API keys."
         ),
     ]
 
@@ -590,6 +612,28 @@ def get_infrastructure_rules() -> List[ClassifierRule]:
             wordlist=['.cscfg', '.ucs', '.tfvars'],
             triage=Triage.RED,
             description="Files with these extensions are very very interesting."
+        ),
+
+        ClassifierRule(
+            rule_name="KeepTerraformStateByExtension",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_EXTENSION,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=['.tfstate'],
+            triage=Triage.RED,
+            description="Terraform state files contain plaintext secrets (passwords, tokens, keys)."
+        ),
+
+        ClassifierRule(
+            rule_name="KeepTerraformStateBackupByName",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.SNAFFLE,
+            match_location=MatchLocation.FILE_NAME,
+            wordlist_type=MatchListType.CONTAINS,
+            wordlist=['.tfstate.backup'],
+            triage=Triage.RED,
+            description="Terraform state backup files contain plaintext secrets."
         ),
     ]
 

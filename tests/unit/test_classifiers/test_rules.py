@@ -46,6 +46,52 @@ def test_rule_exact_match():
     assert rule.matches("other.txt") is None
 
 
+def test_exact_returns_matched_text():
+    """EXACT matches return the input text as a string, not re.Match."""
+    rule = ClassifierRule(
+        rule_name="exact",
+        enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+        match_action=MatchAction.SNAFFLE,
+        match_location=MatchLocation.FILE_NAME,
+        wordlist_type=MatchListType.EXACT,
+        wordlist=["secret.txt"],
+    )
+    result = rule.matches("Secret.TXT")
+    assert result == "Secret.TXT"
+    assert isinstance(result, str)
+
+
+def test_exact_no_substring_match():
+    """EXACT must not match substrings — only full value."""
+    rule = ClassifierRule(
+        rule_name="exact",
+        enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+        match_action=MatchAction.SNAFFLE,
+        match_location=MatchLocation.FILE_NAME,
+        wordlist_type=MatchListType.EXACT,
+        wordlist=["web.config"],
+    )
+    assert rule.matches("web.config") is not None
+    assert rule.matches("old_web.config") is None
+    assert rule.matches("web.config.bak") is None
+
+
+def test_exact_multiple_wordlist():
+    """EXACT with multiple words matches any of them."""
+    rule = ClassifierRule(
+        rule_name="exact_multi",
+        enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+        match_action=MatchAction.SNAFFLE,
+        match_location=MatchLocation.FILE_NAME,
+        wordlist_type=MatchListType.EXACT,
+        wordlist=["id_rsa", "id_dsa"],
+    )
+    assert rule.matches("id_rsa") is not None
+    assert rule.matches("ID_RSA") is not None
+    assert rule.matches("id_dsa") is not None
+    assert rule.matches("id_ecdsa") is None
+
+
 def test_rule_contains_match():
     rule = ClassifierRule(
         rule_name="contains",

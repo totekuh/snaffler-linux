@@ -62,6 +62,7 @@ class ProgressState:
         self.shares_walked = 0
         self.files_total = 0
         self.files_scanned = 0
+        self.files_in_progress = 0
         self.files_matched = 0
 
         # Per-severity finding counts
@@ -131,12 +132,17 @@ class ProgressState:
 
                 # Concurrent scanning progress while walking
                 if scanning_active:
-                    parts.append(f"Files: {self.files_scanned} scanned")
+                    fstr = f"Files: {self.files_scanned} scanned"
+                    if self.files_in_progress:
+                        fstr += f", {self.files_in_progress} scanning"
+                    parts.append(fstr)
 
             # --- File scanning (walk complete) ---
             if scan_phase:
                 remaining = self.files_total - self.files_scanned
                 files_str = f"Files: {self.files_scanned}/{self.files_total}"
+                if self.files_in_progress:
+                    files_str += f", {self.files_in_progress} scanning"
                 if remaining > 0:
                     files_str += f", {remaining} to go"
                 parts.append(files_str)

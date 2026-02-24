@@ -11,6 +11,7 @@ from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.engine.runner import SnafflerRunner
 from snaffler.utils.logger import setup_logging
 from snaffler.utils.target_parser import expand_targets
+from snaffler.cli.results import results_app
 
 
 def _get_version() -> str:
@@ -30,6 +31,7 @@ app = typer.Typer(
     add_completion=False,
     help="Snaffler Linux – Find credentials and sensitive data on Windows SMB shares"
 )
+app.add_typer(results_app, name="results")
 
 # ---------------- DEFAULTS ----------------
 
@@ -64,8 +66,9 @@ def banner():
     """)
 
 
-@app.command()
+@app.callback(invoke_without_command=True)
 def main(
+        ctx: typer.Context,
         version: bool = typer.Option(
             False, "-V", "--version",
             help="Show version and exit",
@@ -292,6 +295,9 @@ def main(
         ),
 
 ):
+    if ctx.invoked_subcommand is not None:
+        return
+
     if not no_banner:
         banner()
 

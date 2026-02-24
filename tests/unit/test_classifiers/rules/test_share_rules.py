@@ -1,5 +1,5 @@
-"""Tests for share enumeration rules — ensures ENDS_WITH rules with literal $
-correctly match share names like C$, ADMIN$, IPC$, PRINT$, SCCMContentLib$."""
+"""Tests for share enumeration rules — share name matching for C$, ADMIN$,
+IPC$, PRINT$, SCCMContentLib$."""
 
 import pytest
 
@@ -73,6 +73,22 @@ class TestKeepDollarShares:
     def test_no_match_data_share(self, share_rules):
         rule = _find_rule(share_rules, "KeepDollarShares")
         assert rule.matches("DATA") is None
+
+    def test_no_match_prnproc_dollar(self, share_rules):
+        """prnproc$ must NOT match — only exact C$/ADMIN$ should trigger."""
+        rule = _find_rule(share_rules, "KeepDollarShares")
+        assert rule.matches("prnproc$") is None
+
+    def test_no_match_other_dollar_shares(self, share_rules):
+        """Other $-suffixed shares must not false-positive."""
+        rule = _find_rule(share_rules, "KeepDollarShares")
+        assert rule.matches("D$") is None
+        assert rule.matches("E$") is None
+        assert rule.matches("FAX$") is None
+
+    def test_rule_uses_exact_match(self, share_rules):
+        rule = _find_rule(share_rules, "KeepDollarShares")
+        assert rule.wordlist_type == MatchListType.EXACT
 
     def test_triage_is_black(self, share_rules):
         rule = _find_rule(share_rules, "KeepDollarShares")

@@ -142,6 +142,48 @@ def test_format_status_concurrent_walk_scan():
     assert "Files: 4523 scanned" in status
 
 
+def test_format_status_files_in_progress_during_walk():
+    """During concurrent walk+scan, show in-progress count."""
+    ps = ProgressState()
+    ps.shares_total = 200
+    ps.shares_walked = 50
+    ps.shares_found = 200
+    ps.files_total = 1000
+    ps.files_scanned = 500
+    ps.files_in_progress = 20
+
+    status = ps.format_status()
+    assert "Files: 500 scanned, 20 scanning" in status
+
+
+def test_format_status_files_in_progress_scan_phase():
+    """After walking, show in-progress count in the scan phase."""
+    ps = ProgressState()
+    ps.shares_total = 25
+    ps.shares_walked = 25
+    ps.shares_found = 25
+    ps.files_total = 500
+    ps.files_scanned = 200
+    ps.files_in_progress = 15
+
+    status = ps.format_status()
+    assert "Files: 200/500, 15 scanning, 300 to go" in status
+
+
+def test_format_status_files_in_progress_zero_hidden():
+    """In-progress count hidden when zero."""
+    ps = ProgressState()
+    ps.shares_total = 25
+    ps.shares_walked = 25
+    ps.shares_found = 25
+    ps.files_total = 500
+    ps.files_scanned = 200
+    ps.files_in_progress = 0
+
+    status = ps.format_status()
+    assert "scanning" not in status
+
+
 def test_format_status_tree_walking():
     """During tree walking, show walking progress and compact shares."""
     ps = ProgressState()

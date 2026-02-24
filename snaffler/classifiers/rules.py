@@ -94,20 +94,21 @@ class ClassifierRule:
 
     def __post_init__(self):
         """Compile regexes from wordlist if needed"""
-        if self.wordlist_type == MatchListType.REGEX:
+        if self.wordlist_type == MatchListType.EXACT:
+            # Plain upper() comparison — no regex needed
+            self._exact_set = frozenset(w.upper() for w in self.wordlist)
+        elif self.wordlist_type == MatchListType.REGEX:
             self.regexes = [
                 re.compile(pattern, re.IGNORECASE | re.MULTILINE)
                 for pattern in self.wordlist
             ]
-        elif self.wordlist_type in [MatchListType.CONTAINS, MatchListType.EXACT,
+        elif self.wordlist_type in [MatchListType.CONTAINS,
                                     MatchListType.STARTS_WITH, MatchListType.ENDS_WITH]:
             # Convert to regex for consistent matching
             patterns = []
             for word in self.wordlist:
                 escaped = re.escape(word)
-                if self.wordlist_type == MatchListType.EXACT:
-                    pattern = f"^{escaped}$"
-                elif self.wordlist_type == MatchListType.CONTAINS:
+                if self.wordlist_type == MatchListType.CONTAINS:
                     pattern = escaped
                 elif self.wordlist_type == MatchListType.STARTS_WITH:
                     pattern = f"^{escaped}"
@@ -120,7 +121,7 @@ class ClassifierRule:
                 for pattern in patterns
             ]
 
-    def matches(self, text: str) -> Optional[re.Match]:
+    def matches(self, text: str):
         """
         Check if text matches any of the rule's patterns
 
@@ -128,9 +129,14 @@ class ClassifierRule:
             text: Text to match against
 
         Returns:
-            Match object if matched, None otherwise
+            Matched text (str) or re.Match if matched, None otherwise
         """
         if not text:
+            return None
+
+        if self.wordlist_type == MatchListType.EXACT:
+            if text.upper() in self._exact_set:
+                return text
             return None
 
         for regex in self.regexes:

@@ -350,6 +350,8 @@ class FilePipeline:
 
                 unc_path, size, mtime = item
 
+                if self.progress:
+                    self.progress.files_in_progress += 1
                 try:
                     result = self.file_scanner.scan_file(unc_path, size, mtime)
 
@@ -368,6 +370,9 @@ class FilePipeline:
 
                 except Exception as e:
                     logger.debug(f"Error scanning {unc_path}: {e}")
+                finally:
+                    if self.progress:
+                        self.progress.files_in_progress -= 1
 
         # ---------- Launch producer + consumers ----------
         producer_thread = threading.Thread(target=_producer, name="walk-producer", daemon=True)
