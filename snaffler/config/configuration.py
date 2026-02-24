@@ -87,6 +87,7 @@ class AdvancedConfig:
     share_threads: int = 20
     tree_threads: int = 20
     file_threads: int = 20
+    dns_threads: int = 100
     stealth: bool = False
 
 

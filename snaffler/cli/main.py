@@ -244,6 +244,12 @@ def main(
             help=f"Maximum total worker threads (default: {DEFAULT_MAX_THREADS})",
             rich_help_panel="Advanced",
         ),
+        dns_threads: int = typer.Option(
+            100,
+            "--dns-threads",
+            help="Concurrent threads for DNS + port 445 reachability probes (default: 100)",
+            rich_help_panel="Advanced",
+        ),
         config_file: Optional[Path] = typer.Option(
             None, "-z", "--config",
             help="Path to TOML configuration file",
@@ -351,6 +357,7 @@ def main(
 
     # ---------- ADVANCED ----------
     cfg.advanced.max_threads = max_threads
+    cfg.advanced.dns_threads = dns_threads
     cfg.advanced.stealth = stealth
 
     per_bucket = max(1, max_threads // 3)

@@ -29,6 +29,7 @@ def make_cfg():
     cfg.advanced.share_threads = 2
     cfg.advanced.tree_threads = 2
     cfg.advanced.file_threads = 2
+    cfg.advanced.dns_threads = 4
 
     return cfg
 
