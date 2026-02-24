@@ -28,11 +28,51 @@ class TreeWalker:
         self.cfg = cfg
         self.state = state
         self.smb_transport = SMBTransport(cfg)
+        self._local = threading.local()
 
         self.dir_classifiers = [
             r for r in cfg.rules.directory
             if r.enumeration_scope == EnumerationScope.DIRECTORY_ENUMERATION
         ]
+
+    def _get_smb(self, server: str):
+        """Return a cached SMB connection for *server*, creating one if needed.
+
+        Uses thread-local storage so each worker thread maintains its own
+        connection cache — the same pattern used by SMBFileAccessor.
+        """
+        cache = getattr(self._local, "connections", None)
+        if cache is None:
+            cache = {}
+            self._local.connections = cache
+
+        smb = cache.get(server)
+        if smb is not None:
+            try:
+                smb.getServerName()
+                return smb
+            except Exception:
+                try:
+                    smb.logoff()
+                except Exception:
+                    pass
+                cache.pop(server, None)
+
+        smb = self.smb_transport.connect(server)
+        cache[server] = smb
+        return smb
+
+    def _invalidate_smb(self, server: str):
+        """Logoff and remove a cached connection for *server*."""
+        cache = getattr(self._local, "connections", None)
+        if cache is None:
+            return
+        smb = cache.pop(server, None)
+        if smb is not None:
+            try:
+                smb.logoff()
+            except Exception:
+                pass
 
     def walk_tree(self, unc_path: str, on_file=None, cancel: threading.Event | None = None):
         """
@@ -49,6 +89,7 @@ class TreeWalker:
         completes but scanning is interrupted — marked dirs would hide
         unscanned files on resume.
         """
+        server = None
         try:
             parts = unc_path.replace("\\", "/").split("/")
             parts = [p for p in parts if p]
@@ -63,13 +104,12 @@ class TreeWalker:
             share = parts[1]
             path = "/" + "/".join(parts[2:]) if len(parts) > 2 else "/"
 
-            smb = self.smb_transport.connect(server)
-            try:
-                self._walk_directory(smb, server, share, path, on_file, cancel)
-            finally:
-                smb.logoff()
+            smb = self._get_smb(server)
+            self._walk_directory(smb, server, share, path, on_file, cancel)
 
         except Exception as e:
+            if server is not None:
+                self._invalidate_smb(server)
             logger.debug(f"Error walking tree {unc_path}: {e}")
 
     def _walk_directory(
@@ -124,6 +164,7 @@ class TreeWalker:
                         on_file(unc_full, size, mtime)
 
         except Exception as e:
+            self._invalidate_smb(server)
             logger.debug(f"Error walking {unc_dir}: {e}")
 
     def _should_scan_directory(self, dir_path: str) -> bool:
