@@ -56,7 +56,6 @@ class TargetingConfig:
 @dataclass
 class ScanningConfig:
     min_interest: int = 0
-    max_file_size: int = 104_857_600  # 100 MB
     max_read_bytes: int = 2_097_152  # 2 MB
     max_file_bytes: int = 10_485_760  # 10 MB
     snaffle: bool = False

@@ -47,7 +47,7 @@ def make_rule(action):
 
 
 def collect_callback():
-    """Return (callback, collected_list) for use with walk_tree."""
+    """Return (callback, collected_list) for use with walk_directory on_file."""
     collected = []
     def on_file(path, size, mtime):
         collected.append((path, size, mtime))
@@ -62,106 +62,7 @@ def collect_dir_callback():
     return on_dir, collected
 
 
-# ---------- walk_tree tests ----------
-
-def test_walk_tree_invalid_unc():
-    cfg = make_cfg()
-    walker = TreeWalker(cfg)
-
-    on_file, collected = collect_callback()
-    walker.walk_tree("INVALID", on_file)
-
-    assert collected == []
-
-
-def test_walk_tree_simple_file():
-    cfg = make_cfg()
-    walker = TreeWalker(cfg)
-
-    smb = MagicMock()
-    smb.listPath.return_value = [
-        FakeEntry("file.txt", False)
-    ]
-
-    with patch.object(
-        walker.smb_transport, "connect", return_value=smb
-    ):
-        on_file, collected = collect_callback()
-        walker.walk_tree("//HOST/SHARE", on_file)
-
-    assert len(collected) == 1
-    assert collected[0][0] == "//HOST/SHARE/file.txt"
-    assert collected[0][1] == 100   # size from FakeEntry
-    assert collected[0][2] == 1700000000.0  # mtime from FakeEntry
-    # Connection is cached (thread-local) — no logoff after each share
-    smb.logoff.assert_not_called()
-
-
-def test_walk_tree_recursive_directory():
-    cfg = make_cfg()
-    walker = TreeWalker(cfg)
-
-    smb = MagicMock()
-
-    def list_path(share, path):
-        if path == "/*":
-            return [FakeEntry("dir", True)]
-        if path == "/dir/*":
-            return [FakeEntry("file.txt", False)]
-        return []
-
-    smb.listPath.side_effect = list_path
-
-    with patch.object(
-        walker.smb_transport, "connect", return_value=smb
-    ):
-        on_file, collected = collect_callback()
-        walker.walk_tree("//HOST/SHARE", on_file)
-
-    assert len(collected) == 1
-    assert collected[0][0] == "//HOST/SHARE/dir/file.txt"
-
-
-def test_walk_tree_cancel_stops_early():
-    """Setting cancel event stops walker from descending into further dirs."""
-    cfg = make_cfg()
-    walker = TreeWalker(cfg)
-
-    smb = MagicMock()
-
-    dirs_listed = []
-
-    def list_path(share, path):
-        dirs_listed.append(path)
-        if path == "/*":
-            return [
-                FakeEntry("dir1", True),
-                FakeEntry("dir2", True),
-                FakeEntry("dir3", True),
-            ]
-        # Each subdir has a file
-        return [FakeEntry("file.txt", False)]
-
-    smb.listPath.side_effect = list_path
-
-    cancel = threading.Event()
-    on_file, collected = collect_callback()
-
-    # Set cancel after the first file is found
-    original_on_file = on_file
-    def cancelling_on_file(path, size, mtime):
-        original_on_file(path, size, mtime)
-        cancel.set()
-
-    with patch.object(
-        walker.smb_transport, "connect", return_value=smb
-    ):
-        walker.walk_tree("//HOST/SHARE", cancelling_on_file, cancel)
-
-    # Should have found at least 1 file but NOT all 3
-    assert len(collected) >= 1
-    assert len(collected) < 3
-
+# ---------- _should_scan_directory tests ----------
 
 def test_should_scan_directory_discard():
     cfg = make_cfg()
@@ -186,21 +87,20 @@ def test_should_scan_directory_snaffle():
 # ---------- connection caching tests ----------
 
 def test_connection_reuse_same_server():
-    """Two walk_tree() calls to the same server should reuse the connection."""
+    """Two walk_directory() calls to the same server should reuse the connection."""
     cfg = make_cfg()
     walker = TreeWalker(cfg)
 
     smb = MagicMock()
     smb.listPath.return_value = [FakeEntry("file.txt", False)]
-    # getServerName() succeeds → connection is considered alive
     smb.getServerName.return_value = "HOST"
 
     with patch.object(
         walker.smb_transport, "connect", return_value=smb
     ) as mock_connect:
         on_file, collected = collect_callback()
-        walker.walk_tree("//HOST/SHARE1", on_file)
-        walker.walk_tree("//HOST/SHARE2", on_file)
+        walker.walk_directory("//HOST/SHARE1", on_file)
+        walker.walk_directory("//HOST/SHARE2", on_file)
 
     # connect() should be called only once — second call reuses the cache
     mock_connect.assert_called_once_with("HOST")
@@ -208,7 +108,7 @@ def test_connection_reuse_same_server():
 
 
 def test_connection_different_servers():
-    """walk_tree() to different servers should create separate connections."""
+    """walk_directory() to different servers should create separate connections."""
     cfg = make_cfg()
     walker = TreeWalker(cfg)
 
@@ -227,8 +127,8 @@ def test_connection_different_servers():
         walker.smb_transport, "connect", side_effect=connect_side_effect
     ) as mock_connect:
         on_file, collected = collect_callback()
-        walker.walk_tree("//HOST_A/SHARE", on_file)
-        walker.walk_tree("//HOST_B/SHARE", on_file)
+        walker.walk_directory("//HOST_A/SHARE", on_file)
+        walker.walk_directory("//HOST_B/SHARE", on_file)
 
     assert mock_connect.call_count == 2
     assert len(collected) == 2
@@ -237,19 +137,14 @@ def test_connection_different_servers():
 
 
 def test_stale_connection_reconnects():
-    """If the cached connection goes stale, _get_smb evicts it and reconnects.
-
-    Mirrors the SMBFileAccessor pattern: getServerName() is the health check.
-    When it fails, the stale entry is evicted and connect() is called again.
-    """
+    """If the cached connection goes stale, _get_smb evicts it and reconnects."""
     cfg = make_cfg()
     walker = TreeWalker(cfg)
 
     stale_smb = MagicMock()
     stale_smb.listPath.return_value = [FakeEntry("file.txt", False)]
-    # First getServerName() succeeds (initial cache), second fails (stale)
     stale_smb.getServerName.side_effect = [
-        "HOST",          # health check on second walk_tree → succeeds? No...
+        "HOST",
     ]
 
     fresh_smb = MagicMock()
@@ -270,7 +165,7 @@ def test_stale_connection_reconnects():
         on_file, collected = collect_callback()
 
         # First call: connection created and cached, walk succeeds
-        walker.walk_tree("//HOST/SHARE1", on_file)
+        walker.walk_directory("//HOST/SHARE1", on_file)
         assert len(collected) == 1
         assert collected[0][0] == "//HOST/SHARE1/file.txt"
         mock_connect.assert_called_once_with("HOST")
@@ -279,7 +174,7 @@ def test_stale_connection_reconnects():
         stale_smb.getServerName.side_effect = Exception("connection reset")
 
         # Second call: _get_smb health check fails → evicts → reconnects
-        walker.walk_tree("//HOST/SHARE2", on_file)
+        walker.walk_directory("//HOST/SHARE2", on_file)
         assert len(collected) == 2
         assert collected[1][0] == "//HOST/SHARE2/fresh.txt"
 

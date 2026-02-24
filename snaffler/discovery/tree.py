@@ -89,39 +89,6 @@ class TreeWalker:
         path = "/" + "/".join(parts[2:]) if len(parts) > 2 else "/"
         return server, share, path
 
-    def walk_tree(self, unc_path: str, on_file=None, cancel: threading.Event | None = None):
-        """Walk a directory tree using iterative DFS, calling on_file for each file.
-
-        Args:
-            unc_path: UNC path to the share root (e.g. //HOST/SHARE)
-            on_file: callable(unc_path, size, mtime_epoch) -- called for each file
-            cancel: optional threading.Event -- checked before each directory listing
-        """
-        parsed = self._parse_unc(unc_path)
-        if parsed is None:
-            logger.error(
-                f"Invalid UNC path: {unc_path}; example: //10.10.10.10/SHARE$"
-            )
-            return
-
-        server, share, path = parsed
-        try:
-            smb = self._get_smb(server)
-            # Iterative DFS with explicit stack (relative paths within the share)
-            stack = [path]
-            while stack:
-                if cancel and cancel.is_set():
-                    return
-                current = stack.pop()
-                subdir_paths = self._list_directory(
-                    smb, server, share, current, on_file, None, cancel,
-                )
-                # Push subdirs in reverse order so left-most is processed first
-                stack.extend(reversed(subdir_paths))
-        except Exception as e:
-            self._invalidate_smb(server)
-            logger.debug(f"Error walking tree {unc_path}: {e}")
-
     def walk_directory(self, unc_path: str, on_file=None, on_dir=None,
                        cancel: threading.Event | None = None) -> list:
         """Walk a single directory (non-recursive) and return subdirectory UNC paths.
