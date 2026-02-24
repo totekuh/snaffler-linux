@@ -262,12 +262,6 @@ def main(
             help="Concurrent threads for DNS + port 445 reachability probes (default: 100)",
             rich_help_panel="Advanced",
         ),
-        walk_timeout: int = typer.Option(
-            300,
-            "--walk-timeout",
-            help="Timeout in seconds for walking a single share (0 = no timeout, default: 300)",
-            rich_help_panel="Advanced",
-        ),
         config_file: Optional[Path] = typer.Option(
             None, "-z", "--config",
             help="Path to TOML configuration file",
@@ -377,7 +371,6 @@ def main(
     # ---------- ADVANCED ----------
     cfg.advanced.max_threads = max_threads
     cfg.advanced.dns_threads = dns_threads
-    cfg.advanced.walk_timeout = walk_timeout
     cfg.advanced.stealth = stealth
 
     per_bucket = max(1, max_threads // 3)

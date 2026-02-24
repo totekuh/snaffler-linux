@@ -91,7 +91,6 @@ class AdvancedConfig:
     tree_threads: int = 20
     file_threads: int = 20
     dns_threads: int = 100
-    walk_timeout: int = 300
     stealth: bool = False
 
 

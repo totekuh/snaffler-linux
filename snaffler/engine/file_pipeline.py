@@ -126,7 +126,6 @@ class FilePipeline:
 
         self.tree_threads = cfg.advanced.tree_threads
         self.file_threads = cfg.advanced.file_threads
-        self.walk_timeout = cfg.advanced.walk_timeout or None  # 0 → no timeout
 
         self.tree_walker = TreeWalker(cfg,
                                       state=state)
@@ -269,7 +268,9 @@ class FilePipeline:
 
                                 walk_ok = False
                                 try:
-                                    subdirs = future.result(timeout=self.walk_timeout)
+                                    # Socket timeout (smb_timeout, default 5s) bounds
+                                    # each recv() inside listPath; no future timeout needed.
+                                    subdirs = future.result()
                                     walk_ok = True
                                 except Exception as e:
                                     logger.debug(f"Error walking {dir_unc}: {e}")

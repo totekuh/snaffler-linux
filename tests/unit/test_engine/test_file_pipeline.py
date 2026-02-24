@@ -12,7 +12,6 @@ def make_cfg():
 
     cfg.advanced.tree_threads = 2
     cfg.advanced.file_threads = 2
-    cfg.advanced.walk_timeout = 300
 
     cfg.rules.file = []
     cfg.rules.content = []
