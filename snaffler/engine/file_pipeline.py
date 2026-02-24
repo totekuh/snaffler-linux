@@ -164,7 +164,7 @@ class FilePipeline:
             return 0
 
         # Bounded queue: lightweight (path, size, mtime) tuples, ~240 bytes each
-        file_queue = queue.Queue(maxsize=10_000)
+        file_queue = queue.Queue(maxsize=100_000)
 
         walked_shares: list = []
         results_count = 0
@@ -316,7 +316,7 @@ class FilePipeline:
         def _consumer():
             while True:
                 try:
-                    item = file_queue.get(timeout=1.0)
+                    item = file_queue.get(timeout=0.1)
                 except queue.Empty:
                     continue
 

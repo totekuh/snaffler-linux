@@ -200,9 +200,6 @@ class FileScanner:
         best_result: Optional[FileResult] = None
 
         for rule in rules:
-            if rule.match_location != MatchLocation.FILE_CONTENT_AS_STRING:
-                continue
-
             match = rule.matches(text)
             if not match:
                 continue
