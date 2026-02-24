@@ -173,6 +173,7 @@ class FilePipeline:
         # ---------- Producer: parallel tree walking → queue ----------
         def _producer():
             batch_writer = None
+            shutdown = threading.Event()
 
             if self.state:
                 batch_writer = _BatchWriter(self.state)
@@ -190,7 +191,12 @@ class FilePipeline:
                 if batch_writer:
                     share_unc = _extract_share_unc(unc_path)
                     batch_writer.put_file(unc_path, share_unc, size, mtime)
-                file_queue.put((unc_path, size, mtime))
+                while not shutdown.is_set():
+                    try:
+                        file_queue.put((unc_path, size, mtime), timeout=1.0)
+                        return
+                    except queue.Full:
+                        continue
 
             def on_dir(unc_path):
                 """Callback invoked by TreeWalker for each subdirectory discovered."""
@@ -316,6 +322,7 @@ class FilePipeline:
                                             self.progress.shares_walked += 1
 
                     except KeyboardInterrupt:
+                        shutdown.set()
                         for ev in cancel_events.values():
                             ev.set()
                         executor.shutdown(wait=False, cancel_futures=True)

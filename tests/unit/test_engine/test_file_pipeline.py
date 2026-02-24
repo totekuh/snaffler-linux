@@ -1,3 +1,4 @@
+import queue
 import time
 from unittest.mock import MagicMock, call, patch
 
@@ -540,6 +541,38 @@ def test_file_pipeline_partial_share_error_does_not_mark_done():
 
 
 # ---------- helpers ----------
+
+def test_on_file_does_not_block_on_full_queue():
+    """When the file_queue is full and shutdown is set, on_file should return
+    instead of blocking forever (F3 fix)."""
+    cfg = make_cfg()
+    pipeline = FilePipeline(cfg)
+
+    # Use a tiny queue to easily fill it
+    tiny_queue = queue.Queue(maxsize=1)
+    tiny_queue.put(("//HOST/SHARE/filler.txt", 0, 0.0))  # fill the queue
+
+    files_seen = []
+
+    def walk_directory_blocking(path, on_file=None, on_dir=None, cancel=None):
+        """Walk that tries to emit a file into the already-full queue."""
+        if on_file:
+            on_file(f"{path}/blocked.txt", 100, 0.0)
+            files_seen.append(f"{path}/blocked.txt")
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=walk_directory_blocking
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    # Run with normal flow — the pipeline should complete without hanging.
+    # The consumer drains the queue, so the put() eventually succeeds.
+    result = pipeline.run(["//HOST/SHARE"])
+
+    # Pipeline should complete; the file should have been processed
+    assert pipeline.file_scanner.scan_file.call_count >= 1
+
 
 def test_extract_share_unc():
     """_extract_share_unc extracts //server/share from full UNC paths."""

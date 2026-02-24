@@ -108,6 +108,35 @@ def test_copy_to_local_no_data(tmp_path):
     assert not expected.exists()
 
 
+def test_read_connect_tree_failure():
+    """If connectTree raises, read() returns None without NameError.
+
+    Regression test: nested try/finally ensures disconnectTree(tid) is
+    never reached when connectTree fails (tid is unbound).
+    """
+    smb = make_smb_mock()
+    smb.connectTree.side_effect = Exception("access denied")
+    accessor = make_accessor(smb)
+
+    # Must return None, not raise NameError
+    result = accessor.read("srv", "share", "\\file.bin")
+
+    assert result is None
+    smb.disconnectTree.assert_not_called()
+
+
+def test_read_open_file_failure_still_disconnects():
+    """If openFile raises, disconnectTree must still be called (tid is valid)."""
+    smb = make_smb_mock()
+    smb.openFile.side_effect = Exception("file not found")
+    accessor = make_accessor(smb)
+
+    result = accessor.read("srv", "share", "\\file.bin")
+
+    assert result is None
+    smb.disconnectTree.assert_called_once_with(1)  # tid=1 from mock
+
+
 def test_smb_reconnect_on_dead_connection():
     smb_dead = make_smb_mock(b"OLD")
     smb_dead.getServerName.side_effect = Exception("dead")
