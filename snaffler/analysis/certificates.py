@@ -11,7 +11,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("snaffler")
 
 
 class CertificateChecker:

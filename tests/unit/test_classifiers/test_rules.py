@@ -93,6 +93,21 @@ def test_matches_empty():
 # TOML LOADING (EXPECTED FAILURES)
 # ---------------------------------------------------------------------------
 
+def test_rule_from_toml_valid_triage():
+    for label in ("Green", "Yellow", "Red", "Black"):
+        data = {
+            "RuleName": "GoodRule",
+            "EnumerationScope": "FileEnumeration",
+            "MatchAction": "Snaffle",
+            "MatchLocation": "FileName",
+            "WordListType": "Contains",
+            "WordList": ["secret"],
+            "Triage": label,
+        }
+        rule = ClassifierRule.from_toml(data)
+        assert rule.triage.label == label
+
+
 def test_rule_from_toml_invalid_triage():
     data = {
         "RuleName": "BadRule",
@@ -101,7 +116,7 @@ def test_rule_from_toml_invalid_triage():
         "MatchLocation": "FileName",
         "WordListType": "Contains",
         "WordList": ["secret"],
-        "Triage": "Red",  # invalid enum value
+        "Triage": "InvalidSeverity",
     }
 
     with pytest.raises(ValueError):
@@ -118,11 +133,30 @@ def test_load_rules_from_toml_invalid_rules_are_skipped(tmp_path):
         MatchLocation = "FileName"
         WordListType = "Contains"
         WordList = ["secret"]
-        Triage = "Red"
+        Triage = "InvalidSeverity"
     """)
 
     rules = load_rules_from_toml(str(toml_file))
     assert rules == []
+
+
+def test_load_rules_from_toml_valid_rules_are_loaded(tmp_path):
+    toml_file = tmp_path / "rules.toml"
+    toml_file.write_text("""
+        [[ClassifierRules]]
+        RuleName = "GoodRule"
+        EnumerationScope = "FileEnumeration"
+        MatchAction = "Snaffle"
+        MatchLocation = "FileName"
+        WordListType = "Contains"
+        WordList = ["secret"]
+        Triage = "Red"
+    """)
+
+    rules = load_rules_from_toml(str(toml_file))
+    assert len(rules) == 1
+    assert rules[0].rule_name == "GoodRule"
+    assert rules[0].triage == Triage.RED
 
 
 def test_load_rules_from_directory_all_invalid(tmp_path):
@@ -135,7 +169,7 @@ def test_load_rules_from_directory_all_invalid(tmp_path):
         MatchLocation = "FileName"
         WordListType = "Contains"
         WordList = ["x"]
-        Triage = "Green"
+        Triage = "InvalidSeverity"
     """)
 
     rules = load_rules_from_directory(str(tmp_path))

@@ -14,20 +14,14 @@ from snaffler.classifiers.rules import (
     MatchLocation,
 )
 from snaffler.config.configuration import SnafflerConfiguration
-from snaffler.resume.scan_state import ScanState
 from snaffler.transport.smb import SMBTransport
 
 logger = logging.getLogger("snaffler")
 
 
 class TreeWalker:
-    def __init__(
-            self,
-            cfg: SnafflerConfiguration,
-            state: ScanState | None = None,
-    ):
+    def __init__(self, cfg: SnafflerConfiguration):
         self.cfg = cfg
-        self.state = state
         self.smb_transport = SMBTransport(cfg)
         self._local = threading.local()
 
@@ -197,7 +191,7 @@ class TreeWalker:
 
             if rule.match_action == MatchAction.SNAFFLE:
                 logger.warning(
-                    f"[{rule.triage.value}] [{rule.rule_name}] Directory: {dir_path}"
+                    f"[{rule.triage.label}] [{rule.rule_name}] Directory: {dir_path}"
                 )
 
         return True

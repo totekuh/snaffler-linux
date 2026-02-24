@@ -143,13 +143,17 @@ class ShareFinder:
         """
         from snaffler.classifiers.rules import MatchLocation, MatchAction
 
+        # Extract share name from UNC path for SHARE_NAME matching
+        parts = unc_path.strip('/').split('/', 1)
+        share_name = parts[1] if len(parts) == 2 else unc_path
+
         for classifier in self.share_classifiers:
             # Only match against SHARE_NAME location
             if classifier.match_location != MatchLocation.SHARE_NAME:
                 continue
 
             # Check if share name matches the rule
-            if classifier.matches(unc_path):
+            if classifier.matches(share_name):
                 if classifier.match_action == MatchAction.DISCARD:
                     logger.debug(f"Share {unc_path} matched DISCARD rule: {classifier.rule_name}")
                     return True
@@ -158,7 +162,7 @@ class ShareFinder:
                     # Extract computer and share name from unc_path
                     parts = unc_path.strip('/').split('/', 1)
                     if len(parts) == 2 and self.is_share_readable(parts[0], parts[1]):
-                        logger.warning(f"[{classifier.triage.value}] [{classifier.rule_name}] Share: {unc_path}")
+                        logger.warning(f"[{classifier.triage.label}] [{classifier.rule_name}] Share: {unc_path}")
                     # Continue scanning this share
                     return False
 

@@ -47,7 +47,9 @@ class _BatchWriter:
     def stop(self):
         self._queue.put(None)  # sentinel
         if self._thread is not None:
-            self._thread.join(timeout=10)
+            self._thread.join(timeout=30)
+            if self._thread.is_alive():
+                logger.warning("Batch writer did not finish within 30s")
 
     def put_dir(self, unc_path: str, share: str):
         self._queue.put(("dir", unc_path, share))
@@ -127,8 +129,7 @@ class FilePipeline:
         self.tree_threads = cfg.advanced.tree_threads
         self.file_threads = cfg.advanced.file_threads
 
-        self.tree_walker = TreeWalker(cfg,
-                                      state=state)
+        self.tree_walker = TreeWalker(cfg)
 
         file_accessor = SMBFileAccessor(cfg)
         rule_evaluator = RuleEvaluator(
@@ -209,11 +210,14 @@ class FilePipeline:
                     # Cancel events per share root
                     cancel_events = {}
                     pending = set()
+                    # Track all submitted dirs to prevent double walks
+                    submitted_dirs = set()
 
                     # --- Seed initial share roots ---
                     for path in paths:
                         cancel = threading.Event()
                         cancel_events[path] = cancel
+                        submitted_dirs.add(path.lower())
                         future = executor.submit(
                             self.tree_walker.walk_directory,
                             path, on_file, on_dir, cancel,
@@ -230,6 +234,10 @@ class FilePipeline:
                             # Only re-walk dirs belonging to shares we're processing
                             if share_root not in cancel_events:
                                 continue
+                            # Skip dirs already submitted (e.g. share roots)
+                            if unwalked_dir.lower() in submitted_dirs:
+                                continue
+                            submitted_dirs.add(unwalked_dir.lower())
                             cancel = cancel_events[share_root]
                             future = executor.submit(
                                 self.tree_walker.walk_directory,
@@ -284,6 +292,9 @@ class FilePipeline:
 
                                 # Submit subdirectories
                                 for subdir in subdirs:
+                                    if subdir.lower() in submitted_dirs:
+                                        continue
+                                    submitted_dirs.add(subdir.lower())
                                     cancel = cancel_events.get(share_root, threading.Event())
                                     sub_future = executor.submit(
                                         self.tree_walker.walk_directory,

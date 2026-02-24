@@ -66,6 +66,14 @@ class Triage(Enum):
     def more_severe_than(self, other: "Triage") -> bool:
         return self.level > other.level
 
+    @classmethod
+    def from_label(cls, label: str) -> "Triage":
+        """Look up a Triage member by its human-readable label (e.g. 'Red')."""
+        for member in cls:
+            if member.label.lower() == label.lower():
+                return member
+        raise ValueError(f"Unknown triage label: {label!r}")
+
 
 @dataclass
 class ClassifierRule:
@@ -142,7 +150,7 @@ class ClassifierRule:
             match_location=MatchLocation(toml_data.get('MatchLocation', 'FileName')),
             wordlist_type=MatchListType(toml_data.get('WordListType', 'Contains')),
             wordlist=toml_data.get('WordList', []),
-            triage=Triage(toml_data.get('Triage', 'Green')),
+            triage=Triage.from_label(toml_data.get('Triage', 'Green')),
             description=toml_data.get('Description', ''),
             content_rule_names=toml_data.get('RelayTargets', []),
             match_length=toml_data.get('MatchLength', 0),

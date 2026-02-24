@@ -56,7 +56,11 @@ class SMBFileAccessor(FileAccessor):
     def copy_to_local(self, server, share, path, dest_root):
         try:
             clean = path.lstrip("\\/")
-            local = Path(dest_root) / server / share / clean
+            local = (Path(dest_root) / server / share / clean).resolve()
+            root = Path(dest_root).resolve()
+            if not local.is_relative_to(root):
+                return
+
             local.parent.mkdir(parents=True, exist_ok=True)
 
             data = self.read(server, share, path)

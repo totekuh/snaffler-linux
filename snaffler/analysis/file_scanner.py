@@ -126,7 +126,7 @@ class FileScanner:
                     continue
 
                 if self.rule_evaluator.should_discard_postmatch(ctx):
-                    return None
+                    continue
 
                 result = FileResult(
                     file_path=unc_path,
