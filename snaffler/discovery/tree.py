@@ -152,7 +152,7 @@ class TreeWalker:
         except Exception as e:
             self._invalidate_smb(server)
             logger.debug(f"Error walking directory {unc_path}: {e}")
-            return []
+            raise
 
     def _list_directory(
             self,
