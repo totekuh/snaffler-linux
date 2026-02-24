@@ -158,3 +158,53 @@ def test_scan_state_count_delegation():
     assert state.count_checked_computers() == 10
     assert state.count_checked_shares() == 20
     assert state.count_checked_files() == 300
+
+
+# ---------- new method delegation tests ----------
+
+
+def test_scan_state_dir_delegation():
+    store = MagicMock()
+    store.load_checked_files.return_value = set()
+    store.load_unwalked_dirs.return_value = ["//HOST/SHARE/dir1"]
+
+    state = ScanState(store)
+
+    state.store_dir("//HOST/SHARE/dir1", "//HOST/SHARE")
+    store.store_dir.assert_called_once_with("//HOST/SHARE/dir1", "//HOST/SHARE")
+
+    state.store_dirs([("//HOST/SHARE/dir2", "//HOST/SHARE")])
+    store.store_dirs.assert_called_once_with([("//HOST/SHARE/dir2", "//HOST/SHARE")])
+
+    state.mark_dir_walked("//HOST/SHARE/dir1")
+    store.mark_dir_walked.assert_called_once_with("//HOST/SHARE/dir1")
+
+    result = state.load_unwalked_dirs(share="//HOST/SHARE")
+    assert result == ["//HOST/SHARE/dir1"]
+    store.load_unwalked_dirs.assert_called_once_with("//HOST/SHARE")
+
+
+def test_scan_state_file_batch_delegation():
+    store = MagicMock()
+    store.load_checked_files.return_value = set()
+    store.load_unchecked_files.return_value = [
+        ("//HOST/SHARE/a.txt", 100, 0.0),
+    ]
+    store.count_target_files.return_value = 5
+
+    state = ScanState(store)
+
+    state.store_file("//HOST/SHARE/a.txt", "//HOST/SHARE", 100, 0.0)
+    store.store_file.assert_called_once_with("//HOST/SHARE/a.txt", "//HOST/SHARE", 100, 0.0)
+
+    state.store_files([("//HOST/SHARE/b.txt", "//HOST/SHARE", 200, 0.0)])
+    store.store_files.assert_called_once_with(
+        [("//HOST/SHARE/b.txt", "//HOST/SHARE", 200, 0.0)]
+    )
+
+    result = state.load_unchecked_files()
+    assert result == [("//HOST/SHARE/a.txt", 100, 0.0)]
+    store.load_unchecked_files.assert_called_once()
+
+    assert state.count_target_files() == 5
+    store.count_target_files.assert_called_once()

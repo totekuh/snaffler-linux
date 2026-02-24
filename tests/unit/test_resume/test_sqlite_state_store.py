@@ -97,6 +97,7 @@ def test_sqlite_store_share_tracking():
 
 
 def test_sqlite_store_checked_computer():
+    """mark_computer_checked creates target row if missing, then sets done=1."""
     with tempfile.NamedTemporaryFile(delete=False) as f:
         path = f.name
 
@@ -119,6 +120,7 @@ def test_sqlite_store_checked_computer():
 
 
 def test_sqlite_store_checked_share():
+    """mark_share_checked creates target row if missing, then sets done=1."""
     with tempfile.NamedTemporaryFile(delete=False) as f:
         path = f.name
 
@@ -356,7 +358,7 @@ def test_sqlite_store_finding_migration():
         path = f.name
 
     try:
-        # Create old-style DB without finding table
+        # Create old-style DB without finding table but with legacy tables
         conn = sqlite3.connect(path)
         conn.execute("CREATE TABLE sync (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         conn.execute("CREATE TABLE target_computer (name TEXT PRIMARY KEY COLLATE NOCASE, ip TEXT)")
@@ -364,13 +366,19 @@ def test_sqlite_store_finding_migration():
         conn.commit()
         conn.close()
 
-        # Open with new store — should add finding table
+        # Open with new store — should add finding table and drop legacy tables
         store = SQLiteStateStore(path)
 
         cur = store.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='finding'"
         )
         assert cur.fetchone() is not None
+
+        # Legacy tables should be dropped
+        cur = store.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='checked_file'"
+        )
+        assert cur.fetchone() is None
 
         # Can store findings after migration
         store.store_finding(
@@ -557,6 +565,335 @@ def test_scan_state_checked_files_case_insensitive():
         assert state.should_skip_file("//HOST/Share/CamelCase.TXT") is True
         assert state.should_skip_file("//host/share/camelcase.txt") is True
         assert state.should_skip_file("//HOST/SHARE/CAMELCASE.TXT") is True
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- target_dir CRUD ----------
+
+
+def test_sqlite_store_dir_crud():
+    """Store dirs, mark walked, load unwalked."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        # Empty initially
+        assert store.load_unwalked_dirs() == []
+
+        # Store single dir
+        store.store_dir("//HOST/SHARE/dir1", "//HOST/SHARE")
+        unwalked = store.load_unwalked_dirs()
+        assert unwalked == ["//HOST/SHARE/dir1"]
+
+        # Store batch
+        store.store_dirs([
+            ("//HOST/SHARE/dir2", "//HOST/SHARE"),
+            ("//HOST/SHARE/dir3", "//HOST/SHARE"),
+        ])
+        unwalked = store.load_unwalked_dirs()
+        assert sorted(unwalked) == [
+            "//HOST/SHARE/dir1",
+            "//HOST/SHARE/dir2",
+            "//HOST/SHARE/dir3",
+        ]
+
+        # Mark walked
+        store.mark_dir_walked("//HOST/SHARE/dir1")
+        unwalked = store.load_unwalked_dirs()
+        assert sorted(unwalked) == ["//HOST/SHARE/dir2", "//HOST/SHARE/dir3"]
+
+        # Idempotent insert
+        store.store_dir("//HOST/SHARE/dir2", "//HOST/SHARE")
+        assert len(store.load_unwalked_dirs()) == 2
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_dir_share_filter():
+    """load_unwalked_dirs(share=...) filters by share."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_dirs([
+            ("//HOST/SHARE1/dir_a", "//HOST/SHARE1"),
+            ("//HOST/SHARE1/dir_b", "//HOST/SHARE1"),
+            ("//HOST/SHARE2/dir_c", "//HOST/SHARE2"),
+        ])
+
+        assert len(store.load_unwalked_dirs(share="//HOST/SHARE1")) == 2
+        assert len(store.load_unwalked_dirs(share="//HOST/SHARE2")) == 1
+        assert len(store.load_unwalked_dirs()) == 3
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_dir_case_insensitive():
+    """target_dir uses COLLATE NOCASE."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_dir("//HOST/Share/Dir", "//HOST/Share")
+        store.store_dir("//host/share/dir", "//host/share")  # duplicate
+        assert len(store.load_unwalked_dirs()) == 1
+
+        # Mark walked with different case
+        store.mark_dir_walked("//HOST/SHARE/DIR")
+        assert store.load_unwalked_dirs() == []
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- target_file CRUD ----------
+
+
+def test_sqlite_store_file_crud():
+    """Store files, load unchecked, count."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        assert store.count_target_files() == 0
+        assert store.load_unchecked_files() == []
+
+        # Single insert
+        store.store_file("//HOST/SHARE/a.txt", "//HOST/SHARE", 100, 1700000000.0)
+        assert store.count_target_files() == 1
+
+        # Batch insert
+        store.store_files([
+            ("//HOST/SHARE/b.txt", "//HOST/SHARE", 200, 1700000001.0),
+            ("//HOST/SHARE/c.txt", "//HOST/SHARE", 300, 1700000002.0),
+        ])
+        assert store.count_target_files() == 3
+
+        # All unchecked
+        unchecked = store.load_unchecked_files()
+        assert len(unchecked) == 3
+        paths = [u[0] for u in unchecked]
+        assert "//HOST/SHARE/a.txt" in paths
+
+        # Mark one checked
+        store.mark_file_checked("//HOST/SHARE/a.txt")
+        unchecked = store.load_unchecked_files()
+        assert len(unchecked) == 2
+        assert store.count_checked_files() == 1
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_file_batch_and_mark():
+    """Batch-stored files can be individually marked checked."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_files([
+            ("//HOST/SHARE/x.txt", "//HOST/SHARE", 50, 0.0),
+            ("//HOST/SHARE/y.txt", "//HOST/SHARE", 60, 0.0),
+        ])
+
+        # mark_file_checked on existing row
+        store.mark_file_checked("//HOST/SHARE/x.txt")
+        assert store.count_checked_files() == 1
+
+        # mark_file_checked on non-pre-stored file (INSERT fallback)
+        store.mark_file_checked("//HOST/SHARE/z.txt")
+        assert store.count_checked_files() == 2
+        assert store.count_target_files() == 3
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_file_case_insensitive():
+    """target_file uses COLLATE NOCASE."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_file("//HOST/Share/File.TXT", "//HOST/Share", 100, 0.0)
+        store.store_file("//host/share/file.txt", "//host/share", 200, 0.0)  # dup
+        assert store.count_target_files() == 1
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- mark_dir_walked upsert (Bug 1 fix) ----------
+
+
+def test_sqlite_store_mark_dir_walked_before_store():
+    """mark_dir_walked works even if dir was never stored (upsert)."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        # mark_dir_walked on a dir that was never store_dir'd
+        store.mark_dir_walked("//HOST/SHARE/dir_not_stored")
+
+        # Should NOT appear in unwalked (it's marked walked)
+        assert store.load_unwalked_dirs() == []
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_mark_dir_walked_after_store():
+    """mark_dir_walked on previously stored dir sets walked=1."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_dir("//HOST/SHARE/dir1", "//HOST/SHARE")
+        assert len(store.load_unwalked_dirs()) == 1
+
+        store.mark_dir_walked("//HOST/SHARE/dir1")
+        assert store.load_unwalked_dirs() == []
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- mark_file_checked extracts share (Design fix) ----------
+
+
+def test_sqlite_store_mark_file_checked_extracts_share():
+    """mark_file_checked INSERT fallback extracts share from UNC path."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        # File not in target_file yet — INSERT fallback fires
+        store.mark_file_checked("//HOST/SHARE/new_file.txt")
+
+        # Verify the share column was populated (not empty string)
+        with store.lock:
+            row = store.conn.execute(
+                "SELECT share FROM target_file WHERE unc_path = ?",
+                ("//HOST/SHARE/new_file.txt",),
+            ).fetchone()
+        assert row is not None
+        assert row[0] == "//HOST/SHARE"
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- legacy table drop ----------
+
+
+def test_sqlite_store_drops_legacy_tables():
+    """Opening a DB with checked_* tables drops them."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        # Create DB with legacy tables
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE checked_computer (name TEXT PRIMARY KEY)")
+        conn.execute("CREATE TABLE checked_share (unc_path TEXT PRIMARY KEY)")
+        conn.execute("CREATE TABLE checked_file (unc_path TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO checked_computer VALUES ('HOST1')")
+        conn.execute("INSERT INTO checked_share VALUES ('//HOST1/SHARE')")
+        conn.execute("INSERT INTO checked_file VALUES ('//HOST1/SHARE/a.txt')")
+        conn.commit()
+        conn.close()
+
+        store = SQLiteStateStore(path)
+
+        # Legacy tables should be gone
+        tables = {
+            r[0] for r in store.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "checked_computer" not in tables
+        assert "checked_share" not in tables
+        assert "checked_file" not in tables
+
+        # New tables should exist
+        assert "target_computer" in tables
+        assert "target_share" in tables
+        assert "target_dir" in tables
+        assert "target_file" in tables
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- migration: done column added to existing tables ----------
+
+
+def test_sqlite_store_migration_adds_done_column():
+    """Opening a DB with old target_computer/target_share (no done col) adds it."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        # Create old-style tables without done column
+        conn = sqlite3.connect(path)
+        conn.execute(
+            "CREATE TABLE target_computer "
+            "(name TEXT PRIMARY KEY COLLATE NOCASE, ip TEXT)"
+        )
+        conn.execute(
+            "CREATE TABLE target_share "
+            "(unc_path TEXT PRIMARY KEY COLLATE NOCASE)"
+        )
+        conn.execute("INSERT INTO target_computer VALUES ('HOST1', '10.0.0.1')")
+        conn.execute("INSERT INTO target_share VALUES ('//HOST1/SHARE')")
+        conn.commit()
+        conn.close()
+
+        store = SQLiteStateStore(path)
+
+        # done column should exist and default to 0
+        assert store.has_checked_computer("HOST1") is False
+        assert store.has_checked_share("//HOST1/SHARE") is False
+
+        # Can mark done
+        store.mark_computer_checked("HOST1")
+        assert store.has_checked_computer("HOST1") is True
+
+        store.mark_share_checked("//HOST1/SHARE")
+        assert store.has_checked_share("//HOST1/SHARE") is True
 
         store.close()
     finally:

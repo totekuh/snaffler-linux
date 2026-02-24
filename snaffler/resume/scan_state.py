@@ -63,6 +63,34 @@ class ScanState:
         self._checked_files.add(unc_path.lower())
         self.store.mark_file_checked(unc_path)
 
+    # ---------- directories ----------
+
+    def store_dir(self, unc_path: str, share: str):
+        self.store.store_dir(unc_path, share)
+
+    def store_dirs(self, dirs: list):
+        self.store.store_dirs(dirs)
+
+    def mark_dir_walked(self, unc_path: str):
+        self.store.mark_dir_walked(unc_path)
+
+    def load_unwalked_dirs(self, share: str | None = None) -> list:
+        return self.store.load_unwalked_dirs(share)
+
+    # ---------- files (batch) ----------
+
+    def store_file(self, unc_path: str, share: str, size: int = 0, mtime: float = 0.0):
+        self.store.store_file(unc_path, share, size, mtime)
+
+    def store_files(self, files: list):
+        self.store.store_files(files)
+
+    def load_unchecked_files(self) -> list:
+        return self.store.load_unchecked_files()
+
+    def count_target_files(self) -> int:
+        return self.store.count_target_files()
+
     # ---------- findings ----------
 
     def store_finding(self, **kwargs):
@@ -100,6 +128,11 @@ class SQLiteStateStore:
             self.conn.execute("PRAGMA journal_mode=WAL;")
             self.conn.execute("PRAGMA synchronous=NORMAL;")
 
+            # --- drop legacy tables ---
+            self.conn.execute("DROP TABLE IF EXISTS checked_computer")
+            self.conn.execute("DROP TABLE IF EXISTS checked_share")
+            self.conn.execute("DROP TABLE IF EXISTS checked_file")
+
             # --- schema (COLLATE NOCASE on path/name PKs — SMB is case-insensitive) ---
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS sync "
@@ -107,23 +140,26 @@ class SQLiteStateStore:
             )
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS target_computer "
-                "(name TEXT PRIMARY KEY COLLATE NOCASE, ip TEXT)"
+                "(name TEXT PRIMARY KEY COLLATE NOCASE, ip TEXT, "
+                "done INTEGER DEFAULT 0)"
             )
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS target_share "
-                "(unc_path TEXT PRIMARY KEY COLLATE NOCASE)"
+                "(unc_path TEXT PRIMARY KEY COLLATE NOCASE, "
+                "done INTEGER DEFAULT 0)"
             )
             self.conn.execute(
-                "CREATE TABLE IF NOT EXISTS checked_computer "
-                "(name TEXT PRIMARY KEY COLLATE NOCASE)"
+                "CREATE TABLE IF NOT EXISTS target_dir "
+                "(unc_path TEXT PRIMARY KEY COLLATE NOCASE, "
+                "share TEXT NOT NULL COLLATE NOCASE, "
+                "walked INTEGER DEFAULT 0)"
             )
             self.conn.execute(
-                "CREATE TABLE IF NOT EXISTS checked_share "
-                "(unc_path TEXT PRIMARY KEY COLLATE NOCASE)"
-            )
-            self.conn.execute(
-                "CREATE TABLE IF NOT EXISTS checked_file "
-                "(unc_path TEXT PRIMARY KEY COLLATE NOCASE)"
+                "CREATE TABLE IF NOT EXISTS target_file "
+                "(unc_path TEXT PRIMARY KEY COLLATE NOCASE, "
+                "share TEXT NOT NULL COLLATE NOCASE, "
+                "size INTEGER, mtime REAL, "
+                "checked INTEGER DEFAULT 0)"
             )
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS finding ("
@@ -138,10 +174,40 @@ class SQLiteStateStore:
                 "found_at   TEXT NOT NULL"
                 ")"
             )
+
+            # --- indexes ---
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_finding_triage "
                 "ON finding(triage)"
             )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_target_dir_share "
+                "ON target_dir(share)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_target_file_share "
+                "ON target_file(share)"
+            )
+
+            # --- migrate: add done column to target_computer if missing ---
+            cols = {
+                row[1]
+                for row in self.conn.execute("PRAGMA table_info(target_computer)")
+            }
+            if "done" not in cols:
+                self.conn.execute(
+                    "ALTER TABLE target_computer ADD COLUMN done INTEGER DEFAULT 0"
+                )
+
+            # --- migrate: add done column to target_share if missing ---
+            cols = {
+                row[1]
+                for row in self.conn.execute("PRAGMA table_info(target_share)")
+            }
+            if "done" not in cols:
+                self.conn.execute(
+                    "ALTER TABLE target_share ADD COLUMN done INTEGER DEFAULT 0"
+                )
 
     # ---------- sync flags ----------
 
@@ -203,7 +269,7 @@ class SQLiteStateStore:
     def store_shares(self, shares: list):
         with self.lock:
             self.conn.executemany(
-                "INSERT OR IGNORE INTO target_share VALUES (?)",
+                "INSERT OR IGNORE INTO target_share (unc_path) VALUES (?)",
                 [(s,) for s in shares],
             )
             self.conn.commit()
@@ -215,56 +281,147 @@ class SQLiteStateStore:
             ).fetchall()
             return [r[0] for r in rows]
 
-    # ---------- checked computers ----------
+    # ---------- checked computers (via done column) ----------
 
     def has_checked_computer(self, name: str) -> bool:
         with self.lock:
             cur = self.conn.execute(
-                "SELECT 1 FROM checked_computer WHERE name = ?", (name,)
+                "SELECT done FROM target_computer WHERE name = ?", (name,)
             )
-            return cur.fetchone() is not None
+            row = cur.fetchone()
+            return row is not None and row[0] == 1
 
     def mark_computer_checked(self, name: str):
         with self.lock:
             self.conn.execute(
-                "INSERT OR IGNORE INTO checked_computer VALUES (?)",
+                "INSERT OR IGNORE INTO target_computer (name) VALUES (?)",
+                (name,),
+            )
+            self.conn.execute(
+                "UPDATE target_computer SET done = 1 WHERE name = ?",
                 (name,),
             )
             self.conn.commit()
 
-    # ---------- checked shares ----------
+    # ---------- checked shares (via done column) ----------
 
     def has_checked_share(self, unc_path: str) -> bool:
         with self.lock:
             cur = self.conn.execute(
-                "SELECT 1 FROM checked_share WHERE unc_path = ?",
+                "SELECT done FROM target_share WHERE unc_path = ?",
                 (unc_path,),
             )
-            return cur.fetchone() is not None
+            row = cur.fetchone()
+            return row is not None and row[0] == 1
 
     def mark_share_checked(self, unc_path: str):
         with self.lock:
             self.conn.execute(
-                "INSERT OR IGNORE INTO checked_share VALUES (?)",
+                "INSERT OR IGNORE INTO target_share (unc_path) VALUES (?)",
+                (unc_path,),
+            )
+            self.conn.execute(
+                "UPDATE target_share SET done = 1 WHERE unc_path = ?",
                 (unc_path,),
             )
             self.conn.commit()
 
-    # ---------- files ----------
+    # ---------- files (via target_file table) ----------
 
     def load_checked_files(self) -> set:
         with self.lock:
-            rows = self.conn.execute("SELECT unc_path FROM checked_file").fetchall()
+            rows = self.conn.execute(
+                "SELECT unc_path FROM target_file WHERE checked = 1"
+            ).fetchall()
             return {r[0].lower() for r in rows}
-
 
     def mark_file_checked(self, unc_path: str):
         with self.lock:
+            # Extract //server/share from UNC path for INSERT fallback
+            parts = unc_path.replace("\\", "/").split("/")
+            parts = [p for p in parts if p]
+            share = f"//{parts[0]}/{parts[1]}" if len(parts) >= 2 else ""
             self.conn.execute(
-                "INSERT OR IGNORE INTO checked_file VALUES (?)",
+                "INSERT OR IGNORE INTO target_file (unc_path, share) VALUES (?, ?)",
+                (unc_path, share),
+            )
+            self.conn.execute(
+                "UPDATE target_file SET checked = 1 WHERE unc_path = ?",
                 (unc_path,),
             )
             self.conn.commit()
+
+    def store_file(self, unc_path: str, share: str, size: int = 0, mtime: float = 0.0):
+        with self.lock:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO target_file "
+                "(unc_path, share, size, mtime) VALUES (?, ?, ?, ?)",
+                (unc_path, share, size, mtime),
+            )
+            self.conn.commit()
+
+    def store_files(self, files: list):
+        with self.lock:
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO target_file "
+                "(unc_path, share, size, mtime) VALUES (?, ?, ?, ?)",
+                files,
+            )
+            self.conn.commit()
+
+    def load_unchecked_files(self) -> list:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT unc_path, size, mtime FROM target_file WHERE checked = 0"
+            ).fetchall()
+            return [(r[0], r[1], r[2]) for r in rows]
+
+    def count_target_files(self) -> int:
+        with self.lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM target_file"
+            ).fetchone()[0]
+
+    # ---------- directories (target_dir table) ----------
+
+    def store_dir(self, unc_path: str, share: str):
+        with self.lock:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO target_dir (unc_path, share) VALUES (?, ?)",
+                (unc_path, share),
+            )
+            self.conn.commit()
+
+    def store_dirs(self, dirs: list):
+        with self.lock:
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO target_dir (unc_path, share) VALUES (?, ?)",
+                dirs,
+            )
+            self.conn.commit()
+
+    def mark_dir_walked(self, unc_path: str):
+        with self.lock:
+            # Upsert: batch writer may not have flushed the INSERT yet
+            self.conn.execute(
+                "INSERT INTO target_dir (unc_path, share, walked) VALUES (?, '', 1) "
+                "ON CONFLICT(unc_path) DO UPDATE SET walked = 1",
+                (unc_path,),
+            )
+            self.conn.commit()
+
+    def load_unwalked_dirs(self, share: str | None = None) -> list:
+        with self.lock:
+            if share is not None:
+                rows = self.conn.execute(
+                    "SELECT unc_path FROM target_dir WHERE walked = 0 AND share = ?",
+                    (share,),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT unc_path FROM target_dir WHERE walked = 0"
+                ).fetchall()
+            return [r[0] for r in rows]
 
     # ---------- findings ----------
 
@@ -325,19 +482,19 @@ class SQLiteStateStore:
     def count_checked_computers(self) -> int:
         with self.lock:
             return self.conn.execute(
-                "SELECT COUNT(*) FROM checked_computer"
+                "SELECT COUNT(*) FROM target_computer WHERE done = 1"
             ).fetchone()[0]
 
     def count_checked_shares(self) -> int:
         with self.lock:
             return self.conn.execute(
-                "SELECT COUNT(*) FROM checked_share"
+                "SELECT COUNT(*) FROM target_share WHERE done = 1"
             ).fetchone()[0]
 
     def count_checked_files(self) -> int:
         with self.lock:
             return self.conn.execute(
-                "SELECT COUNT(*) FROM checked_file"
+                "SELECT COUNT(*) FROM target_file WHERE checked = 1"
             ).fetchone()[0]
 
     def close(self):
