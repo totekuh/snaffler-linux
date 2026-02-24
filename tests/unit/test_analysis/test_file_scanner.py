@@ -139,6 +139,7 @@ def test_scan_file_check_for_keys():
     evaluator.evaluate_file_rule.return_value = RuleDecision(
         action=MatchAction.CHECK_FOR_KEYS
     )
+    evaluator.should_discard_postmatch.return_value = False
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 

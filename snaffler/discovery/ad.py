@@ -53,6 +53,7 @@ class ADDiscovery:
         self._skipped_disabled: int = 0
         self._skipped_stale: int = 0
         self._users: List[str] = []
+        self.discovery_complete: bool = True
 
     # ------------------------------------------------------------------
     # LDAP anti-detection (--stealth)
@@ -160,17 +161,24 @@ class ADDiscovery:
 
         except LDAPSessionError as e:
             logger.error(f"LDAP error while querying computers: {e}")
+            self.discovery_complete = False
         except Exception as e:
             logger.error(
                 f"Unexpected error during LDAP computer discovery: {e}",
                 exc_info=True,
             )
+            self.discovery_complete = False
 
         if self.skip_disabled and (self._skipped_disabled or self._skipped_stale):
             logger.info(
                 f"Skipped {self._skipped_disabled} disabled and "
                 f"{self._skipped_stale} stale computer accounts "
                 f"(use --include-disabled to include them)"
+            )
+        if not self.discovery_complete:
+            logger.warning(
+                f"LDAP query failed mid-page — computer list may be incomplete "
+                f"({len(self._computers)} retrieved so far)"
             )
         logger.info(f"Found {len(self._computers)} live computers in AD")
         return self._computers

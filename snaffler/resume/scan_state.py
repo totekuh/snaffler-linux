@@ -8,6 +8,7 @@ class ScanState:
         self.aborted = False  # reserved for cooperative shutdown
         # In-memory cache of checked files for O(1) lookups (case-insensitive)
         self._checked_files: set = store.load_checked_files()
+        self._checked_lock = threading.Lock()
 
     # ---------- phase flags ----------
 
@@ -57,10 +58,12 @@ class ScanState:
     # ---------- files ----------
 
     def should_skip_file(self, unc_path: str) -> bool:
-        return unc_path.lower() in self._checked_files
+        with self._checked_lock:
+            return unc_path.lower() in self._checked_files
 
     def mark_file_done(self, unc_path: str):
-        self._checked_files.add(unc_path.lower())
+        with self._checked_lock:
+            self._checked_files.add(unc_path.lower())
         self.store.mark_file_checked(unc_path)
 
     # ---------- directories ----------

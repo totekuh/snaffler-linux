@@ -114,6 +114,8 @@ class FileScanner:
                     continue
 
                 if action == MatchAction.CHECK_FOR_KEYS:
+                    if self.rule_evaluator.should_discard_postmatch(ctx):
+                        continue
                     cert = self._check_certificate(ctx, server, share, smb_path, modified)
                     if cert:
                         cert = self._finalize_result(

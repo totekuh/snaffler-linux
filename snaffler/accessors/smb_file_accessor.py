@@ -14,6 +14,7 @@ class SMBFileAccessor(FileAccessor):
     def __init__(self, cfg):
         self._transport = SMBTransport(cfg)
         self._thread_local = threading.local()
+        self._max_file_bytes = cfg.scanning.max_file_bytes
 
     def _get_smb(self, server: str):
         cache = getattr(self._thread_local, "smb_cache", {})
@@ -69,7 +70,7 @@ class SMBFileAccessor(FileAccessor):
 
             local.parent.mkdir(parents=True, exist_ok=True)
 
-            data = self.read(server, share, path)
+            data = self.read(server, share, path, max_bytes=self._max_file_bytes)
             if data:
                 local.write_bytes(data)
         except Exception:

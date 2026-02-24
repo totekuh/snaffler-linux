@@ -69,7 +69,8 @@ class SharePipeline:
                             all_shares.extend(shares)
                             logger.debug(f"Found {len(shares)} readable shares on {computer}")
                             if self.progress:
-                                self.progress.shares_found += len(shares)
+                                with self.progress._lock:
+                                    self.progress.shares_found += len(shares)
                             # Store shares incrementally for resume
                             if self.state:
                                 self.state.store_shares(
@@ -79,7 +80,8 @@ class SharePipeline:
                         logger.debug(f"Error processing {computer}: {e}")
                     finally:
                         if self.progress:
-                            self.progress.computers_done += 1
+                            with self.progress._lock:
+                                self.progress.computers_done += 1
                         # Mark done on success or error (no DNS, access denied — no point retrying).
                         # On KeyboardInterrupt the for-loop breaks, so un-yielded futures
                         # never reach here and their computers get retried on resume.

@@ -141,7 +141,10 @@ class SnafflerRunner:
         if self.state:
             if computers:
                 self.state.store_computers(computers)
-            self.state.mark_phase_done(_PHASE_COMPUTERS)
+            # Only mark phase complete if LDAP finished without error.
+            # On partial failure, leave unset so resume re-queries.
+            if domain_pipeline.ad.discovery_complete:
+                self.state.mark_phase_done(_PHASE_COMPUTERS)
             logger.info(f"Stored {len(computers)} computers in resume state")
 
         return computers
