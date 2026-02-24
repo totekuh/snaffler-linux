@@ -1,7 +1,8 @@
 import logging
 import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+import time
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from typing import List
 
 from snaffler.accessors.smb_file_accessor import SMBFileAccessor
@@ -15,6 +16,101 @@ from snaffler.utils.progress import ProgressState
 logger = logging.getLogger("snaffler")
 
 _SENTINEL = None  # poison pill to signal consumer threads to exit
+
+_BATCH_SIZE = 500
+_BATCH_INTERVAL = 1.0  # seconds
+
+
+def _extract_share_unc(unc_path: str) -> str:
+    """Extract //server/share from a full UNC path."""
+    parts = unc_path.replace("\\", "/").split("/")
+    parts = [p for p in parts if p]
+    if len(parts) >= 2:
+        return f"//{parts[0]}/{parts[1]}"
+    return unc_path
+
+
+class _BatchWriter:
+    """Daemon thread that batches dir/file inserts into SQLite."""
+
+    def __init__(self, state: ScanState):
+        self._state = state
+        self._queue = queue.Queue()
+        self._thread = None
+
+    def start(self):
+        self._thread = threading.Thread(
+            target=self._run, name="batch-writer", daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self):
+        self._queue.put(None)  # sentinel
+        if self._thread is not None:
+            self._thread.join(timeout=10)
+
+    def put_dir(self, unc_path: str, share: str):
+        self._queue.put(("dir", unc_path, share))
+
+    def put_file(self, unc_path: str, share: str, size: int, mtime: float):
+        self._queue.put(("file", unc_path, share, size, mtime))
+
+    def _run(self):
+        dir_buf = []
+        file_buf = []
+        deadline = time.monotonic() + _BATCH_INTERVAL
+
+        while True:
+            try:
+                timeout = max(0, deadline - time.monotonic())
+                item = self._queue.get(timeout=timeout)
+            except queue.Empty:
+                item = "flush"
+
+            if item is None:
+                # Sentinel — drain remaining items and flush
+                while True:
+                    try:
+                        remaining = self._queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if remaining is None:
+                        continue
+                    kind = remaining[0]
+                    if kind == "dir":
+                        dir_buf.append((remaining[1], remaining[2]))
+                    elif kind == "file":
+                        file_buf.append((remaining[1], remaining[2], remaining[3], remaining[4]))
+                self._flush(dir_buf, file_buf)
+                return
+
+            if item == "flush":
+                self._flush(dir_buf, file_buf)
+                dir_buf.clear()
+                file_buf.clear()
+                deadline = time.monotonic() + _BATCH_INTERVAL
+                continue
+
+            kind = item[0]
+            if kind == "dir":
+                dir_buf.append((item[1], item[2]))
+            elif kind == "file":
+                file_buf.append((item[1], item[2], item[3], item[4]))
+
+            if len(dir_buf) + len(file_buf) >= _BATCH_SIZE:
+                self._flush(dir_buf, file_buf)
+                dir_buf.clear()
+                file_buf.clear()
+                deadline = time.monotonic() + _BATCH_INTERVAL
+
+    def _flush(self, dir_buf, file_buf):
+        try:
+            if dir_buf:
+                self._state.store_dirs(dir_buf)
+            if file_buf:
+                self._state.store_files(file_buf)
+        except Exception as e:
+            logger.debug(f"Batch writer flush error: {e}")
 
 
 class FilePipeline:
@@ -75,11 +171,14 @@ class FilePipeline:
         skipped_files = 0
         producer_error = []  # captures KeyboardInterrupt from producer
 
-        # ---------- Producer: tree walking → queue ----------
+        # ---------- Producer: parallel tree walking → queue ----------
         def _producer():
-            # on_file runs in executor worker threads; use mutable container
-            # instead of nonlocal (GIL-atomic += 1 on list element is safe)
             skip_count = [0]
+            batch_writer = None
+
+            if self.state:
+                batch_writer = _BatchWriter(self.state)
+                batch_writer.start()
 
             def on_file(unc_path, size, mtime):
                 """Callback invoked by TreeWalker for each file discovered."""
@@ -91,42 +190,114 @@ class FilePipeline:
                     return
                 if self.progress:
                     self.progress.files_total += 1
+                if batch_writer:
+                    share_unc = _extract_share_unc(unc_path)
+                    batch_writer.put_file(unc_path, share_unc, size, mtime)
                 file_queue.put((unc_path, size, mtime))
+
+            def on_dir(unc_path):
+                """Callback invoked by TreeWalker for each subdirectory discovered."""
+                if batch_writer:
+                    share_unc = _extract_share_unc(unc_path)
+                    batch_writer.put_dir(unc_path, share_unc)
 
             try:
                 with ThreadPoolExecutor(max_workers=self.tree_threads) as executor:
+                    # Maps: future → dir UNC, future → share root UNC
+                    dir_for_future = {}
+                    share_for_future = {}
+                    # Per-share pending futures count
+                    share_pending = {}
+                    # Cancel events per share root
                     cancel_events = {}
-                    future_to_path = {}
+                    pending = set()
+
+                    # --- Seed initial share roots ---
                     for path in paths:
                         cancel = threading.Event()
                         cancel_events[path] = cancel
                         future = executor.submit(
-                            self.tree_walker.walk_tree, path, on_file, cancel
+                            self.tree_walker.walk_directory,
+                            path, on_file, on_dir, cancel,
                         )
-                        future_to_path[future] = path
+                        dir_for_future[future] = path
+                        share_for_future[future] = path
+                        share_pending[path] = 1
+                        pending.add(future)
 
-                    try:
-                        for future in as_completed(future_to_path):
-                            path = future_to_path[future]
-                            try:
-                                future.result(timeout=self.walk_timeout)
-                            except TimeoutError:
-                                cancel_events[path].set()
-                                logger.warning(
-                                    f"Timeout walking {path} after {self.walk_timeout}s, cancelling"
-                                )
-                                if self.progress:
-                                    self.progress.shares_walked += 1
+                    # --- Resume: re-walk unwalked directories ---
+                    if self.state:
+                        for unwalked_dir in self.state.load_unwalked_dirs():
+                            share_root = _extract_share_unc(unwalked_dir)
+                            # Only re-walk dirs belonging to shares we're processing
+                            if share_root not in cancel_events:
                                 continue
-                            except Exception as e:
-                                logger.debug(f"Error walking {path}: {e}")
-                                if self.progress:
-                                    self.progress.shares_walked += 1
-                                continue
+                            cancel = cancel_events[share_root]
+                            future = executor.submit(
+                                self.tree_walker.walk_directory,
+                                unwalked_dir, on_file, on_dir, cancel,
+                            )
+                            dir_for_future[future] = unwalked_dir
+                            share_for_future[future] = share_root
+                            share_pending[share_root] = share_pending.get(share_root, 0) + 1
+                            pending.add(future)
 
-                            walked_shares.append(path)
+                    # --- Resume: seed unchecked files into queue ---
+                    # Only seed files from shares NOT being actively walked
+                    # (active shares will re-discover their files via walk_directory)
+                    if self.state:
+                        walked_roots = {p.lower() for p in paths}
+                        unchecked = self.state.load_unchecked_files()
+                        for unc_path, size, mtime in unchecked:
+                            file_share = _extract_share_unc(unc_path).lower()
+                            if file_share in walked_roots:
+                                continue  # will be re-discovered by live walk
+                            if self.state.should_skip_file(unc_path):
+                                continue
                             if self.progress:
-                                self.progress.shares_walked += 1
+                                self.progress.files_total += 1
+                            file_queue.put((unc_path, size or 0, mtime or 0.0))
+
+                    # --- Fan-out loop ---
+                    try:
+                        while pending:
+                            done, pending = wait(
+                                pending, return_when=FIRST_COMPLETED,
+                            )
+                            for future in done:
+                                dir_unc = dir_for_future.pop(future, None)
+                                share_root = share_for_future.pop(future, None)
+
+                                try:
+                                    subdirs = future.result(timeout=self.walk_timeout)
+                                except Exception as e:
+                                    logger.debug(f"Error walking {dir_unc}: {e}")
+                                    subdirs = []
+
+                                # Mark directory as walked
+                                if self.state and dir_unc:
+                                    self.state.mark_dir_walked(dir_unc)
+
+                                # Submit subdirectories
+                                for subdir in subdirs:
+                                    cancel = cancel_events.get(share_root, threading.Event())
+                                    sub_future = executor.submit(
+                                        self.tree_walker.walk_directory,
+                                        subdir, on_file, on_dir, cancel,
+                                    )
+                                    dir_for_future[sub_future] = subdir
+                                    share_for_future[sub_future] = share_root
+                                    share_pending[share_root] = share_pending.get(share_root, 0) + 1
+                                    pending.add(sub_future)
+
+                                # Track share completion
+                                if share_root:
+                                    share_pending[share_root] -= 1
+                                    if share_pending[share_root] == 0:
+                                        walked_shares.append(share_root)
+                                        if self.progress:
+                                            self.progress.shares_walked += 1
+
                     except KeyboardInterrupt:
                         for ev in cancel_events.values():
                             ev.set()
@@ -135,6 +306,8 @@ class FilePipeline:
             finally:
                 nonlocal skipped_files
                 skipped_files = skip_count[0]
+                if batch_writer:
+                    batch_writer.stop()
                 # Push sentinels so consumers exit
                 for _ in range(self.file_threads):
                     file_queue.put(_SENTINEL)

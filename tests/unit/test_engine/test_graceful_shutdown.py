@@ -142,7 +142,7 @@ def test_file_pipeline_cancels_futures_on_interrupt():
     pipeline = FilePipeline(cfg=cfg)
 
     # Make tree walker raise on first call
-    pipeline.tree_walker.walk_tree = MagicMock(side_effect=KeyboardInterrupt)
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=KeyboardInterrupt)
 
     # Wrap real ThreadPoolExecutor to spy on shutdown calls
     shutdown_calls = []
