@@ -74,69 +74,117 @@ class TreeWalker:
             except Exception:
                 pass
 
+    @staticmethod
+    def _parse_unc(unc_path: str):
+        """Parse UNC path into (server, share, path) or None on invalid input."""
+        parts = unc_path.replace("\\", "/").split("/")
+        parts = [p for p in parts if p]
+
+        if len(parts) < 2:
+            return None
+
+        server = parts[0]
+        share = parts[1]
+        path = "/" + "/".join(parts[2:]) if len(parts) > 2 else "/"
+        return server, share, path
+
     def walk_tree(self, unc_path: str, on_file=None, cancel: threading.Event | None = None):
-        """
-        Walk a directory tree, calling on_file for each file found.
+        """Walk a directory tree using iterative DFS, calling on_file for each file.
 
         Args:
             unc_path: UNC path to the share root (e.g. //HOST/SHARE)
-            on_file: callable(unc_path, size, mtime_epoch) — called for each file
-            cancel: optional threading.Event — checked before each directory recursion
-
-        Resume: directories are always re-walked. File-level dedup is
-        handled by checked_file in the pipeline (cheap to re-list dirs,
-        expensive to re-scan files). This avoids data loss when walking
-        completes but scanning is interrupted — marked dirs would hide
-        unscanned files on resume.
+            on_file: callable(unc_path, size, mtime_epoch) -- called for each file
+            cancel: optional threading.Event -- checked before each directory listing
         """
-        server = None
+        parsed = self._parse_unc(unc_path)
+        if parsed is None:
+            logger.error(
+                f"Invalid UNC path: {unc_path}; example: //10.10.10.10/SHARE$"
+            )
+            return
+
+        server, share, path = parsed
         try:
-            parts = unc_path.replace("\\", "/").split("/")
-            parts = [p for p in parts if p]
-
-            if len(parts) < 2:
-                logger.error(
-                    f"Invalid UNC path: {unc_path}; example: //10.10.10.10/SHARE$"
-                )
-                return
-
-            server = parts[0]
-            share = parts[1]
-            path = "/" + "/".join(parts[2:]) if len(parts) > 2 else "/"
-
             smb = self._get_smb(server)
-            self._walk_directory(smb, server, share, path, on_file, cancel)
-
+            # Iterative DFS with explicit stack (relative paths within the share)
+            stack = [path]
+            while stack:
+                if cancel and cancel.is_set():
+                    return
+                current = stack.pop()
+                subdir_paths = self._list_directory(
+                    smb, server, share, current, on_file, None, cancel,
+                )
+                # Push subdirs in reverse order so left-most is processed first
+                stack.extend(reversed(subdir_paths))
         except Exception as e:
-            if server is not None:
-                self._invalidate_smb(server)
+            self._invalidate_smb(server)
             logger.debug(f"Error walking tree {unc_path}: {e}")
 
-    def _walk_directory(
+    def walk_directory(self, unc_path: str, on_file=None, on_dir=None,
+                       cancel: threading.Event | None = None) -> list:
+        """Walk a single directory (non-recursive) and return subdirectory UNC paths.
+
+        Args:
+            unc_path: Full UNC path to the directory (e.g. //HOST/SHARE/subdir)
+            on_file: callable(unc_path, size, mtime_epoch) -- called for each file
+            on_dir: callable(unc_path) -- called for each subdirectory
+            cancel: optional threading.Event -- checked before listing
+
+        Returns:
+            List of subdirectory UNC paths discovered.
+        """
+        parsed = self._parse_unc(unc_path)
+        if parsed is None:
+            logger.error(
+                f"Invalid UNC path: {unc_path}; example: //10.10.10.10/SHARE$"
+            )
+            return []
+
+        server, share, path = parsed
+        try:
+            smb = self._get_smb(server)
+            subdir_paths = self._list_directory(
+                smb, server, share, path, on_file, on_dir, cancel,
+            )
+            # Convert relative paths to full UNC paths
+            return [f"//{server}/{share}{p}" for p in subdir_paths]
+        except Exception as e:
+            self._invalidate_smb(server)
+            logger.debug(f"Error walking directory {unc_path}: {e}")
+            return []
+
+    def _list_directory(
             self,
             smb,
             server: str,
             share: str,
             path: str,
             on_file,
+            on_dir,
             cancel: threading.Event | None = None,
-    ):
-        # ---------- Cancellation: stop walking if cancelled ----------
+    ) -> list:
+        """List one directory: call on_file for files, on_dir for subdirs.
+
+        Returns list of relative subdirectory paths within the share
+        (e.g. ['/subdir1', '/subdir2']). Does NOT recurse.
+        """
         if cancel and cancel.is_set():
-            return
+            return []
 
         if not path.endswith("/"):
             path += "/"
 
         unc_dir = f"//{server}/{share}{path}"
-        logger.debug(f"Walking tree: {unc_dir}")
+        logger.debug(f"Walking directory: {unc_dir}")
 
+        subdir_paths = []
         try:
             try:
                 entries = smb.listPath(share, path + "*")
             except SessionError as e:
                 logger.debug(f"Cannot list {unc_dir}: {e}")
-                return
+                return []
 
             for entry in entries:
                 name = entry.get_longname()
@@ -148,9 +196,9 @@ class TreeWalker:
 
                 if entry.is_directory():
                     if self._should_scan_directory(unc_full):
-                        self._walk_directory(
-                            smb, server, share, entry_path, on_file, cancel
-                        )
+                        subdir_paths.append(entry_path)
+                        if on_dir:
+                            on_dir(unc_full)
                 else:
                     try:
                         size = entry.get_filesize()
@@ -166,6 +214,8 @@ class TreeWalker:
         except Exception as e:
             self._invalidate_smb(server)
             logger.debug(f"Error walking {unc_dir}: {e}")
+
+        return subdir_paths
 
     def _should_scan_directory(self, dir_path: str) -> bool:
         for rule in self.dir_classifiers:

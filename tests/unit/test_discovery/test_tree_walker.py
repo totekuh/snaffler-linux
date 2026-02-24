@@ -52,7 +52,15 @@ def collect_callback():
     return on_file, collected
 
 
-# ---------- tests ----------
+def collect_dir_callback():
+    """Return (callback, collected_list) for use with walk_directory on_dir."""
+    collected = []
+    def on_dir(path):
+        collected.append(path)
+    return on_dir, collected
+
+
+# ---------- walk_tree tests ----------
 
 def test_walk_tree_invalid_unc():
     cfg = make_cfg()
@@ -274,3 +282,122 @@ def test_stale_connection_reconnects():
         assert collected[1][0] == "//HOST/SHARE2/fresh.txt"
 
     assert mock_connect.call_count == 2
+
+
+# ---------- walk_directory tests ----------
+
+def test_walk_directory_returns_subdirs():
+    """walk_directory() returns subdirectory UNC paths."""
+    cfg = make_cfg()
+    walker = TreeWalker(cfg)
+
+    smb = MagicMock()
+    smb.listPath.return_value = [
+        FakeEntry("subdir1", True),
+        FakeEntry("subdir2", True),
+        FakeEntry("file.txt", False),
+    ]
+
+    with patch.object(walker.smb_transport, "connect", return_value=smb):
+        on_file, files = collect_callback()
+        subdirs = walker.walk_directory("//HOST/SHARE", on_file)
+
+    assert sorted(subdirs) == [
+        "//HOST/SHARE/subdir1",
+        "//HOST/SHARE/subdir2",
+    ]
+    assert len(files) == 1
+    assert files[0][0] == "//HOST/SHARE/file.txt"
+
+
+def test_walk_directory_on_dir_callback():
+    """walk_directory() calls on_dir for each subdirectory."""
+    cfg = make_cfg()
+    walker = TreeWalker(cfg)
+
+    smb = MagicMock()
+    smb.listPath.return_value = [
+        FakeEntry("subdir1", True),
+        FakeEntry("file.txt", False),
+    ]
+
+    with patch.object(walker.smb_transport, "connect", return_value=smb):
+        on_file, _ = collect_callback()
+        on_dir, dirs = collect_dir_callback()
+        subdirs = walker.walk_directory("//HOST/SHARE", on_file, on_dir)
+
+    assert subdirs == ["//HOST/SHARE/subdir1"]
+    assert dirs == ["//HOST/SHARE/subdir1"]
+
+
+def test_walk_directory_cancel():
+    """walk_directory() returns empty when cancel is set."""
+    cfg = make_cfg()
+    walker = TreeWalker(cfg)
+
+    smb = MagicMock()
+    smb.listPath.return_value = [FakeEntry("file.txt", False)]
+
+    cancel = threading.Event()
+    cancel.set()
+
+    with patch.object(walker.smb_transport, "connect", return_value=smb):
+        on_file, files = collect_callback()
+        subdirs = walker.walk_directory("//HOST/SHARE", on_file, cancel=cancel)
+
+    assert subdirs == []
+    assert files == []
+    smb.listPath.assert_not_called()
+
+
+def test_walk_directory_discard_rule():
+    """walk_directory() excludes dirs matching Discard rules from subdirs."""
+    cfg = make_cfg()
+    rule = make_rule(MatchAction.DISCARD)
+    cfg.rules.directory = [rule]
+
+    walker = TreeWalker(cfg)
+
+    smb = MagicMock()
+    smb.listPath.return_value = [
+        FakeEntry("excluded_dir", True),
+        FakeEntry("file.txt", False),
+    ]
+
+    with patch.object(walker.smb_transport, "connect", return_value=smb):
+        on_file, files = collect_callback()
+        subdirs = walker.walk_directory("//HOST/SHARE", on_file)
+
+    assert subdirs == []  # dir excluded by Discard rule
+    assert len(files) == 1
+
+
+def test_walk_directory_invalid_unc():
+    """walk_directory() with invalid UNC returns empty list."""
+    cfg = make_cfg()
+    walker = TreeWalker(cfg)
+
+    subdirs = walker.walk_directory("INVALID")
+    assert subdirs == []
+
+
+def test_walk_directory_subpath():
+    """walk_directory() works with a subdirectory UNC path."""
+    cfg = make_cfg()
+    walker = TreeWalker(cfg)
+
+    smb = MagicMock()
+    smb.listPath.return_value = [
+        FakeEntry("nested", True),
+        FakeEntry("data.csv", False, size=500),
+    ]
+
+    with patch.object(walker.smb_transport, "connect", return_value=smb):
+        on_file, files = collect_callback()
+        subdirs = walker.walk_directory("//HOST/SHARE/parent/child", on_file)
+
+    assert subdirs == ["//HOST/SHARE/parent/child/nested"]
+    assert len(files) == 1
+    assert files[0][0] == "//HOST/SHARE/parent/child/data.csv"
+    # listPath should have been called with the correct sub-path
+    smb.listPath.assert_called_once_with("SHARE", "/parent/child/*")
