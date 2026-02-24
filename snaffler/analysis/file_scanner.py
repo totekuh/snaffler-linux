@@ -11,7 +11,7 @@ from snaffler.analysis.model.file_result import FileResult
 from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.classifiers.rules import MatchLocation, MatchAction, Triage
 from snaffler.utils.logger import log_file_result
-from snaffler.utils.path_utils import parse_unc_path, get_modified_time
+from snaffler.utils.path_utils import parse_unc_path
 
 logger = logging.getLogger("snaffler")
 
@@ -72,16 +72,14 @@ class FileScanner:
 
     # -------------------------------------------------------------- Scanning
 
-    def scan_file(self, unc_path: str, file_info) -> Optional[FileResult]:
+    def scan_file(self, unc_path: str, size: int, mtime_epoch: float) -> Optional[FileResult]:
         try:
             parsed = parse_unc_path(unc_path)
             if not parsed:
                 return None
 
-
             server, share, smb_path, file_name, file_ext = parsed
-            size = getattr(file_info, "get_filesize", lambda: 0)()
-            modified = get_modified_time(file_info)
+            modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch else None
 
             if not self.file_accessor.can_read(server, share, smb_path):
                 logger.debug(f"Can't read {unc_path}")

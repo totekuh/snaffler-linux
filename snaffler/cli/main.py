@@ -139,6 +139,18 @@ def main(
             help="Read NXC SMB --shares output from stdin and use as UNC targets",
             rich_help_panel="Targeting",
         ),
+        share: Optional[List[str]] = typer.Option(
+            None,
+            "--share",
+            help="Only scan shares matching glob pattern (case-insensitive, repeatable)",
+            rich_help_panel="Targeting",
+        ),
+        exclude_share: Optional[List[str]] = typer.Option(
+            None,
+            "--exclude-share",
+            help="Skip shares matching glob pattern (case-insensitive, repeatable)",
+            rich_help_panel="Targeting",
+        ),
 
         # ---------------- NETWORK ----------------
         dc_host: Optional[str] = typer.Option(
@@ -250,6 +262,12 @@ def main(
             help="Concurrent threads for DNS + port 445 reachability probes (default: 100)",
             rich_help_panel="Advanced",
         ),
+        walk_timeout: int = typer.Option(
+            300,
+            "--walk-timeout",
+            help="Timeout in seconds for walking a single share (0 = no timeout, default: 300)",
+            rich_help_panel="Advanced",
+        ),
         config_file: Optional[Path] = typer.Option(
             None, "-z", "--config",
             help="Path to TOML configuration file",
@@ -266,17 +284,16 @@ def main(
             help="OPSEC mode: pad LDAP queries with random attributes to break IDS signatures",
             rich_help_panel="Advanced",
         ),
-        resume: bool = typer.Option(
-            False,
-            "--resume",
-            help="Resume a previous scan (uses ./snaffler.db unless --state is set)",
-            rich_help_panel="Advanced",
-        ),
-
         state: Optional[Path] = typer.Option(
             None,
             "--state",
-            help="Path to resume state database (SQLite)",
+            help="Path to state database (default: ./snaffler.db). Auto-resumes if DB exists.",
+            rich_help_panel="Advanced",
+        ),
+        fresh: bool = typer.Option(
+            False,
+            "--fresh",
+            help="Ignore existing state DB and start a clean scan",
             rich_help_panel="Advanced",
         ),
 
@@ -304,6 +321,8 @@ def main(
     cfg.targets.unc_targets = unc_targets or []
     cfg.targets.shares_only = shares_only
     cfg.targets.skip_disabled_computers = not include_disabled
+    cfg.targets.share_filter = share or []
+    cfg.targets.exclude_share = exclude_share or []
 
     if computer and computer_file:
         raise typer.BadParameter("Use either --computer or --computer-file, not both")
@@ -358,6 +377,7 @@ def main(
     # ---------- ADVANCED ----------
     cfg.advanced.max_threads = max_threads
     cfg.advanced.dns_threads = dns_threads
+    cfg.advanced.walk_timeout = walk_timeout
     cfg.advanced.stealth = stealth
 
     per_bucket = max(1, max_threads // 3)
@@ -385,31 +405,14 @@ def main(
         from snaffler.utils import logger as _logger_mod
         _logger_mod.NO_COLOR = True
 
-    # ---------- RESUME ----------
-    if resume:
-        cfg.resume.enabled = True
-
-        if state:
-            state_path = state
-        else:
-            state_path = Path("snaffler.db")
-
-        # ensure parent dir exists
-        if state_path.parent and not state_path.parent.exists():
-            state_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # create DB file if missing
-        if not state_path.exists():
-            state_path.touch()
-
-        cfg.resume.state_db = str(state_path)
-
-    else:
-        if state:
-            typer.echo(
-                "[!] Warning: --state provided without --resume. Ignoring.",
-                err=True,
-            )
+    # ---------- STATE ----------
+    state_path = Path(state) if state else Path("snaffler.db")
+    if state_path.parent and not state_path.parent.exists():
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+    if fresh and state_path.exists():
+        state_path.unlink()
+    cfg.state.state_db = str(state_path)
+    cfg.state.fresh = fresh
 
     # ---------- validate ----------
     cfg.validate()

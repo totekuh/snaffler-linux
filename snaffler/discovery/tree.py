@@ -3,7 +3,7 @@ Directory tree walking over SMB with resume support
 """
 
 import logging
-from typing import List, Tuple, Any
+import threading
 
 from impacket.smbconnection import SessionError
 
@@ -34,16 +34,21 @@ class TreeWalker:
             if r.enumeration_scope == EnumerationScope.DIRECTORY_ENUMERATION
         ]
 
-    def walk_tree(self, unc_path: str) -> List[Tuple[str, Any]]:
+    def walk_tree(self, unc_path: str, on_file=None, cancel: threading.Event | None = None):
         """
-        Walk a directory tree and return all files.
+        Walk a directory tree, calling on_file for each file found.
 
-        Resume semantics:
-        - Directories are skipped if already marked as checked
-        - Directories are marked checked only after full traversal
+        Args:
+            unc_path: UNC path to the share root (e.g. //HOST/SHARE)
+            on_file: callable(unc_path, size, mtime_epoch) — called for each file
+            cancel: optional threading.Event — checked before each directory recursion
+
+        Resume: directories are always re-walked. File-level dedup is
+        handled by checked_file in the pipeline (cheap to re-list dirs,
+        expensive to re-scan files). This avoids data loss when walking
+        completes but scanning is interrupted — marked dirs would hide
+        unscanned files on resume.
         """
-        files: List[Tuple[str, Any]] = []
-
         try:
             parts = unc_path.replace("\\", "/").split("/")
             parts = [p for p in parts if p]
@@ -52,7 +57,7 @@ class TreeWalker:
                 logger.error(
                     f"Invalid UNC path: {unc_path}; example: //10.10.10.10/SHARE$"
                 )
-                return files
+                return
 
             server = parts[0]
             share = parts[1]
@@ -60,17 +65,12 @@ class TreeWalker:
 
             smb = self.smb_transport.connect(server)
             try:
-                self._walk_directory(smb, server, share, path, files)
+                self._walk_directory(smb, server, share, path, on_file, cancel)
             finally:
                 smb.logoff()
 
-            if files:
-                logger.info(f"Found {len(files)} files in {unc_path}")
-
         except Exception as e:
             logger.debug(f"Error walking tree {unc_path}: {e}")
-
-        return files
 
     def _walk_directory(
             self,
@@ -78,18 +78,18 @@ class TreeWalker:
             server: str,
             share: str,
             path: str,
-            files: List[Tuple[str, Any]],
+            on_file,
+            cancel: threading.Event | None = None,
     ):
+        # ---------- Cancellation: stop walking if cancelled ----------
+        if cancel and cancel.is_set():
+            return
+
         if not path.endswith("/"):
             path += "/"
 
         unc_dir = f"//{server}/{share}{path}"
         logger.debug(f"Walking tree: {unc_dir}")
-
-        # ---------- Resume: directory already fully enumerated ----------
-        if self.state and self.state.should_skip_dir(unc_dir):
-            logger.debug(f"Resume: skipping directory {unc_dir}")
-            return
 
         try:
             try:
@@ -109,14 +109,19 @@ class TreeWalker:
                 if entry.is_directory():
                     if self._should_scan_directory(unc_full):
                         self._walk_directory(
-                            smb, server, share, entry_path, files
+                            smb, server, share, entry_path, on_file, cancel
                         )
                 else:
-                    files.append((unc_full, entry))
-
-            # ---------- Mark directory AFTER full traversal ----------
-            if self.state:
-                self.state.mark_dir_done(unc_dir)
+                    try:
+                        size = entry.get_filesize()
+                    except Exception:
+                        size = 0
+                    try:
+                        mtime = entry.get_mtime_epoch()
+                    except Exception:
+                        mtime = 0.0
+                    if on_file:
+                        on_file(unc_full, size, mtime)
 
         except Exception as e:
             logger.debug(f"Error walking {unc_dir}: {e}")

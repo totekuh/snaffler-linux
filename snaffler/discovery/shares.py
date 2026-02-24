@@ -3,6 +3,7 @@ Share enumeration using Impacket SMB client
 Uses listShares() (SRVSVC NetShareEnum) — same method as NetExec/CrackMapExec.
 """
 
+import fnmatch
 import logging
 import threading
 from typing import List, Tuple
@@ -13,6 +14,31 @@ from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.transport.smb import SMBTransport
 
 logger = logging.getLogger('snaffler')
+
+
+def share_matches_filter(
+    share_name: str,
+    include: List[str],
+    exclude: List[str],
+) -> bool:
+    """Check whether a share name passes include/exclude glob filters.
+
+    Args:
+        share_name: The share name to test.
+        include: Glob patterns — share must match at least one (empty = allow all).
+        exclude: Glob patterns — share is rejected if it matches any.
+
+    Returns:
+        True if the share should be scanned, False if it should be skipped.
+    """
+    name_lower = share_name.lower()
+    if include:
+        if not any(fnmatch.fnmatch(name_lower, p.lower()) for p in include):
+            return False
+    if exclude:
+        if any(fnmatch.fnmatch(name_lower, p.lower()) for p in exclude):
+            return False
+    return True
 
 
 class ShareInfo:
@@ -56,6 +82,8 @@ class ShareFinder:
 
         self._thread_local = threading.local()
         self._sysvol_lock = threading.Lock()
+        self._sysvol_scanned = False
+        self._netlogon_scanned = False
 
     def _get_smb(self, computer: str):
         if not hasattr(self._thread_local, "smb_cache"):
@@ -98,9 +126,9 @@ class ShareFinder:
                     remark=share_remark
                 ))
         except SessionError as e:
-            logger.warning(f"[{target}] Share enumeration failed (access denied): {e}")
+            logger.debug(f"[{target}] Share enumeration failed (access denied): {e}")
         except Exception as e:
-            logger.warning(f"[{target}] Share enumeration failed: {e}")
+            logger.debug(f"[{target}] Share enumeration failed: {e}")
         return shares
 
     def _classify_share(self, unc_path: str) -> bool:
@@ -148,9 +176,9 @@ class ShareFinder:
 
         if shares:
             share_names = [s.name for s in shares]
-            logger.info(f"[{computer}] Enumerated {len(shares)} shares: {share_names}")
+            logger.debug(f"[{computer}] Enumerated {len(shares)} shares: {share_names}")
         else:
-            logger.warning(f"[{computer}] No shares found")
+            logger.debug(f"[{computer}] No shares found")
             return []
 
         results: List[Tuple[str, ShareInfo]] = []
@@ -163,6 +191,15 @@ class ShareFinder:
                 logger.debug(f"[{computer}] Skipping {share.name} (in NEVER_SCAN list)")
                 continue
 
+            # --- CLI share filters (--share / --exclude-share) ---
+            if not share_matches_filter(
+                share.name,
+                self.cfg.targets.share_filter,
+                self.cfg.targets.exclude_share,
+            ):
+                logger.debug(f"[{computer}] Skipping {share.name} (excluded by share filter)")
+                continue
+
             unc_path = f"//{computer}/{share.name}"
 
             # --- SYSVOL / NETLOGON handling ---
@@ -172,17 +209,17 @@ class ShareFinder:
                 apply_classifiers = False
                 with self._sysvol_lock:
                     if share_name == "SYSVOL":
-                        if not self.cfg.targets.scan_sysvol:
+                        if not self.cfg.targets.scan_sysvol or self._sysvol_scanned:
                             skip = True
                         else:
                             skip = False
-                            self.cfg.targets.scan_sysvol = False
+                            self._sysvol_scanned = True
                     else:
-                        if not self.cfg.targets.scan_netlogon:
+                        if not self.cfg.targets.scan_netlogon or self._netlogon_scanned:
                             skip = True
                         else:
                             skip = False
-                            self.cfg.targets.scan_netlogon = False
+                            self._netlogon_scanned = True
                 if skip:
                     logger.debug(f"Skipping {share_name} replica at {unc_path}")
                     continue
@@ -197,10 +234,10 @@ class ShareFinder:
             share.readable = self.is_share_readable(computer, share.name)
 
             if share.readable:
-                logger.info(f"Readable share: {unc_path}")
+                logger.debug(f"Readable share: {unc_path}")
                 results.append((unc_path, share))
             else:
-                logger.info(f"Unreadable share (access denied): {unc_path}")
+                logger.debug(f"Unreadable share (access denied): {unc_path}")
 
         # Summary for diagnostics
         if shares:

@@ -47,6 +47,9 @@ class TargetingConfig:
     skip_disabled_computers: bool = True
     max_computer_staleness_months: int = 4
 
+    share_filter: List[str] = field(default_factory=list)
+    exclude_share: List[str] = field(default_factory=list)
+
 
 # ---------------- SCANNING ----------------
 
@@ -88,6 +91,7 @@ class AdvancedConfig:
     tree_threads: int = 20
     file_threads: int = 20
     dns_threads: int = 100
+    walk_timeout: int = 300
     stealth: bool = False
 
 
@@ -101,12 +105,12 @@ class RulesConfig:
     postmatch: list = field(default_factory=list)
 
 
-# ---------------- RESUME ----------------
+# ---------------- STATE ----------------
 
 @dataclass
-class ResumeConfig:
-    enabled: bool = False
-    state_db: Optional[str] = None
+class StateConfig:
+    state_db: str = "snaffler.db"
+    fresh: bool = False
 
 
 # ---------------- ROOT CONFIG ----------------
@@ -118,7 +122,7 @@ class SnafflerConfiguration:
     output: OutputConfig = field(default_factory=OutputConfig)
     advanced: AdvancedConfig = field(default_factory=AdvancedConfig)
     rules: RulesConfig = field(default_factory=RulesConfig)
-    resume: ResumeConfig = field(default_factory=ResumeConfig)
+    state: StateConfig = field(default_factory=StateConfig)
 
     # ---------- validation ----------
     def validate(self):

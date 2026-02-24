@@ -27,28 +27,6 @@ def test_sqlite_store_file_tracking():
         os.unlink(path)
 
 
-def test_sqlite_store_dir_tracking():
-    with tempfile.NamedTemporaryFile(delete=False) as f:
-        path = f.name
-
-    try:
-        store = SQLiteStateStore(path)
-
-        assert store.has_checked_dir("//HOST/dir") is False
-
-        store.mark_dir_checked("//HOST/dir")
-        assert store.has_checked_dir("//HOST/dir") is True
-
-        # idempotent
-        store.mark_dir_checked("//HOST/dir")
-        assert store.has_checked_dir("//HOST/dir") is True
-
-        store.close()
-
-    finally:
-        os.unlink(path)
-
-
 def test_sqlite_store_sync_flags():
     with tempfile.NamedTemporaryFile(delete=False) as f:
         path = f.name
@@ -226,87 +204,255 @@ def test_sqlite_store_computer_ip_tracking():
         os.unlink(path)
 
 
-def test_sqlite_store_computer_ip_migration():
-    """Old DB without ip column gets it added; existing rows have ip=NULL."""
+# ---------- findings ----------
+
+
+def test_sqlite_store_finding_store_and_load():
+    """Store a finding and load it back."""
     with tempfile.NamedTemporaryFile(delete=False) as f:
         path = f.name
 
     try:
-        # Create old-style DB with target_computer lacking ip column
-        conn = sqlite3.connect(path)
-        conn.execute("CREATE TABLE target_computer (name TEXT PRIMARY KEY)")
-        conn.execute("INSERT INTO target_computer VALUES ('HOST1')")
-        conn.execute("INSERT INTO target_computer VALUES ('HOST2')")
-        conn.commit()
-        conn.close()
-
-        # Open with new store — should migrate
         store = SQLiteStateStore(path)
 
-        # Existing rows should have ip=NULL (all unresolved)
-        assert sorted(store.load_unresolved_computers()) == ["HOST1", "HOST2"]
-        assert store.load_resolved_computers() == []
+        assert store.count_findings() == 0
+        assert store.load_findings() == []
 
-        # Can update IPs on migrated rows
-        store.update_computer_ip("HOST1", "10.0.0.1")
-        assert store.load_resolved_computers() == ["HOST1"]
-        assert store.load_unresolved_computers() == ["HOST2"]
+        store.store_finding(
+            finding_id="abc123",
+            file_path="//HOST/SHARE/secret.txt",
+            triage="Red",
+            rule_name="KeepSecretRed",
+            match_text="password=",
+            context="password=hunter2",
+            size=1024,
+            mtime="2026-01-15",
+            found_at="2026-02-24T12:00:00",
+        )
+
+        assert store.count_findings() == 1
+        findings = store.load_findings()
+        assert len(findings) == 1
+
+        f0 = findings[0]
+        assert f0["finding_id"] == "abc123"
+        assert f0["file_path"] == "//HOST/SHARE/secret.txt"
+        assert f0["triage"] == "Red"
+        assert f0["rule_name"] == "KeepSecretRed"
+        assert f0["match_text"] == "password="
+        assert f0["context"] == "password=hunter2"
+        assert f0["size"] == 1024
+        assert f0["mtime"] == "2026-01-15"
+        assert f0["found_at"] == "2026-02-24T12:00:00"
 
         store.close()
     finally:
         os.unlink(path)
 
 
-def test_sqlite_store_backward_compat():
-    """Old DB with checked_files/checked_dirs tables should be migrated."""
+def test_sqlite_store_finding_dedup():
+    """Duplicate finding_id replaces the previous row."""
     with tempfile.NamedTemporaryFile(delete=False) as f:
         path = f.name
 
     try:
-        # Create an old-style DB manually
+        store = SQLiteStateStore(path)
+
+        store.store_finding(
+            finding_id="dup1",
+            file_path="//HOST/SHARE/a.txt",
+            triage="Yellow",
+            rule_name="Rule1",
+            found_at="2026-02-24T12:00:00",
+        )
+        store.store_finding(
+            finding_id="dup1",
+            file_path="//HOST/SHARE/a.txt",
+            triage="Red",
+            rule_name="Rule1",
+            found_at="2026-02-24T12:01:00",
+        )
+
+        assert store.count_findings() == 1
+        findings = store.load_findings()
+        assert findings[0]["triage"] == "Red"
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_finding_multiple():
+    """Multiple findings stored and ordered by found_at."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_finding(
+            finding_id="f2",
+            file_path="//HOST/SHARE/b.txt",
+            triage="Yellow",
+            rule_name="Rule2",
+            found_at="2026-02-24T12:01:00",
+        )
+        store.store_finding(
+            finding_id="f1",
+            file_path="//HOST/SHARE/a.txt",
+            triage="Red",
+            rule_name="Rule1",
+            found_at="2026-02-24T12:00:00",
+        )
+        store.store_finding(
+            finding_id="f3",
+            file_path="//HOST/SHARE/c.txt",
+            triage="Black",
+            rule_name="Rule3",
+            found_at="2026-02-24T12:02:00",
+        )
+
+        assert store.count_findings() == 3
+        findings = store.load_findings()
+        assert [f["finding_id"] for f in findings] == ["f1", "f2", "f3"]
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_finding_optional_fields():
+    """Findings with only required fields (nulls for optional)."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_finding(
+            finding_id="min1",
+            file_path="//HOST/SHARE/file.txt",
+            triage="Green",
+            rule_name="Rule1",
+        )
+
+        findings = store.load_findings()
+        assert len(findings) == 1
+        f0 = findings[0]
+        assert f0["match_text"] is None
+        assert f0["context"] is None
+        assert f0["size"] is None
+        assert f0["mtime"] is None
+        assert f0["found_at"] is not None  # auto-generated
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_finding_migration():
+    """Old DB without finding table gets it added on open."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        # Create old-style DB without finding table
         conn = sqlite3.connect(path)
-        conn.execute("CREATE TABLE checked_files (unc_path TEXT PRIMARY KEY)")
-        conn.execute("CREATE TABLE checked_dirs (unc_path TEXT PRIMARY KEY)")
-        conn.execute("INSERT INTO checked_files VALUES ('//HOST/share/old_file.txt')")
-        conn.execute("INSERT INTO checked_dirs VALUES ('//HOST/share/old_dir')")
+        conn.execute("CREATE TABLE sync (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("CREATE TABLE target_computer (name TEXT PRIMARY KEY COLLATE NOCASE, ip TEXT)")
+        conn.execute("CREATE TABLE checked_file (unc_path TEXT PRIMARY KEY COLLATE NOCASE)")
         conn.commit()
         conn.close()
 
-        # Open with new store — should migrate
+        # Open with new store — should add finding table
         store = SQLiteStateStore(path)
 
-        # Old data accessible via new table names
-        assert store.has_checked_file("//HOST/share/old_file.txt") is True
-        assert store.has_checked_dir("//HOST/share/old_dir") is True
-
-        # Old tables should be gone
         cur = store.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('checked_files', 'checked_dirs')"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='finding'"
         )
-        assert cur.fetchall() == []
+        assert cur.fetchone() is not None
 
-        # New tables exist
-        cur = store.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('checked_file', 'checked_dir')"
+        # Can store findings after migration
+        store.store_finding(
+            finding_id="migrated1",
+            file_path="//HOST/SHARE/file.txt",
+            triage="Red",
+            rule_name="Rule1",
         )
-        tables = {row[0] for row in cur.fetchall()}
-        assert tables == {"checked_file", "checked_dir"}
+        assert store.count_findings() == 1
 
-        # New tables also work
-        store.mark_file_checked("//HOST/share/new_file.txt")
-        assert store.has_checked_file("//HOST/share/new_file.txt") is True
+        store.close()
+    finally:
+        os.unlink(path)
 
-        # All 7 tables exist
-        cur = store.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
-        all_tables = {row[0] for row in cur.fetchall()}
-        expected = {
-            "sync", "target_computer", "target_share",
-            "checked_computer", "checked_share",
-            "checked_dir", "checked_file",
-        }
-        assert expected.issubset(all_tables)
+
+# ---------- case-insensitive lookups (SMB/NTFS paths are case-insensitive) ----------
+
+
+def test_case_insensitive_checked_file():
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.mark_file_checked("//HOST/Share/File.txt")
+        assert store.has_checked_file("//HOST/Share/File.txt") is True
+        assert store.has_checked_file("//host/share/file.txt") is True
+        assert store.has_checked_file("//HOST/SHARE/FILE.TXT") is True
+
+        # Duplicate with different case is ignored (same file on NTFS)
+        store.mark_file_checked("//host/share/file.txt")
+        assert store.count_checked_files() == 1
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_case_insensitive_checked_share():
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.mark_share_checked("//HOST/ShareName")
+        assert store.has_checked_share("//host/sharename") is True
+        assert store.has_checked_share("//HOST/SHARENAME") is True
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_case_insensitive_checked_computer():
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.mark_computer_checked("DC01")
+        assert store.has_checked_computer("dc01") is True
+        assert store.has_checked_computer("Dc01") is True
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_case_insensitive_target_share():
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_shares(["//HOST/Share"])
+        store.store_shares(["//host/share"])
+        loaded = store.load_shares()
+        assert len(loaded) == 1
 
         store.close()
     finally:

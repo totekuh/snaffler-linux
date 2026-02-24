@@ -54,6 +54,8 @@ class ProgressState:
         self.computers_total = 0
         self.computers_done = 0
         self.shares_found = 0
+        self.shares_start = None  # set when share discovery begins
+        self._shares_done_baseline: int = 0  # computers_done at start of resumed share discovery
 
         # Tree walking / file scanning stage
         self.shares_total = 0
@@ -80,7 +82,16 @@ class ProgressState:
 
             parts = [f"Elapsed: {elapsed_str}"]
 
-            if self.dns_total:
+            # Determine active phases (walk + scan can run concurrently)
+            walking_active = self.shares_total > 0 and self.shares_walked < self.shares_total
+            scanning_active = self.files_total > 0
+            scan_phase = scanning_active and not walking_active
+            walk_phase = walking_active
+            share_phase = self.computers_total > 0 and not walk_phase and not scan_phase
+            dns_phase = self.dns_total > 0 and not share_phase and not walk_phase and not scan_phase
+
+            # --- DNS ---
+            if dns_phase:
                 remaining = self.dns_total - self.dns_resolved - self.dns_filtered
                 dns_str = (
                     f"DNS: {self.dns_resolved} up, "
@@ -91,14 +102,45 @@ class ProgressState:
                 if eta:
                     dns_str += f" (~{eta})"
                 parts.append(dns_str)
-            if self.computers_total:
-                parts.append(f"Computers: {self.computers_done}/{self.computers_total}")
-            if self.shares_total:
-                parts.append(f"Shares: {self.shares_walked}/{self.shares_total}")
+            elif self.dns_total:
+                parts.append(f"DNS: {self.dns_resolved}/{self.dns_total}")
+
+            # --- Shares ---
+            if share_phase:
+                remaining = self.computers_total - self.computers_done
+                shares_str = (
+                    f"Shares: {self.shares_found} found on "
+                    f"{self.computers_done}/{self.computers_total} hosts"
+                )
+                if remaining > 0:
+                    shares_str += f", {remaining} to go"
+                    eta = self._shares_eta(remaining)
+                    if eta:
+                        shares_str += f" (~{eta})"
+                parts.append(shares_str)
             elif self.shares_found:
                 parts.append(f"Shares: {self.shares_found}")
-            if self.files_total:
-                parts.append(f"Files: {self.files_scanned}/{self.files_total}")
+
+            # --- Tree walking ---
+            if walk_phase:
+                remaining = self.shares_total - self.shares_walked
+                walk_str = f"Walking: {self.shares_walked}/{self.shares_total}"
+                if remaining > 0:
+                    walk_str += f", {remaining} to go"
+                parts.append(walk_str)
+
+                # Concurrent scanning progress while walking
+                if scanning_active:
+                    parts.append(f"Files: {self.files_scanned} scanned")
+
+            # --- File scanning (walk complete) ---
+            if scan_phase:
+                remaining = self.files_total - self.files_scanned
+                files_str = f"Files: {self.files_scanned}/{self.files_total}"
+                if remaining > 0:
+                    files_str += f", {remaining} to go"
+                parts.append(files_str)
+
             if self.files_matched:
                 parts.append(f"Matched: {self.files_matched}")
             sev = self._format_severity()
@@ -117,6 +159,26 @@ class ProgressState:
         if done < 10:
             return ""  # too early for a meaningful estimate
         elapsed = time.monotonic() - self.dns_start
+        if elapsed < 1:
+            return ""
+        rate = done / elapsed
+        eta_secs = int(remaining / rate)
+        if eta_secs < 60:
+            return f"{eta_secs}s"
+        m, s = divmod(eta_secs, 60)
+        if m < 60:
+            return f"{m}m{s:02d}s"
+        h, m = divmod(m, 60)
+        return f"{h}h{m:02d}m"
+
+    def _shares_eta(self, remaining: int) -> str:
+        """Estimate time remaining for share discovery, or empty string if too early."""
+        if not self.shares_start or remaining <= 0:
+            return ""
+        done = self.computers_done - self._shares_done_baseline
+        if done < 5:
+            return ""  # too early for a meaningful estimate
+        elapsed = time.monotonic() - self.shares_start
         if elapsed < 1:
             return ""
         rate = done / elapsed

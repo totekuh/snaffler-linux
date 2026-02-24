@@ -4,17 +4,25 @@ import pytest
 from unittest.mock import MagicMock, patch, call
 
 from snaffler.engine.runner import SnafflerRunner
+from snaffler.utils.logger import set_finding_store
+
+
+@pytest.fixture(autouse=True)
+def _reset_finding_store():
+    yield
+    set_finding_store(None)
 
 
 # ---------- helpers ----------
 
 def make_cfg():
     cfg = MagicMock()
-    cfg.resume.enabled = False
-    cfg.resume.state_db = None
+    cfg.state.state_db = ":memory:"
     cfg.targets.unc_targets = []
     cfg.targets.computer_targets = []
     cfg.targets.shares_only = False
+    cfg.targets.share_filter = []
+    cfg.targets.exclude_share = []
     cfg.auth.domain = None
     cfg.advanced.share_threads = 2
     cfg.advanced.tree_threads = 2
@@ -127,6 +135,7 @@ def test_runner_stats_before_state_close():
 
 def test_file_pipeline_cancels_futures_on_interrupt():
     """File pipeline cancels pending futures on KeyboardInterrupt."""
+    from concurrent.futures import ThreadPoolExecutor as RealTPE
     from snaffler.engine.file_pipeline import FilePipeline
 
     cfg = make_cfg()
@@ -135,12 +144,27 @@ def test_file_pipeline_cancels_futures_on_interrupt():
     # Make tree walker raise on first call
     pipeline.tree_walker.walk_tree = MagicMock(side_effect=KeyboardInterrupt)
 
-    with pytest.raises(KeyboardInterrupt):
-        pipeline.run(["//HOST/SHARE"])
+    # Wrap real ThreadPoolExecutor to spy on shutdown calls
+    shutdown_calls = []
+
+    class SpyTPE(RealTPE):
+        def shutdown(self, *args, **kwargs):
+            shutdown_calls.append(kwargs)
+            return super().shutdown(*args, **kwargs)
+
+    with patch("snaffler.engine.file_pipeline.ThreadPoolExecutor", SpyTPE):
+        with pytest.raises(KeyboardInterrupt):
+            pipeline.run(["//HOST/SHARE"])
+
+    # Verify at least one shutdown had cancel_futures=True
+    assert any(c.get("cancel_futures") is True for c in shutdown_calls), (
+        f"Expected shutdown(cancel_futures=True), got: {shutdown_calls}"
+    )
 
 
 def test_share_pipeline_cancels_futures_on_interrupt():
     """Share pipeline cancels pending futures on KeyboardInterrupt."""
+    from concurrent.futures import ThreadPoolExecutor as RealTPE
     from snaffler.engine.share_pipeline import SharePipeline
 
     cfg = make_cfg()
@@ -151,19 +175,33 @@ def test_share_pipeline_cancels_futures_on_interrupt():
         side_effect=KeyboardInterrupt
     )
 
-    with pytest.raises(KeyboardInterrupt):
-        pipeline.run(["HOST1"])
+    # Wrap real ThreadPoolExecutor to spy on shutdown calls
+    shutdown_calls = []
+
+    class SpyTPE(RealTPE):
+        def shutdown(self, *args, **kwargs):
+            shutdown_calls.append(kwargs)
+            return super().shutdown(*args, **kwargs)
+
+    with patch("snaffler.engine.share_pipeline.ThreadPoolExecutor", SpyTPE):
+        with pytest.raises(KeyboardInterrupt):
+            pipeline.run(["HOST1"])
+
+    # Verify shutdown was called with cancel_futures=True
+    assert any(c.get("cancel_futures") is True for c in shutdown_calls), (
+        f"Expected shutdown(cancel_futures=True), got: {shutdown_calls}"
+    )
 
 
-# ---------- runner: no state (state=None) ----------
+# ---------- runner: state always present ----------
 
-def test_runner_no_state_no_crash_on_interrupt():
-    """Interrupt without resume enabled doesn't crash on state cleanup."""
+def test_runner_state_always_created():
+    """State DB is always created, even without explicit --state flag."""
     cfg = make_cfg()
     cfg.targets.unc_targets = ["//HOST/SHARE"]
 
     runner = SnafflerRunner(cfg)
-    assert runner.state is None
+    assert runner.state is not None
     runner.file_pipeline.run = MagicMock(side_effect=KeyboardInterrupt)
 
     with patch("snaffler.engine.runner.print_completion_stats"):

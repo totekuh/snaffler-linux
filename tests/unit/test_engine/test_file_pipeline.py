@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 from snaffler.engine.file_pipeline import FilePipeline
 from snaffler.utils.progress import ProgressState
@@ -11,6 +11,7 @@ def make_cfg():
 
     cfg.advanced.tree_threads = 2
     cfg.advanced.file_threads = 2
+    cfg.advanced.walk_timeout = 300
 
     cfg.rules.file = []
     cfg.rules.content = []
@@ -19,13 +20,23 @@ def make_cfg():
     return cfg
 
 
+def make_walk_side_effect(fake_files):
+    """Return a side_effect for walk_tree that calls on_file for each fake file."""
+    def walk_tree(path, on_file, cancel=None):
+        for unc_path, size, mtime in fake_files:
+            on_file(unc_path, size, mtime)
+    return walk_tree
+
+
 # ---------- tests ----------
 
 def test_file_pipeline_no_files():
     cfg = make_cfg()
     pipeline = FilePipeline(cfg)
 
-    pipeline.tree_walker.walk_tree = MagicMock(return_value=[])
+    pipeline.tree_walker.walk_tree = MagicMock(
+        side_effect=make_walk_side_effect([])
+    )
 
     result = pipeline.run(["//HOST/SHARE"])
 
@@ -38,11 +49,13 @@ def test_file_pipeline_basic_flow():
     pipeline = FilePipeline(cfg)
 
     fake_files = [
-        ("//HOST/SHARE/a.txt", object()),
-        ("//HOST/SHARE/b.txt", object()),
+        ("//HOST/SHARE/a.txt", 100, 1700000000.0),
+        ("//HOST/SHARE/b.txt", 200, 1700000001.0),
     ]
 
-    pipeline.tree_walker.walk_tree = MagicMock(return_value=fake_files)
+    pipeline.tree_walker.walk_tree = MagicMock(
+        side_effect=make_walk_side_effect(fake_files)
+    )
 
     pipeline.file_scanner.scan_file = MagicMock(
         side_effect=[None, object()]  # only one match
@@ -52,6 +65,27 @@ def test_file_pipeline_basic_flow():
 
     assert result == 1
     assert pipeline.file_scanner.scan_file.call_count == 2
+
+
+def test_file_pipeline_scan_file_called_with_tuple_args():
+    """scan_file is called with (unc_path, size, mtime_epoch) args."""
+    cfg = make_cfg()
+    pipeline = FilePipeline(cfg)
+
+    fake_files = [
+        ("//HOST/SHARE/a.txt", 100, 1700000000.0),
+    ]
+
+    pipeline.tree_walker.walk_tree = MagicMock(
+        side_effect=make_walk_side_effect(fake_files)
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    pipeline.file_scanner.scan_file.assert_called_once_with(
+        "//HOST/SHARE/a.txt", 100, 1700000000.0
+    )
 
 
 def test_file_pipeline_resume_skips_files():
@@ -64,19 +98,20 @@ def test_file_pipeline_resume_skips_files():
     pipeline = FilePipeline(cfg, state=state)
 
     fake_files = [
-        ("//HOST/SHARE/a.txt", object()),
-        ("//HOST/SHARE/b.txt", object()),
+        ("//HOST/SHARE/a.txt", 100, 1700000000.0),
+        ("//HOST/SHARE/b.txt", 200, 1700000001.0),
     ]
 
-    pipeline.tree_walker.walk_tree = MagicMock(return_value=fake_files)
+    pipeline.tree_walker.walk_tree = MagicMock(
+        side_effect=make_walk_side_effect(fake_files)
+    )
     pipeline.file_scanner.scan_file = MagicMock(return_value=None)
 
     result = pipeline.run(["//HOST/SHARE"])
 
     assert result == 0
     pipeline.file_scanner.scan_file.assert_called_once_with(
-        "//HOST/SHARE/b.txt",
-        fake_files[1][1],
+        "//HOST/SHARE/b.txt", 200, 1700000001.0,
     )
 
 
@@ -90,10 +125,12 @@ def test_file_pipeline_marks_files_done():
     pipeline = FilePipeline(cfg, state=state)
 
     fake_files = [
-        ("//HOST/SHARE/a.txt", object()),
+        ("//HOST/SHARE/a.txt", 100, 1700000000.0),
     ]
 
-    pipeline.tree_walker.walk_tree = MagicMock(return_value=fake_files)
+    pipeline.tree_walker.walk_tree = MagicMock(
+        side_effect=make_walk_side_effect(fake_files)
+    )
     pipeline.file_scanner.scan_file = MagicMock(return_value=None)
 
     pipeline.run(["//HOST/SHARE"])
@@ -115,8 +152,10 @@ def test_file_pipeline_marks_share_done_after_file_scanning():
 
     pipeline = FilePipeline(cfg, state=state)
 
-    fake_files = [("//HOST/SHARE/a.txt", object())]
-    pipeline.tree_walker.walk_tree = MagicMock(return_value=fake_files)
+    fake_files = [("//HOST/SHARE/a.txt", 100, 1700000000.0)]
+    pipeline.tree_walker.walk_tree = MagicMock(
+        side_effect=make_walk_side_effect(fake_files)
+    )
     pipeline.file_scanner.scan_file = MagicMock(return_value=None)
 
     pipeline.run(["//HOST/SHARE"])
@@ -138,7 +177,9 @@ def test_file_pipeline_marks_share_done_on_empty_walk():
     state.should_skip_share.return_value = False
 
     pipeline = FilePipeline(cfg, state=state)
-    pipeline.tree_walker.walk_tree = MagicMock(return_value=[])
+    pipeline.tree_walker.walk_tree = MagicMock(
+        side_effect=make_walk_side_effect([])
+    )
 
     pipeline.run(["//HOST/SHARE"])
 
@@ -153,12 +194,14 @@ def test_file_pipeline_progress_counters():
     pipeline = FilePipeline(cfg, progress=progress)
 
     fake_files = [
-        ("//HOST/SHARE/a.txt", object()),
-        ("//HOST/SHARE/b.txt", object()),
-        ("//HOST/SHARE/c.txt", object()),
+        ("//HOST/SHARE/a.txt", 100, 1700000000.0),
+        ("//HOST/SHARE/b.txt", 200, 1700000001.0),
+        ("//HOST/SHARE/c.txt", 300, 1700000002.0),
     ]
 
-    pipeline.tree_walker.walk_tree = MagicMock(return_value=fake_files)
+    pipeline.tree_walker.walk_tree = MagicMock(
+        side_effect=make_walk_side_effect(fake_files)
+    )
     pipeline.file_scanner.scan_file = MagicMock(
         side_effect=[None, object(), object()]  # 2 matches
     )
@@ -181,11 +224,13 @@ def test_file_pipeline_progress_with_resume():
     pipeline = FilePipeline(cfg, state=state, progress=progress)
 
     fake_files = [
-        ("//HOST/SHARE/a.txt", object()),
-        ("//HOST/SHARE/b.txt", object()),
+        ("//HOST/SHARE/a.txt", 100, 1700000000.0),
+        ("//HOST/SHARE/b.txt", 200, 1700000001.0),
     ]
 
-    pipeline.tree_walker.walk_tree = MagicMock(return_value=fake_files)
+    pipeline.tree_walker.walk_tree = MagicMock(
+        side_effect=make_walk_side_effect(fake_files)
+    )
     pipeline.file_scanner.scan_file = MagicMock(return_value=None)
 
     pipeline.run(["//HOST/SHARE"])

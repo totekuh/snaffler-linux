@@ -4,6 +4,7 @@ Responsible for enumerating readable SMB shares on target computers
 """
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple
 
@@ -48,6 +49,9 @@ class SharePipeline:
         """
         logger.info(f"Starting share discovery on {len(computers)} computers")
 
+        if self.progress:
+            self.progress.shares_start = time.monotonic()
+
         all_shares: List[Tuple[str, object]] = []
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -63,7 +67,7 @@ class SharePipeline:
                         shares = future.result()
                         if shares:
                             all_shares.extend(shares)
-                            logger.info(f"Found {len(shares)} readable shares on {computer}")
+                            logger.debug(f"Found {len(shares)} readable shares on {computer}")
                             if self.progress:
                                 self.progress.shares_found += len(shares)
                             # Store shares incrementally for resume

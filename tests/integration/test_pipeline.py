@@ -25,6 +25,7 @@ from snaffler.engine.file_pipeline import FilePipeline
 from snaffler.engine.runner import SnafflerRunner
 from snaffler.engine.share_pipeline import SharePipeline
 from snaffler.resume.scan_state import SQLiteStateStore, ScanState
+from snaffler.utils.logger import set_finding_store
 from snaffler.utils.progress import ProgressState
 
 # ---------------------------------------------------------------------------
@@ -34,6 +35,12 @@ from snaffler.utils.progress import ProgressState
 # ---------------------------------------------------------------------------
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+@pytest.fixture(autouse=True)
+def _reset_finding_store():
+    yield
+    set_finding_store(None)
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +60,7 @@ def cfg():
     c.advanced.share_threads = 2
     c.advanced.tree_threads = 2
     c.advanced.file_threads = 2
+    c.state.state_db = ":memory:"
     RuleLoader.load(c)
     return c
 
@@ -408,20 +416,11 @@ class TestDNSPreResolution:
 
         try:
             # ---- Run 1: interrupt after first host ----
-            cfg.resume.enabled = True
-            cfg.resume.state_db = db_path
-
-            calls = {"n": 0}
+            cfg.state.state_db = db_path
 
             def dns_with_interrupt(host, port, family=0, type_=0, proto=0, flags=0):
-                calls["n"] += 1
                 if host not in resolvable:
                     raise socket.gaierror(8, "not found")
-                # Let first host resolve, interrupt on second
-                if calls["n"] >= 2:
-                    # Return the result but the processing loop will be interrupted
-                    # via the store side-effect below
-                    pass
                 return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (resolvable[host], port))]
 
             with patch("snaffler.engine.runner.socket.getaddrinfo",

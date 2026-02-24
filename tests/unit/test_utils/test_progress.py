@@ -77,19 +77,27 @@ def test_format_status_no_dns_when_zero():
 
 
 def test_format_status_with_counters():
+    """File scanning phase: DNS + shares compact, files detailed."""
     ps = ProgressState()
-    ps.computers_total = 10
-    ps.computers_done = 3
-    ps.shares_found = 7
-    ps.files_total = 100
-    ps.files_scanned = 42
+    ps.dns_total = 100
+    ps.dns_resolved = 80
+    ps.dns_filtered = 20
+    ps.computers_total = 80
+    ps.computers_done = 80
+    ps.shares_found = 25
+    ps.shares_total = 25
+    ps.shares_walked = 25
+    ps.files_total = 500
+    ps.files_scanned = 200
     ps.files_matched = 5
 
     status = ps.format_status()
-    assert "Computers: 3/10" in status
-    assert "Shares: 7" in status
-    assert "Files: 42/100" in status
+    assert "DNS: 80/100" in status  # compact
+    assert "Shares: 25" in status  # compact
+    assert "Files: 200/500, 300 to go" in status  # detailed
     assert "Matched: 5" in status
+    assert "found on" not in status  # not the share discovery format
+    assert "Walking:" not in status  # walking is done
 
 
 def test_format_status_severity_counts():
@@ -120,25 +128,104 @@ def test_format_status_severity_omits_zeroes():
     assert "Yellow" not in status
 
 
-def test_format_status_shares_walked():
-    """When shares_total is set, show walked/total instead of just found count."""
+def test_format_status_concurrent_walk_scan():
+    """During concurrent walk+scan, show both walking and scanning progress."""
+    ps = ProgressState()
+    ps.shares_total = 200
+    ps.shares_walked = 50
+    ps.shares_found = 200
+    ps.files_total = 4523
+    ps.files_scanned = 4523
+
+    status = ps.format_status()
+    assert "Walking: 50/200, 150 to go" in status
+    assert "Files: 4523 scanned" in status
+
+
+def test_format_status_tree_walking():
+    """During tree walking, show walking progress and compact shares."""
     ps = ProgressState()
     ps.shares_total = 200
     ps.shares_walked = 50
     ps.shares_found = 200
 
     status = ps.format_status()
-    assert "Shares: 50/200" in status
+    assert "Shares: 200" in status
+    assert "Walking: 50/200, 150 to go" in status
 
 
 def test_format_status_shares_discovery_phase():
-    """During share discovery (no shares_total), show just the found count."""
+    """During share discovery (no shares_total, no computers_total), show just the found count."""
     ps = ProgressState()
     ps.shares_found = 42
 
     status = ps.format_status()
     assert "Shares: 42" in status
     assert "/" not in status.split("Shares: 42")[1].split("|")[0]
+
+
+def test_format_status_shares_discovery_progress():
+    """During share discovery with computers_total, show host progress."""
+    ps = ProgressState()
+    ps.computers_total = 100
+    ps.computers_done = 30
+    ps.shares_found = 15
+
+    status = ps.format_status()
+    assert "Shares: 15 found on 30/100 hosts, 70 to go" in status
+
+
+def test_format_status_shares_discovery_done():
+    """When all computers enumerated, no 'to go' suffix."""
+    ps = ProgressState()
+    ps.computers_total = 50
+    ps.computers_done = 50
+    ps.shares_found = 20
+
+    status = ps.format_status()
+    assert "Shares: 20 found on 50/50 hosts" in status
+    assert "to go" not in status
+
+
+def test_format_status_shares_eta():
+    """ETA shown during share discovery when enough samples."""
+    ps = ProgressState()
+    ps.computers_total = 200
+    ps.computers_done = 50
+    ps.shares_found = 25
+    ps.shares_start = time.monotonic() - 50  # 50 done in 50s = 1/s, 150 left
+
+    status = ps.format_status()
+    assert "150 to go" in status
+    assert "(~" in status
+
+
+def test_format_status_shares_eta_too_early():
+    """No ETA when fewer than 5 hosts done."""
+    ps = ProgressState()
+    ps.computers_total = 200
+    ps.computers_done = 3
+    ps.shares_found = 1
+    ps.shares_start = time.monotonic() - 2
+
+    status = ps.format_status()
+    assert "197 to go" in status
+    assert "~" not in status
+
+
+def test_format_status_walk_phase_overrides_share_discovery():
+    """Once shares_total is set (walk phase), show walking progress instead of discovery."""
+    ps = ProgressState()
+    ps.computers_total = 50
+    ps.computers_done = 50
+    ps.shares_found = 20
+    ps.shares_total = 20
+    ps.shares_walked = 5
+
+    status = ps.format_status()
+    assert "Shares: 20" in status
+    assert "Walking: 5/20, 15 to go" in status
+    assert "found on" not in status
 
 
 def test_format_status_elapsed_format():

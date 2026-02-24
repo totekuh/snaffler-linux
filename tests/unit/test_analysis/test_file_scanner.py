@@ -25,12 +25,6 @@ def make_cfg():
     return cfg
 
 
-def make_file_info(size=100):
-    fi = MagicMock()
-    fi.get_filesize.return_value = size
-    return fi
-
-
 def make_rule(
     action,
     location=MatchLocation.FILE_NAME,
@@ -60,7 +54,7 @@ def test_scan_file_not_readable():
         "snaffler.analysis.file_scanner.parse_unc_path",
         return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
     ):
-        result = scanner.scan_file("//srv/share/f.txt", make_file_info())
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert result is None
 
@@ -82,11 +76,8 @@ def test_scan_file_discard_rule():
     with patch(
         "snaffler.analysis.file_scanner.parse_unc_path",
         return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ), patch(
-        "snaffler.analysis.file_scanner.get_modified_time",
-        return_value=datetime.now(),
     ):
-        result = scanner.scan_file("//srv/share/f.txt", make_file_info())
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert result is None
 
@@ -115,12 +106,9 @@ def test_scan_file_snaffle_rule():
         "snaffler.analysis.file_scanner.parse_unc_path",
         return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
     ), patch(
-        "snaffler.analysis.file_scanner.get_modified_time",
-        return_value=datetime.now(),
-    ), patch(
         "snaffler.analysis.file_scanner.log_file_result"
     ):
-        result = scanner.scan_file("//srv/share/f.txt", make_file_info())
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
     assert result.rule_name == "SecretRule"
@@ -145,9 +133,6 @@ def test_scan_file_check_for_keys():
     with patch(
         "snaffler.analysis.file_scanner.parse_unc_path",
         return_value=("srv", "share", "/cert.pfx", "cert.pfx", ".pfx"),
-    ), patch(
-        "snaffler.analysis.file_scanner.get_modified_time",
-        return_value=datetime.now(),
     ), patch.object(
         scanner.cert_checker,
         "check_certificate",
@@ -155,7 +140,7 @@ def test_scan_file_check_for_keys():
     ), patch(
         "snaffler.analysis.file_scanner.log_file_result"
     ):
-        result = scanner.scan_file("//srv/share/cert.pfx", make_file_info())
+        result = scanner.scan_file("//srv/share/cert.pfx", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
     assert result.triage == Triage.RED
@@ -192,14 +177,31 @@ def test_scan_file_content_rule():
         "snaffler.analysis.file_scanner.parse_unc_path",
         return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
     ), patch(
-        "snaffler.analysis.file_scanner.get_modified_time",
-        return_value=datetime.now(),
-    ), patch(
         "snaffler.analysis.file_scanner.log_file_result"
     ):
-        result = scanner.scan_file("//srv/share/f.txt", make_file_info())
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
     assert result.rule_name == "ContentRule"
     assert result.triage == Triage.YELLOW
 
+
+def test_scan_file_zero_mtime():
+    """mtime_epoch=0 should result in modified=None."""
+    accessor = MagicMock()
+    accessor.can_read.return_value = True
+
+    evaluator = MagicMock()
+    evaluator.file_rules = []
+    evaluator.content_rules = []
+
+    scanner = FileScanner(make_cfg(), accessor, evaluator)
+
+    with patch(
+        "snaffler.analysis.file_scanner.parse_unc_path",
+        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
+    ):
+        result = scanner.scan_file("//srv/share/f.txt", 100, 0.0)
+
+    # No rules match → None result, but we just verify it doesn't crash
+    assert result is None

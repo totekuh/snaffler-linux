@@ -1,3 +1,4 @@
+import threading
 from unittest.mock import MagicMock, patch
 
 from snaffler.discovery.tree import TreeWalker
@@ -7,15 +8,23 @@ from snaffler.classifiers.rules import MatchAction, EnumerationScope, MatchLocat
 # ---------- helpers ----------
 
 class FakeEntry:
-    def __init__(self, name, is_dir):
+    def __init__(self, name, is_dir, size=100, mtime=1700000000.0):
         self._name = name
         self._is_dir = is_dir
+        self._size = size
+        self._mtime = mtime
 
     def get_longname(self):
         return self._name
 
     def is_directory(self):
         return self._is_dir
+
+    def get_filesize(self):
+        return self._size
+
+    def get_mtime_epoch(self):
+        return self._mtime
 
 
 def make_cfg():
@@ -35,15 +44,24 @@ def make_rule(action):
     return rule
 
 
+def collect_callback():
+    """Return (callback, collected_list) for use with walk_tree."""
+    collected = []
+    def on_file(path, size, mtime):
+        collected.append((path, size, mtime))
+    return on_file, collected
+
+
 # ---------- tests ----------
 
 def test_walk_tree_invalid_unc():
     cfg = make_cfg()
     walker = TreeWalker(cfg)
 
-    result = walker.walk_tree("INVALID")
+    on_file, collected = collect_callback()
+    walker.walk_tree("INVALID", on_file)
 
-    assert result == []
+    assert collected == []
 
 
 def test_walk_tree_simple_file():
@@ -58,10 +76,13 @@ def test_walk_tree_simple_file():
     with patch.object(
         walker.smb_transport, "connect", return_value=smb
     ):
-        files = walker.walk_tree("//HOST/SHARE")
+        on_file, collected = collect_callback()
+        walker.walk_tree("//HOST/SHARE", on_file)
 
-    assert len(files) == 1
-    assert files[0][0] == "//HOST/SHARE/file.txt"
+    assert len(collected) == 1
+    assert collected[0][0] == "//HOST/SHARE/file.txt"
+    assert collected[0][1] == 100   # size from FakeEntry
+    assert collected[0][2] == 1700000000.0  # mtime from FakeEntry
     smb.logoff.assert_called_once()
 
 
@@ -83,45 +104,52 @@ def test_walk_tree_recursive_directory():
     with patch.object(
         walker.smb_transport, "connect", return_value=smb
     ):
-        files = walker.walk_tree("//HOST/SHARE")
+        on_file, collected = collect_callback()
+        walker.walk_tree("//HOST/SHARE", on_file)
 
-    assert files == [("//HOST/SHARE/dir/file.txt", smb.listPath.return_value)] or len(files) == 1
+    assert len(collected) == 1
+    assert collected[0][0] == "//HOST/SHARE/dir/file.txt"
 
 
-def test_resume_skips_directory():
+def test_walk_tree_cancel_stops_early():
+    """Setting cancel event stops walker from descending into further dirs."""
     cfg = make_cfg()
-    state = MagicMock()
-    state.should_skip_dir.return_value = True
-
-    walker = TreeWalker(cfg, state=state)
+    walker = TreeWalker(cfg)
 
     smb = MagicMock()
+
+    dirs_listed = []
+
+    def list_path(share, path):
+        dirs_listed.append(path)
+        if path == "/*":
+            return [
+                FakeEntry("dir1", True),
+                FakeEntry("dir2", True),
+                FakeEntry("dir3", True),
+            ]
+        # Each subdir has a file
+        return [FakeEntry("file.txt", False)]
+
+    smb.listPath.side_effect = list_path
+
+    cancel = threading.Event()
+    on_file, collected = collect_callback()
+
+    # Set cancel after the first file is found
+    original_on_file = on_file
+    def cancelling_on_file(path, size, mtime):
+        original_on_file(path, size, mtime)
+        cancel.set()
 
     with patch.object(
         walker.smb_transport, "connect", return_value=smb
     ):
-        files = walker.walk_tree("//HOST/SHARE")
+        walker.walk_tree("//HOST/SHARE", cancelling_on_file, cancel)
 
-    assert files == []
-    state.should_skip_dir.assert_called()
-
-
-def test_resume_marks_dir_done():
-    cfg = make_cfg()
-    state = MagicMock()
-    state.should_skip_dir.return_value = False
-
-    walker = TreeWalker(cfg, state=state)
-
-    smb = MagicMock()
-    smb.listPath.return_value = []
-
-    with patch.object(
-        walker.smb_transport, "connect", return_value=smb
-    ):
-        walker.walk_tree("//HOST/SHARE")
-
-    state.mark_dir_done.assert_called_once_with("//HOST/SHARE/")
+    # Should have found at least 1 file but NOT all 3
+    assert len(collected) >= 1
+    assert len(collected) < 3
 
 
 def test_should_scan_directory_discard():

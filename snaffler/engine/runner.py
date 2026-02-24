@@ -11,11 +11,12 @@ from datetime import datetime
 from typing import List
 
 from snaffler.config.configuration import SnafflerConfiguration
+from snaffler.discovery.shares import share_matches_filter
 from snaffler.engine.domain_pipeline import DomainPipeline
 from snaffler.engine.file_pipeline import FilePipeline
 from snaffler.engine.share_pipeline import SharePipeline
 from snaffler.resume.scan_state import SQLiteStateStore, ScanState
-from snaffler.utils.logger import print_completion_stats
+from snaffler.utils.logger import print_completion_stats, set_finding_store
 from snaffler.utils.progress import ProgressState
 
 logger = logging.getLogger('snaffler')
@@ -50,11 +51,10 @@ class SnafflerRunner:
         self._stop_event = threading.Event()
         self._status_thread = None
 
-        # ---------- resume state ----------
-        self.state = None
-        if cfg.resume.enabled and cfg.resume.state_db:
-            self.state = ScanState(store=SQLiteStateStore(cfg.resume.state_db))
-            logger.info(f"Resume enabled (state={cfg.resume.state_db})")
+        # ---------- state ----------
+        self.state = ScanState(store=SQLiteStateStore(cfg.state.state_db))
+        set_finding_store(self.state.store_finding)
+        logger.info(f"State DB: {cfg.state.state_db}")
 
         self.share_pipeline = SharePipeline(
             cfg=cfg, state=self.state, progress=self.progress,
@@ -93,13 +93,39 @@ class SnafflerRunner:
             p.files_scanned = max(
                 p.files_scanned, self.state.count_checked_files()
             )
+            # shares_found is set by _resume_share_discovery (filtered);
+            # don't overwrite with unfiltered DB count.
             # Ensure totals are never less than done counts
-            if p.files_scanned > p.files_total and p.files_total > 0:
-                p.files_total = p.files_scanned
-            if p.shares_walked > p.shares_total and p.shares_total > 0:
-                p.shares_total = p.shares_walked
+            p.files_total = max(p.files_total, p.files_scanned)
+            p.shares_total = max(p.shares_total, p.shares_walked)
         except Exception:
             pass
+
+    # ---------- share filtering ----------
+
+    def _filter_paths_by_share(self, paths: List[str]) -> List[str]:
+        """Apply --share / --exclude-share filters to a list of UNC paths.
+
+        Extracts the share name (second component of //server/share/...)
+        and passes it through the same filter used by ShareFinder.
+        """
+        include = self.cfg.targets.share_filter
+        exclude = self.cfg.targets.exclude_share
+        if not include and not exclude:
+            return paths
+
+        filtered = []
+        for p in paths:
+            parts = p.strip("/").split("/")
+            if len(parts) < 2:
+                filtered.append(p)
+                continue
+            share_name = parts[1]
+            if share_matches_filter(share_name, include, exclude):
+                filtered.append(p)
+            else:
+                logger.debug(f"Skipping UNC path {p} (excluded by share filter)")
+        return filtered
 
     # ---------- resume helpers ----------
 
@@ -128,6 +154,9 @@ class SnafflerRunner:
         # Resume: DNS phase already complete → load from state
         if self.state and self.state.is_phase_done(_PHASE_DNS):
             resolved = self.state.load_resolved_computers()
+            self.progress.dns_total = len(computers)
+            self.progress.dns_resolved = len(resolved)
+            self.progress.dns_filtered = len(computers) - len(resolved)
             logger.info(
                 f"Resume: loaded {len(resolved)} DNS-resolved computers from state"
             )
@@ -228,6 +257,7 @@ class SnafflerRunner:
 
         if self.state and self.state.is_phase_done(_PHASE_SHARES):
             shares = self.state.load_shares()
+            shares = self._filter_paths_by_share(shares)
             if self.progress:
                 self.progress.computers_done = len(computers)
                 self.progress.shares_found = len(shares)
@@ -252,13 +282,30 @@ class SnafflerRunner:
         else:
             remaining = computers
 
+        # Pre-seed shares_found from state so the display is correct during
+        # the entire resumed share phase (not just after run() completes).
+        if self.state:
+            existing_shares = self.state.load_shares()
+            self.progress.shares_found = len(existing_shares)
+
+        # Snapshot how many computers were already done before this run's
+        # share discovery starts, so _shares_eta() only measures the current
+        # session's throughput (avoids inflated ETA on resume).
+        self.progress._shares_done_baseline = self.progress.computers_done
+
         new_shares = self.share_pipeline.run(remaining) if remaining else []
 
         if self.state:
-            # Computers + shares already marked incrementally by SharePipeline.
+            # Ensure pipeline return is persisted (idempotent — SharePipeline
+            # stores incrementally, this catches any that slipped through).
+            if new_shares:
+                self.state.store_shares(new_shares)
             # Set phase flag and load ALL shares (old + new).
             self.state.mark_phase_done(_PHASE_SHARES)
             shares = self.state.load_shares()
+            shares = self._filter_paths_by_share(shares)
+            if self.progress:
+                self.progress.shares_found = len(shares)
             logger.info(
                 f"Share discovery complete: {len(shares)} total shares in state"
             )
@@ -266,7 +313,7 @@ class SnafflerRunner:
                 return []
             return shares
 
-        return new_shares
+        return self._filter_paths_by_share(new_shares)
 
     def execute(self):
         self.start_time = datetime.now()
@@ -277,14 +324,15 @@ class SnafflerRunner:
         try:
             # ---------- Direct UNC paths ----------
             if self.cfg.targets.unc_targets:
-                paths = self.cfg.targets.unc_targets
+                paths = self._filter_paths_by_share(self.cfg.targets.unc_targets)
                 # Seed progress counters from UNC paths so summary stats
                 # include computer/share counts even without SharePipeline.
                 hosts = {p.split("/")[2] for p in paths if p.startswith("//")}
                 self.progress.computers_total = len(hosts)
                 self.progress.computers_done = len(hosts)
                 self.progress.shares_found = len(paths)
-                self.file_pipeline.run(paths)
+                if paths:
+                    self.file_pipeline.run(paths)
 
             # ---------- Explicit computer list ----------
             elif self.cfg.targets.computer_targets:
@@ -307,12 +355,16 @@ class SnafflerRunner:
                 dfs_paths = domain_pipeline.get_dfs_shares()
                 if dfs_paths:
                     logger.info(f"Discovered {len(dfs_paths)} DFS target paths via LDAP")
+                    dfs_paths = self._filter_paths_by_share(dfs_paths)
 
                 # Merge + dedup
                 all_paths = _deduplicate_paths(share_paths, dfs_paths)
                 dfs_only = len(all_paths) - len(share_paths)
                 if dfs_only > 0:
                     logger.info(f"Added {dfs_only} new paths from DFS discovery")
+
+                # Reflect DFS-merged total in the status display
+                self.progress.shares_found = len(all_paths)
 
                 if all_paths and not self.cfg.targets.shares_only:
                     self.file_pipeline.run(all_paths)
@@ -325,9 +377,13 @@ class SnafflerRunner:
             interrupted = True
             logger.warning("Interrupted by user — shutting down")
         finally:
-            # Mask SIGINT during cleanup so mashing Ctrl+C can't skip DB close
-            prev_handler = signal.getsignal(signal.SIGINT)
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            # Mask SIGINT during cleanup so mashing Ctrl+C can't skip DB close.
+            # signal.signal() raises ValueError from non-main threads.
+            is_main = threading.current_thread() is threading.main_thread()
+            prev_handler = None
+            if is_main:
+                prev_handler = signal.getsignal(signal.SIGINT)
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
                 self._stop_status_thread()
                 self._sync_progress_from_state()
@@ -337,11 +393,13 @@ class SnafflerRunner:
                     pass
                 if self.state:
                     try:
+                        set_finding_store(None)
                         self.state.close()
-                        logger.info("Resume state saved")
+                        logger.info("State saved")
                     except Exception:
                         pass
             finally:
-                signal.signal(signal.SIGINT, prev_handler)
+                if is_main and prev_handler is not None:
+                    signal.signal(signal.SIGINT, prev_handler)
             if interrupted:
                 raise KeyboardInterrupt

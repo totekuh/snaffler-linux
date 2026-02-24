@@ -13,6 +13,13 @@ from typing import Optional
 
 NO_COLOR = False
 
+_finding_store = None
+
+
+def set_finding_store(fn):
+    global _finding_store
+    _finding_store = fn
+
 
 class FindingsOnlyFilter(logging.Filter):
     def filter(self, record):
@@ -255,6 +262,21 @@ def log_file_result(
         extra["mtime"] = modified
 
     logger.warning(message, extra=extra)
+
+    if _finding_store is not None:
+        try:
+            _finding_store(
+                finding_id=extra["finding_id"],
+                file_path=file_path,
+                triage=triage,
+                rule_name=rule_name,
+                match_text=match,
+                context=context,
+                size=size,
+                mtime=modified,
+            )
+        except Exception:
+            pass  # never crash the scanner on DB write failure
 
 
 def print_completion_stats(start_time, progress=None):

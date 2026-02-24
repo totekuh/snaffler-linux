@@ -60,13 +60,16 @@ class ScanState:
     def mark_file_done(self, unc_path: str):
         self.store.mark_file_checked(unc_path)
 
-    # ---------- dirs ----------
+    # ---------- findings ----------
 
-    def should_skip_dir(self, unc_path: str) -> bool:
-        return self.store.has_checked_dir(unc_path)
+    def store_finding(self, **kwargs):
+        self.store.store_finding(**kwargs)
 
-    def mark_dir_done(self, unc_path: str):
-        self.store.mark_dir_checked(unc_path)
+    def load_findings(self):
+        return self.store.load_findings()
+
+    def count_findings(self) -> int:
+        return self.store.count_findings()
 
     # ---------- counts (for progress) ----------
 
@@ -94,75 +97,47 @@ class SQLiteStateStore:
             self.conn.execute("PRAGMA journal_mode=WAL;")
             self.conn.execute("PRAGMA synchronous=NORMAL;")
 
-            # --- migrate old table names ---
-            old_tables = {
-                row[0]
-                for row in self.conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-
-            if "checked_files" in old_tables:
-                self.conn.execute(
-                    "CREATE TABLE IF NOT EXISTS checked_file "
-                    "(unc_path TEXT PRIMARY KEY)"
-                )
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO checked_file "
-                    "SELECT unc_path FROM checked_files"
-                )
-                self.conn.execute("DROP TABLE checked_files")
-
-            if "checked_dirs" in old_tables:
-                self.conn.execute(
-                    "CREATE TABLE IF NOT EXISTS checked_dir "
-                    "(unc_path TEXT PRIMARY KEY)"
-                )
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO checked_dir "
-                    "SELECT unc_path FROM checked_dirs"
-                )
-                self.conn.execute("DROP TABLE checked_dirs")
-
-            # --- new schema ---
+            # --- schema (COLLATE NOCASE on path/name PKs — SMB is case-insensitive) ---
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS sync "
                 "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
             )
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS target_computer "
-                "(name TEXT PRIMARY KEY, ip TEXT)"
+                "(name TEXT PRIMARY KEY COLLATE NOCASE, ip TEXT)"
             )
-            # Migrate old target_computer without ip column
-            cols = {
-                row[1]
-                for row in self.conn.execute(
-                    "PRAGMA table_info(target_computer)"
-                ).fetchall()
-            }
-            if "ip" not in cols:
-                self.conn.execute(
-                    "ALTER TABLE target_computer ADD COLUMN ip TEXT"
-                )
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS target_share "
-                "(unc_path TEXT PRIMARY KEY)"
+                "(unc_path TEXT PRIMARY KEY COLLATE NOCASE)"
             )
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS checked_computer "
-                "(name TEXT PRIMARY KEY)"
+                "(name TEXT PRIMARY KEY COLLATE NOCASE)"
             )
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS checked_share "
-                "(unc_path TEXT PRIMARY KEY)"
-            )
-            self.conn.execute(
-                "CREATE TABLE IF NOT EXISTS checked_dir "
-                "(unc_path TEXT PRIMARY KEY)"
+                "(unc_path TEXT PRIMARY KEY COLLATE NOCASE)"
             )
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS checked_file "
-                "(unc_path TEXT PRIMARY KEY)"
+                "(unc_path TEXT PRIMARY KEY COLLATE NOCASE)"
+            )
+            self.conn.execute(
+                "CREATE TABLE IF NOT EXISTS finding ("
+                "finding_id TEXT PRIMARY KEY, "
+                "file_path  TEXT NOT NULL, "
+                "triage     TEXT NOT NULL, "
+                "rule_name  TEXT NOT NULL, "
+                "match_text TEXT, "
+                "context    TEXT, "
+                "size       INTEGER, "
+                "mtime      TEXT, "
+                "found_at   TEXT NOT NULL"
+                ")"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_finding_triage "
+                "ON finding(triage)"
             )
 
     # ---------- sync flags ----------
@@ -290,23 +265,59 @@ class SQLiteStateStore:
             )
             self.conn.commit()
 
-    # ---------- dirs ----------
+    # ---------- findings ----------
 
-    def has_checked_dir(self, unc_path: str) -> bool:
-        with self.lock:
-            cur = self.conn.execute(
-                "SELECT 1 FROM checked_dir WHERE unc_path = ?",
-                (unc_path,),
-            )
-            return cur.fetchone() is not None
+    def store_finding(
+        self,
+        finding_id: str,
+        file_path: str,
+        triage: str,
+        rule_name: str,
+        match_text: str = None,
+        context: str = None,
+        size: int = None,
+        mtime: str = None,
+        found_at: str = None,
+    ):
+        from datetime import datetime
 
-    def mark_dir_checked(self, unc_path: str):
+        if found_at is None:
+            found_at = datetime.now().isoformat()
         with self.lock:
             self.conn.execute(
-                "INSERT OR IGNORE INTO checked_dir VALUES (?)",
-                (unc_path,),
+                "INSERT OR REPLACE INTO finding "
+                "(finding_id, file_path, triage, rule_name, match_text, "
+                "context, size, mtime, found_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    finding_id,
+                    file_path,
+                    triage,
+                    rule_name,
+                    match_text,
+                    context,
+                    size,
+                    mtime,
+                    found_at,
+                ),
             )
             self.conn.commit()
+
+    def load_findings(self) -> list:
+        with self.lock:
+            cur = self.conn.execute(
+                "SELECT finding_id, file_path, triage, rule_name, "
+                "match_text, context, size, mtime, found_at "
+                "FROM finding ORDER BY found_at"
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def count_findings(self) -> int:
+        with self.lock:
+            return self.conn.execute(
+                "SELECT COUNT(*) FROM finding"
+            ).fetchone()[0]
 
     # ---------- counts (for progress) ----------
 
