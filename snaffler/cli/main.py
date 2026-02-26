@@ -10,7 +10,6 @@ from snaffler.classifiers.loader import RuleLoader
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.engine.runner import SnafflerRunner
 from snaffler.utils.logger import setup_logging
-from snaffler.utils.target_parser import expand_targets
 from snaffler.cli.results import results_app
 
 
@@ -349,13 +348,12 @@ def main(
         raise typer.BadParameter("Use either --computer or --computer-file, not both")
 
     if computer:
-        cfg.targets.computer_targets = [h.upper() for h in expand_targets(computer)]
+        cfg.targets.computer_targets = [h.upper() for h in computer]
 
     if computer_file:
-        raw_targets = [
-            l.strip() for l in computer_file.read_text().splitlines() if l.strip()
+        cfg.targets.computer_targets = [
+            l.strip().upper() for l in computer_file.read_text().splitlines() if l.strip()
         ]
-        cfg.targets.computer_targets = [h.upper() for h in expand_targets(raw_targets)]
 
     # ---------- STDIN (NXC) ----------
     if stdin_mode:

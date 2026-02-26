@@ -85,6 +85,7 @@ class TestPassthrough:
         assert expand_targets([]) == []
 
 
+
 class TestMixed:
     def test_mixed_targets(self):
         targets = [
