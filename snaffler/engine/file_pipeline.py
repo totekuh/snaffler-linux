@@ -1,3 +1,4 @@
+import fnmatch
 import logging
 import queue
 import threading
@@ -9,6 +10,7 @@ from snaffler.accessors.smb_file_accessor import SMBFileAccessor
 from snaffler.analysis.file_scanner import FileScanner
 from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.config.configuration import SnafflerConfiguration
+from snaffler.discovery.shares import share_matches_filter
 from snaffler.discovery.tree import TreeWalker
 from snaffler.resume.scan_state import ScanState
 from snaffler.utils.progress import ProgressState
@@ -174,6 +176,8 @@ class FilePipeline:
         def _producer():
             batch_writer = None
             shutdown = threading.Event()
+            enqueued = set()
+            enqueued_lock = threading.Lock()
 
             if self.state:
                 batch_writer = _BatchWriter(self.state)
@@ -181,6 +185,11 @@ class FilePipeline:
 
             def on_file(unc_path, size, mtime):
                 """Callback invoked by TreeWalker for each file discovered."""
+                normalized = unc_path.lower()
+                with enqueued_lock:
+                    if normalized in enqueued:
+                        return
+                    enqueued.add(normalized)
                 if self.state and self.state.should_skip_file(unc_path):
                     if self.progress:
                         self.progress.files_total += 1
@@ -259,11 +268,28 @@ class FilePipeline:
                     # (active shares will re-discover their files via walk_directory)
                     if self.state:
                         walked_roots = {p.lower() for p in paths}
+                        include_filter = self.cfg.targets.share_filter
+                        exclude_filter = self.cfg.targets.exclude_share
+                        exclude_dir_patterns = self.cfg.targets.exclude_dir
                         unchecked = self.state.load_unchecked_files()
                         for unc_path, size, mtime in unchecked:
                             file_share = _extract_share_unc(unc_path).lower()
                             if file_share in walked_roots:
                                 continue  # will be re-discovered by live walk
+                            # Respect --share / --exclude-share for DB-seeded files
+                            share_name = file_share.rstrip("/").rsplit("/", 1)[-1]
+                            if not share_matches_filter(share_name, include_filter, exclude_filter):
+                                continue
+                            # Respect --exclude-dir for DB-seeded files
+                            if exclude_dir_patterns:
+                                path_lower = unc_path.lower()
+                                if any(fnmatch.fnmatch(path_lower, p.lower()) for p in exclude_dir_patterns):
+                                    continue
+                            normalized = unc_path.lower()
+                            with enqueued_lock:
+                                if normalized in enqueued:
+                                    continue
+                                enqueued.add(normalized)
                             if self.state.should_skip_file(unc_path):
                                 continue
                             if self.progress:
@@ -349,6 +375,11 @@ class FilePipeline:
                     return
 
                 unc_path, size, mtime = item
+
+                if self.state and self.state.should_skip_file(unc_path):
+                    if self.progress:
+                        self.progress.files_scanned += 1
+                    continue
 
                 if self.progress:
                     self.progress.files_in_progress += 1

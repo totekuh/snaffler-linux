@@ -49,6 +49,7 @@ class TargetingConfig:
 
     share_filter: List[str] = field(default_factory=list)
     exclude_share: List[str] = field(default_factory=list)
+    exclude_dir: List[str] = field(default_factory=list)
 
 
 # ---------------- SCANNING ----------------

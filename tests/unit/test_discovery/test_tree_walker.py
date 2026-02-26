@@ -84,6 +84,61 @@ def test_should_scan_directory_snaffle():
     assert walker._should_scan_directory("//HOST/SHARE/dir") is True
 
 
+def test_should_scan_directory_exclude_dir_match():
+    """--exclude-dir glob blocks matching directories."""
+    cfg = make_cfg()
+    cfg.targets.exclude_dir = ["*/C$/Windows"]
+
+    walker = TreeWalker(cfg)
+
+    assert walker._should_scan_directory("//HOST/C$/Windows") is False
+
+
+def test_should_scan_directory_exclude_dir_no_match():
+    """--exclude-dir glob does not block non-matching directories."""
+    cfg = make_cfg()
+    cfg.targets.exclude_dir = ["*/C$/Windows"]
+
+    walker = TreeWalker(cfg)
+
+    assert walker._should_scan_directory("//HOST/C$/Users") is True
+
+
+def test_should_scan_directory_exclude_dir_case_insensitive():
+    """--exclude-dir matching is case-insensitive."""
+    cfg = make_cfg()
+    cfg.targets.exclude_dir = ["*/C$/WINDOWS"]
+
+    walker = TreeWalker(cfg)
+
+    assert walker._should_scan_directory("//HOST/C$/windows") is False
+    assert walker._should_scan_directory("//HOST/C$/Windows") is False
+
+
+def test_should_scan_directory_exclude_dir_multiple_patterns():
+    """Multiple --exclude-dir patterns are OR'd together."""
+    cfg = make_cfg()
+    cfg.targets.exclude_dir = ["*/C$/Windows", "*/C$/ProgramData"]
+
+    walker = TreeWalker(cfg)
+
+    assert walker._should_scan_directory("//HOST/C$/Windows") is False
+    assert walker._should_scan_directory("//HOST/C$/ProgramData") is False
+    assert walker._should_scan_directory("//HOST/C$/Users") is True
+
+
+def test_should_scan_directory_exclude_dir_recursive_glob():
+    """--exclude-dir with recursive glob pattern."""
+    cfg = make_cfg()
+    cfg.targets.exclude_dir = ["*/C$/Windows*"]
+
+    walker = TreeWalker(cfg)
+
+    assert walker._should_scan_directory("//HOST/C$/Windows") is False
+    assert walker._should_scan_directory("//HOST/C$/Windows.old") is False
+    assert walker._should_scan_directory("//HOST/C$/Users") is True
+
+
 # ---------- connection caching tests ----------
 
 def test_connection_reuse_same_server():

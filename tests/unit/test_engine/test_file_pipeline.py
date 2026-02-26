@@ -18,6 +18,10 @@ def make_cfg():
     cfg.rules.content = []
     cfg.rules.postmatch = []
 
+    cfg.targets.share_filter = []
+    cfg.targets.exclude_share = []
+    cfg.targets.exclude_dir = []
+
     return cfg
 
 
@@ -416,6 +420,90 @@ def test_file_pipeline_resume_rewalks_unwalked_dirs():
     assert "//HOST/SHARE/unfinished_dir/found.txt" in scanned
 
 
+def test_preseed_respects_exclude_share():
+    """Files in DB from an excluded share are NOT scanned on resume."""
+    cfg = make_cfg()
+    cfg.targets.exclude_share = ["JUNK$"]
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = [
+        ("//HOST/JUNK$/secret.txt", 100, 1700000000.0),
+        ("//HOST/DATA/report.txt", 200, 1700000001.0),
+    ]
+
+    pipeline = FilePipeline(cfg, state=state)
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=make_walk_side_effect([])
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    # Walk //HOST/OTHER so that both JUNK$ and DATA files hit the pre-seed path
+    # (neither share is in walked_roots)
+    pipeline.run(["//HOST/OTHER"])
+
+    scanned = [c[0][0] for c in pipeline.file_scanner.scan_file.call_args_list]
+    assert "//HOST/JUNK$/secret.txt" not in scanned
+    assert "//HOST/DATA/report.txt" in scanned
+
+
+def test_preseed_respects_exclude_dir():
+    """Files in DB under an excluded directory are NOT scanned on resume."""
+    cfg = make_cfg()
+    cfg.targets.exclude_dir = ["*/C$/Windows*"]
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = [
+        ("//HOST/C$/Windows/System32/config/SAM", 100, 1700000000.0),
+        ("//HOST/C$/Users/admin/secret.txt", 200, 1700000001.0),
+    ]
+
+    pipeline = FilePipeline(cfg, state=state)
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=make_walk_side_effect([])
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    # Walk //HOST/OTHER so both files hit the pre-seed path
+    pipeline.run(["//HOST/OTHER"])
+
+    scanned = [c[0][0] for c in pipeline.file_scanner.scan_file.call_args_list]
+    assert "//HOST/C$/Windows/System32/config/SAM" not in scanned
+    assert "//HOST/C$/Users/admin/secret.txt" in scanned
+
+
+def test_preseed_respects_include_share():
+    """When --share filter is set, only matching shares are scanned from DB."""
+    cfg = make_cfg()
+    cfg.targets.share_filter = ["DATA"]
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = [
+        ("//HOST/DATA/report.txt", 200, 1700000001.0),
+        ("//HOST/LOGS/app.log", 300, 1700000002.0),
+    ]
+
+    pipeline = FilePipeline(cfg, state=state)
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=make_walk_side_effect([])
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/OTHER"])
+
+    scanned = [c[0][0] for c in pipeline.file_scanner.scan_file.call_args_list]
+    assert "//HOST/DATA/report.txt" in scanned
+    assert "//HOST/LOGS/app.log" not in scanned
+
+
 # ---------- batch writer ----------
 
 def test_batch_writer_flushes_on_batch_size():
@@ -572,6 +660,112 @@ def test_on_file_does_not_block_on_full_queue():
 
     # Pipeline should complete; the file should have been processed
     assert pipeline.file_scanner.scan_file.call_count >= 1
+
+
+def test_no_duplicate_scan_same_file_two_dirs():
+    """Two directories both yield the same file UNC → scanned exactly once."""
+    cfg = make_cfg()
+    pipeline = FilePipeline(cfg)
+
+    def walk_dup(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            if on_dir:
+                on_dir("//HOST/SHARE/dir1")
+                on_dir("//HOST/SHARE/dir2")
+            return ["//HOST/SHARE/dir1", "//HOST/SHARE/dir2"]
+        # Both subdirs "discover" the same file (e.g. symlink)
+        if on_file:
+            on_file("//HOST/SHARE/shared_file.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk_dup)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    scanned = [c[0][0] for c in pipeline.file_scanner.scan_file.call_args_list]
+    assert scanned.count("//HOST/SHARE/shared_file.txt") == 1
+
+
+def test_preseed_skips_already_enqueued_file():
+    """File discovered by live walk AND present in load_unchecked_files → scanned once."""
+    cfg = make_cfg()
+
+    state = MagicMock()
+    state.should_skip_share.side_effect = lambda p: p == "//OTHER/SHARE"
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    # Same file appears in unchecked list for a non-active share
+    state.load_unchecked_files.return_value = [
+        ("//OTHER/SHARE/overlap.txt", 200, 1700000000.0),
+    ]
+
+    pipeline = FilePipeline(cfg, state=state)
+
+    def walk_with_overlap(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE" and on_file:
+            # Live walk discovers the same file that's also in unchecked
+            on_file("//OTHER/SHARE/overlap.txt", 200, 1700000000.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk_with_overlap)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE", "//OTHER/SHARE"])
+
+    scanned = [c[0][0] for c in pipeline.file_scanner.scan_file.call_args_list]
+    assert scanned.count("//OTHER/SHARE/overlap.txt") == 1
+
+
+def test_no_duplicate_scan_case_insensitive():
+    """//HOST/SHARE/File.txt and //HOST/SHARE/file.txt treated as the same path."""
+    cfg = make_cfg()
+    pipeline = FilePipeline(cfg)
+
+    def walk_case_variants(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            if on_dir:
+                on_dir("//HOST/SHARE/dir1")
+                on_dir("//HOST/SHARE/dir2")
+            return ["//HOST/SHARE/dir1", "//HOST/SHARE/dir2"]
+        if path == "//HOST/SHARE/dir1" and on_file:
+            on_file("//HOST/SHARE/Secrets.txt", 100, 0.0)
+        if path == "//HOST/SHARE/dir2" and on_file:
+            on_file("//HOST/SHARE/secrets.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk_case_variants)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    scanned = [c[0][0] for c in pipeline.file_scanner.scan_file.call_args_list]
+    assert len(scanned) == 1
+
+
+def test_progress_not_double_counted_on_dedup():
+    """When the same file is reported twice by two dirs, files_total increments once."""
+    cfg = make_cfg()
+    progress = ProgressState()
+    pipeline = FilePipeline(cfg, progress=progress)
+
+    def walk_dup(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            if on_dir:
+                on_dir("//HOST/SHARE/dir1")
+                on_dir("//HOST/SHARE/dir2")
+            return ["//HOST/SHARE/dir1", "//HOST/SHARE/dir2"]
+        if on_file:
+            on_file("//HOST/SHARE/shared.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk_dup)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    assert progress.files_total == 1
+    assert progress.files_scanned == 1
 
 
 def test_extract_share_unc():

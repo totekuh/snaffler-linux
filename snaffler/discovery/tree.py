@@ -2,6 +2,7 @@
 Directory tree walking over SMB with resume support
 """
 
+import fnmatch
 import logging
 import threading
 from concurrent.futures import CancelledError
@@ -176,6 +177,13 @@ class TreeWalker:
         return subdir_paths
 
     def _should_scan_directory(self, dir_path: str) -> bool:
+        exclude_dir = self.cfg.targets.exclude_dir
+        if exclude_dir:
+            path_lower = dir_path.lower()
+            if any(fnmatch.fnmatch(path_lower, p.lower()) for p in exclude_dir):
+                logger.debug(f"Skipped directory {dir_path} due to --exclude-dir filter")
+                return False
+
         for rule in self.dir_classifiers:
             if rule.match_location != MatchLocation.FILE_PATH:
                 continue
