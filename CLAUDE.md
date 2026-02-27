@@ -78,11 +78,11 @@ Domain Discovery → DNS Pre-Resolution → Share Discovery → File Scanning
                                            Merge + Dedup → File Scanning
 ```
 
-DNS pre-resolution filters out stale AD computer objects with no A record before share enumeration. Uses `socket.getaddrinfo` (respects `--nameserver` monkey-patch and works through `--socks`). Resolved IPs stored in `target_computer.ip` column for resume. Returns hostnames (not IPs) for Kerberos SPN compatibility. Timeout: `smb_timeout` (default 5s) via scoped `socket.setdefaulttimeout`.
+DNS pre-resolution filters out stale AD computer objects with no A record before share enumeration. Uses `socket.getaddrinfo` (respects `--nameserver` monkey-patch and works through `--socks`) followed by a TCP port 445 probe to confirm SMB reachability. Resolved IPs stored in `target_computer.ip` column for resume. Returns hostnames (not IPs) for Kerberos SPN compatibility. Timeout: 3s for DNS + port probe. Concurrency controlled by `--dns-threads` (default 100).
 
 Orchestrated by `SnafflerRunner.execute()` which selects the entry point:
 1. **UNC targets** (`--unc` or `--stdin`) → skip directly to FilePipeline
-2. **Computer targets** (`--computer`) → DNS → SharePipeline → FilePipeline
+2. **Computer targets** (`--computer`) → DNS → SharePipeline → FilePipeline (hostnames used as-is, no CIDR/range expansion)
 3. **Domain discovery** (`-d`) → DomainPipeline → DNS → SharePipeline + DFS discovery → merge/dedup → FilePipeline
 
 ### Module Map
@@ -93,7 +93,7 @@ snaffler/
 │   ├── results.py           # `snaffler results` subcommand: stats/findings from scan DB (plain/json/html)
 ├── config/configuration.py  # Dataclass-based config (Auth/Targeting/Scanning/Output/Advanced/Rules/Resume)
 ├── engine/
-│   ├── runner.py            # Top-level orchestrator (SnafflerRunner), DFS merge + dedup, 30s status thread
+│   ├── runner.py            # Top-level orchestrator (SnafflerRunner), DFS merge + dedup, 30s status thread, thread rebalancing
 │   ├── domain_pipeline.py   # Domain → computer list + DFS targets via LDAP
 │   ├── share_pipeline.py    # Computers → readable share UNC paths (ThreadPoolExecutor)
 │   └── file_pipeline.py     # UNC paths → parallel tree walk → file scan (ThreadPoolExecutor, _BatchWriter)
@@ -108,7 +108,7 @@ snaffler/
 │   ├── dns.py               # Custom DNS resolution: dnspython monkey-patch for --nameserver
 ├── classifiers/
 │   ├── rules.py             # ClassifierRule dataclass, enums (Triage/MatchAction/MatchLocation/etc.), TOML loader
-│   ├── default_rules.py     # 89 built-in rules in 27 categories (share/dir/file/content/relay/postmatch)
+│   ├── default_rules.py     # 103 built-in rules in 30 categories (share/dir/file/content/relay/postmatch)
 │   ├── evaluator.py         # RuleEvaluator: applies rules against FileContext
 │   └── loader.py            # RuleLoader: loads default or custom TOML rules into config
 ├── analysis/
@@ -123,11 +123,12 @@ snaffler/
 ├── resume/
 │   └── scan_state.py        # ScanState + SQLiteStateStore: resume support via SQLite (WAL mode)
 ├── utils/
+│   ├── hotkeys.py           # Runtime hotkey listener: d=DEBUG, i=INFO (TTY only)
 │   ├── logger.py            # Logging setup (plain/JSON/TSV formatters), colored output, finding IDs
 │   ├── nxc_parser.py        # NetExec (nxc) SMB --shares output parser → UNC paths
 │   ├── path_utils.py        # UNC path parsing, modified time extraction
 │   ├── progress.py          # ProgressState: thread-safe counters, severity counts, format_status()
-│   └── target_parser.py     # expand_targets(): CIDR/range expansion for --computer input
+│   └── target_parser.py     # expand_targets(): CIDR/range expansion (used for --unc input)
 ├── web/
 │   ├── server.py            # Flask app + daemon thread launcher (--web), REST API endpoints
 │   └── dashboard.py         # Self-contained live HTML dashboard (polling, dark theme)
@@ -163,6 +164,9 @@ Total threads split into 3 equal buckets (default 60 total, 20 each):
 - `share_threads` — SharePipeline (ThreadPoolExecutor)
 - `tree_threads` — TreeWalker in FilePipeline
 - `file_threads` — FileScanner in FilePipeline
+- `dns_threads` — DNS + port 445 probes (default 100, configurable via `--dns-threads`)
+
+After share discovery completes, `_rebalance_file_threads()` adds the idle share threads to the file scanning pool.
 
 Thread-local SMB connection caching in `SMBFileAccessor`, `ShareFinder`, and `TreeWalker`.
 
@@ -196,6 +200,18 @@ Two auth paths, both in SMBTransport and LDAPTransport:
 
 **Setup order matters**: SOCKS proxy is applied first, then the DNS monkey-patch, so DNS-over-TCP queries to an internal nameserver route through the tunnel. IP addresses and `None` hosts pass through to the original resolver unchanged. Falls back to the system resolver if the custom nameserver fails.
 
+### Directory Exclusion
+
+`--exclude-dir` accepts glob patterns (repeatable) to skip directories during tree walking. Patterns are matched against directory names (not full paths). Stored in `config.scanning.exclude_dir` as a list of strings.
+
+### Runtime Hotkeys
+
+When stdin is a TTY, a background thread listens for single keystrokes during a scan:
+- `d` — switch log level to DEBUG
+- `i` — switch log level to INFO
+
+Implemented in `utils/hotkeys.py`, started/stopped by the runner.
+
 ### Log Format Auto-Detection
 
 When `-o`/`--output` is specified without an explicit `--log-type`, the format is auto-detected from the file extension: `.json` → JSON, `.tsv` → TSV, otherwise plain. Explicit `--log-type` always overrides auto-detection.
@@ -210,16 +226,21 @@ Conversion happens in `path_utils.parse_unc_path()`.
 
 Unit tests in `tests/unit/` mirror the source structure. Test data files in `tests/data/` contain sample credential files, configs, and scripts for rule testing.
 
-Integration tests in `tests/integration/` run the full pipeline with only the SMB transport mocked. The existing `tests/data/` directory (217 files, same ones unit tests use for rule-level assertions) is served as a fake SMB share. Integration tests verify pipeline wiring only — files go in, findings come out, progress counters update — not detection correctness. No network/root/Docker needed — works on any CI runner.
+Integration tests in `tests/integration/` run the full pipeline with only the SMB transport mocked. The existing `tests/data/` directory (270 files, same ones unit tests use for rule-level assertions) is served as a fake SMB share. Integration tests verify pipeline wiring only — files go in, findings come out, progress counters update — not detection correctness. No network/root/Docker needed — works on any CI runner.
 
 Key test directories:
-- `test_classifiers/rules/` — individual rule category tests (12 files)
+- `test_accessors/` — file accessor ABC, SMB file accessor
+- `test_analysis/` — file scanner, certificate checker
+- `test_classifiers/rules/` — individual rule category tests (21 files)
 - `test_classifiers/` — evaluator logic, loader, rules dataclass
-- `test_cli/` — CLI run, dual output (auto-format), stdin, HTML report rendering
+- `test_cli/` — CLI run, dual output (auto-format), stdin, HTML report rendering, results subcommand
+- `test_config/` — configuration dataclass
 - `test_discovery/` — share finder, tree walker, AD discovery
-- `test_engine/` — pipeline and runner tests
+- `test_engine/` — pipeline, runner, graceful shutdown tests
+- `test_resume/` — scan state, SQLite state store
 - `test_transport/` — SMB, LDAP, SOCKS transport tests
-- `test_utils/` — completion stats, nxc parser, progress, target parser
+- `test_utils/` — hotkeys, nxc parser, progress, target parser
+- `test_web/` — Flask web dashboard and REST API
 - `tests/integration/test_pipeline.py` — end-to-end pipeline wiring (share discovery → file scan → findings out)
 
 ## Code Conventions
