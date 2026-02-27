@@ -5,6 +5,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime
+from types import SimpleNamespace
 
 logger = logging.getLogger("snaffler")
 
@@ -87,28 +88,13 @@ def create_app(progress, db_path, start_time):
 
     @app.route("/api/progress")
     def api_progress():
+        snap = progress.snapshot()
         elapsed = (datetime.now() - start_time).total_seconds()
-        phase = _detect_phase(progress)
+        phase = _detect_phase(SimpleNamespace(**snap))
 
-        return flask.jsonify({
-            "phase": phase,
-            "elapsed_seconds": int(elapsed),
-            "dns_total": progress.dns_total,
-            "dns_resolved": progress.dns_resolved,
-            "dns_filtered": progress.dns_filtered,
-            "computers_total": progress.computers_total,
-            "computers_done": progress.computers_done,
-            "shares_found": progress.shares_found,
-            "shares_total": progress.shares_total,
-            "shares_walked": progress.shares_walked,
-            "files_total": progress.files_total,
-            "files_scanned": progress.files_scanned,
-            "files_in_progress": progress.files_in_progress,
-            "severity_black": progress.severity_black,
-            "severity_red": progress.severity_red,
-            "severity_yellow": progress.severity_yellow,
-            "severity_green": progress.severity_green,
-        })
+        snap["phase"] = phase
+        snap["elapsed_seconds"] = int(elapsed)
+        return flask.jsonify(snap)
 
     @app.route("/api/stats")
     def api_stats():
@@ -192,9 +178,12 @@ def start_web_server(progress, db_path, start_time, port=8080):
     _server_thread = threading.Thread(target=run, daemon=True, name="web-dashboard")
     _server_thread.start()
 
-    # Give Flask a moment to bind
+    # Give Flask a moment to bind, then verify it's still running
     time.sleep(0.2)
-    logger.info(f"Web dashboard: http://127.0.0.1:{port}")
+    if _server_thread.is_alive():
+        logger.info(f"Web dashboard: http://127.0.0.1:{port}")
+    else:
+        logger.warning(f"Web dashboard failed to start on port {port}")
 
 
 def stop_web_server():

@@ -77,6 +77,32 @@ class ProgressState:
         # files_total while the tree walker is still discovering files.
         self.scan_complete = False
 
+    def snapshot(self) -> dict:
+        """Return a point-in-time copy of all counters.
+
+        Used by the web dashboard API to read a consistent set of values
+        instead of individual attribute reads spread across serialization.
+        """
+        with self._lock:
+            return {
+                "dns_total": self.dns_total,
+                "dns_resolved": self.dns_resolved,
+                "dns_filtered": self.dns_filtered,
+                "computers_total": self.computers_total,
+                "computers_done": self.computers_done,
+                "shares_found": self.shares_found,
+                "shares_total": self.shares_total,
+                "shares_walked": self.shares_walked,
+                "files_total": self.files_total,
+                "files_scanned": self.files_scanned,
+                "files_in_progress": self.files_in_progress,
+                "severity_black": self.severity_black,
+                "severity_red": self.severity_red,
+                "severity_yellow": self.severity_yellow,
+                "severity_green": self.severity_green,
+                "scan_complete": self.scan_complete,
+            }
+
     def format_status(self) -> str:
         with self._lock:
             elapsed = datetime.now() - self.start_time

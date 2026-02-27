@@ -155,6 +155,7 @@ def render_dashboard() -> str:
   var activeTriage = null;
   var lastRowid = 0;
   var findingsData = [];  // stores {match, context} for modal
+  var seenIds = {};       // finding_id → true (dedup on resume)
   var pollActive = true;
   var serverElapsed = 0;
   var localSyncTime = Date.now();
@@ -416,7 +417,10 @@ def render_dashboard() -> str:
       if (data.findings && data.findings.length > 0) {
         // Add in reverse so newest ends up on top
         for (var i = data.findings.length - 1; i >= 0; i--) {
-          addFindingRow(data.findings[i]);
+          var f = data.findings[i];
+          if (seenIds[f.finding_id]) continue;
+          seenIds[f.finding_id] = true;
+          addFindingRow(f);
         }
         lastRowid = data.max_rowid || lastRowid;
       }

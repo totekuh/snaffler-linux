@@ -396,6 +396,44 @@ def test_check_flask_import_error():
             _check_flask()
 
 
+# ── Snapshot (W9) ─────────────────────────────────────────────────
+
+def test_snapshot_returns_all_counters():
+    p = ProgressState()
+    p.dns_total = 100
+    p.files_scanned = 50
+    p.severity_black = 3
+    p.scan_complete = True
+    snap = p.snapshot()
+    assert snap["dns_total"] == 100
+    assert snap["files_scanned"] == 50
+    assert snap["severity_black"] == 3
+    assert snap["scan_complete"] is True
+
+
+def test_progress_api_uses_snapshot(client, progress):
+    """API response uses snapshot values, not live attribute reads."""
+    progress.files_total = 500
+    progress.files_scanned = 200
+    progress.severity_red = 5
+    resp = client.get("/api/progress")
+    data = json.loads(resp.data)
+    assert data["files_total"] == 500
+    assert data["files_scanned"] == 200
+    assert data["severity_red"] == 5
+    # scan_complete is included in the response via snapshot
+    assert "scan_complete" in data
+
+
+def test_progress_api_phase_consistent_with_snapshot(client, progress):
+    """Phase detection uses snapshot, not live counters."""
+    progress.scan_complete = True
+    resp = client.get("/api/progress")
+    data = json.loads(resp.data)
+    assert data["phase"] == "complete"
+    assert data["scan_complete"] is True
+
+
 # ── Werkzeug logging suppression ─────────────────────────────────
 
 def test_werkzeug_logging_suppressed(progress, db_path, start_time):
