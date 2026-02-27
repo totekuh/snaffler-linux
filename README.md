@@ -8,16 +8,23 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 
 - SMB share discovery via SRVSVC (NetShareEnum)
 - DFS namespace discovery via LDAP (v1 + v2), merged and deduplicated with share enumeration
-- Recursive directory tree walking
-- Regex-based file and content classification
+- Parallel directory tree walking with intra-share fan-out
+- 103 built-in regex-based file and content classification rules
 - NTLM authentication (password or pass-the-hash)
-- Kerberos authentication
-- Multithreaded scanning (share / tree / file stages)
-- Optional file download (“snaffling”)
-- Resume support via SQLite state database
+- Kerberos authentication (with ccache support)
+- Multithreaded scanning (DNS / share / tree / file stages) with automatic thread rebalancing
+- DNS pre-resolution with TCP port 445 probe to filter stale AD objects
+- Optional file download ("snaffling")
+- Resume support via SQLite state database (auto-resume on existing DB)
+- Share and directory filtering by glob pattern (`--share`, `--exclude-share`, `--exclude-dir`)
 - Compatible with original and custom TOML rule sets
 - Deterministic, ingestion-friendly logging (plain / JSON / TSV)
 - Custom DNS resolution (`--nameserver`) for internal AD hostname resolution through SOCKS tunnels
+- SOCKS proxy pivoting (`--socks`)
+- OPSEC mode (`--stealth`) — pads LDAP queries to break IDS signatures
+- Live web dashboard (`--web`) for real-time scan monitoring
+- `snaffler results` subcommand to query findings from a scan database (plain / JSON / HTML)
+- Runtime hotkeys: press `d` for DEBUG, `i` for INFO during a scan
 - Pipe-friendly: accepts NetExec (nxc) `--shares` output via `--stdin`
 
 ## Installation
@@ -26,6 +33,13 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 
 ```bash
 pip install snaffler-ng
+```
+
+Optional extras:
+
+```bash
+pip install snaffler-ng[socks]  # SOCKS proxy support
+pip install snaffler-ng[web]    # Live web dashboard
 ```
 
 ### Standalone Binary
@@ -60,6 +74,7 @@ This will automatically:
 
 - Query Active Directory for computer objects
 - Discover DFS namespace targets via LDAP (v1 `fTDfs` + v2 `msDFS-Linkv2`)
+- Resolve hostnames and probe port 445 reachability
 - Enumerate SMB shares on discovered hosts
 - Merge and deduplicate DFS and SMB share paths
 - Scan all readable shares
@@ -105,6 +120,20 @@ snaffler \
   --computer-file targets.txt
 ```
 
+### Filtering Shares and Directories
+
+Only scan specific shares:
+```bash
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --share "SYSVOL" --share "IT*"
+```
+
+Exclude shares and directories by glob:
+```bash
+snaffler -u USER -p PASS -d DOMAIN.LOCAL \
+  --exclude-share "IPC$" --exclude-share "print$" \
+  --exclude-dir "Windows" --exclude-dir ".snapshot"
+```
+
 ### Pipe from NetExec (nxc)
 
 Pipe `nxc smb --shares` output directly into snaffler-ng with `--stdin`:
@@ -128,6 +157,16 @@ snaffler -u USER -p PASS -d DOMAIN.LOCAL --dc-host 192.168.201.11 \
   --socks socks5://127.0.0.1:1080 --ns 192.168.201.11
 ```
 
+### Web Dashboard
+
+Launch a live web dashboard to monitor scan progress and findings in a browser:
+
+```bash
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --web --web-port 8080
+```
+
+Requires the `web` extra (`pip install snaffler-ng[web]`).
+
 ## Logging & Output Formats
 
 snaffler-ng supports three output formats, each with a distinct purpose:
@@ -136,21 +175,40 @@ snaffler-ng supports three output formats, each with a distinct purpose:
 - `JSON` (structured, SIEM-friendly)
 - `TSV` (flat, ingestion-friendly)
 
+When using `-o`/`--output`, the format is auto-detected from the file extension (`.json` → JSON, `.tsv` → TSV). Use `--log-type` to override.
+
 ## Resume Support
 
-Large environments are expected.
+Large environments are expected. Scan state is tracked in a SQLite database (`snaffler.db` by default).
 
-You can resume interrupted scans using the `--resume` argument:
+Scans **auto-resume** when the state database exists:
 
 ```bash
-snaffler \
--u USERNAME \
--p PASSWORD \
---computer-file targets.txt \
---resume
+# First run — creates snaffler.db
+snaffler -u USER -p PASS --computer-file targets.txt
+
+# Interrupted? Just re-run the same command — it picks up where it left off
+snaffler -u USER -p PASS --computer-file targets.txt
 ```
 
-State tracks processed shares, directories, and files to avoid re-scanning.
+Use `--state` to specify a custom database path, or `--fresh` to ignore existing state and start clean:
+
+```bash
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --state /tmp/scan1.db
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --fresh
+```
+
+## Querying Results
+
+After a scan, use `snaffler results` to query findings from the state database:
+
+```bash
+snaffler results                              # plain text summary
+snaffler results -f json                      # JSON output
+snaffler results -f html > report.html        # HTML report with search bar
+snaffler results -b 2                         # Red+ severity only
+snaffler results -s /path/to/snaffler.db      # custom DB path
+```
 
 ## Authentication Options
 
