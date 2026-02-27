@@ -202,7 +202,7 @@ Two auth paths, both in SMBTransport and LDAPTransport:
 
 ### Directory Exclusion
 
-`--exclude-dir` accepts glob patterns (repeatable) to skip directories during tree walking. Patterns are matched against directory names (not full paths). Stored in `config.scanning.exclude_dir` as a list of strings.
+`--exclude-dir` accepts glob patterns (repeatable) to skip directories during tree walking. Patterns are matched against the full UNC path (case-insensitive), e.g. `*/Windows/*`, `*/node_modules/*`. Stored in `config.targets.exclude_dir` as a list of strings.
 
 ### Runtime Hotkeys
 
