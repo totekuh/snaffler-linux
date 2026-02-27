@@ -57,9 +57,10 @@ Note: `_get_version()` in `cli/main.py` has a hardcoded fallback for frozen buil
 CI runs on Python 3.11 via GitHub Actions (`.github/workflows/ci.yml`). Five jobs:
 1. **test-build** — pytest + build Python package
 2. **build-binary** — PyInstaller single ELF binary (Linux x86_64, ~23MB), smoke test (`--version`)
-3. **build-binary-windows** — PyInstaller single `.exe` binary (Windows x86_64), smoke test (`--version`)
-4. **build-deb** — `dpkg-buildpackage` Debian package with man page (uses `-d` flag on Ubuntu runners since `python3-typer` isn't in Ubuntu repos)
-5. **release** — publishes pip package to PyPI + attaches Linux binary + Windows `.exe` + `.deb` to GitHub Release
+3. **build-binary-arm64** — PyInstaller single ELF binary (Linux aarch64), native ARM runner, smoke test (`--version`)
+4. **build-binary-windows** — PyInstaller single `.exe` binary (Windows x86_64), smoke test (`--version`)
+5. **build-deb** — `dpkg-buildpackage` Debian package with man page (uses `-d` flag on Ubuntu runners since `python3-typer` isn't in Ubuntu repos)
+6. **release** — publishes pip package to PyPI + attaches Linux binaries (x86_64 + aarch64) + Windows `.exe` + `.deb` to GitHub Release
 
 ### Debian Packaging
 
