@@ -27,13 +27,16 @@ def _detect_phase(progress) -> str:
     """Determine the current scan phase from ProgressState counters."""
     p = progress
 
-    # Complete: files_total > 0 and all scanned, no walking active
+    # Authoritative flag set by SnafflerRunner after file_pipeline.run()
+    # returns.  Counter-based inference is unreliable because the scanner
+    # can temporarily catch up to files_total while the walker is still
+    # discovering new files.
+    if p.scan_complete:
+        return "complete"
+
     walking = p.shares_total > 0 and p.shares_walked < p.shares_total
     scanning = p.files_total > 0
-    scan_done = scanning and p.files_scanned >= p.files_total and not walking
 
-    if scan_done:
-        return "complete"
     if scanning and not walking:
         return "scanning"
     if walking:
@@ -178,10 +181,7 @@ def start_web_server(progress, db_path, start_time, port=8080):
     """
     global _server_thread
 
-    try:
-        app = create_app(progress, db_path, start_time)
-    except ImportError as exc:
-        raise ImportError(str(exc))
+    app = create_app(progress, db_path, start_time)
 
     def run():
         try:

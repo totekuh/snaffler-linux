@@ -186,6 +186,7 @@ def test_progress_scanning_phase(client, progress):
 def test_progress_complete_phase(client, progress):
     progress.files_total = 100
     progress.files_scanned = 100
+    progress.scan_complete = True
     resp = client.get("/api/progress")
     data = json.loads(resp.data)
     assert data["phase"] == "complete"
@@ -355,7 +356,22 @@ def test_detect_phase_complete():
     p = ProgressState()
     p.files_total = 100
     p.files_scanned = 100
+    p.scan_complete = True
     assert _detect_phase(p) == "complete"
+
+
+def test_detect_phase_not_complete_without_flag():
+    """Counters matching does NOT mean complete — scan_complete flag is required.
+
+    This prevents the dashboard from permanently stopping polls when the
+    scanner temporarily catches up to files_total while the walker is still
+    discovering new files (W3 bug).
+    """
+    p = ProgressState()
+    p.files_total = 100
+    p.files_scanned = 100
+    # scan_complete is False — runner hasn't signalled completion
+    assert _detect_phase(p) != "complete"
 
 
 # ── Import guard ─────────────────────────────────────────────────

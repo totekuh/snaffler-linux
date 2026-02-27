@@ -127,7 +127,7 @@ snaffler/
 │   ├── logger.py            # Logging setup (plain/JSON/TSV formatters), colored output, finding IDs
 │   ├── nxc_parser.py        # NetExec (nxc) SMB --shares output parser → UNC paths
 │   ├── path_utils.py        # UNC path parsing, modified time extraction
-│   ├── progress.py          # ProgressState: thread-safe counters, severity counts, format_status()
+│   ├── progress.py          # ProgressState: thread-safe counters, severity counts, scan_complete flag, format_status()
 │   └── target_parser.py     # expand_targets(): CIDR/range expansion (used for --unc input)
 ├── web/
 │   ├── server.py            # Flask app + daemon thread launcher (--web), REST API endpoints

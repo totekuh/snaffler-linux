@@ -71,6 +71,12 @@ class ProgressState:
         self.severity_yellow = 0
         self.severity_green = 0
 
+        # Set by runner after file_pipeline.run() returns — authoritative
+        # "scan finished" signal.  Prevents _detect_phase() from falsely
+        # reporting "complete" when the scanner temporarily catches up to
+        # files_total while the tree walker is still discovering files.
+        self.scan_complete = False
+
     def format_status(self) -> str:
         with self._lock:
             elapsed = datetime.now() - self.start_time

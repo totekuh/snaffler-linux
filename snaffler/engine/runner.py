@@ -339,11 +339,15 @@ class SnafflerRunner:
 
         self._start_status_thread()
         start_hotkey_listener(self._stop_event)
-        if self.cfg.web.enabled:
-            from snaffler.web.server import start_web_server
-            start_web_server(self.progress, self.cfg.state.state_db, self.start_time, self.cfg.web.port)
         interrupted = False
         try:
+            if self.cfg.web.enabled:
+                try:
+                    from snaffler.web.server import start_web_server
+                    start_web_server(self.progress, self.cfg.state.state_db, self.start_time, self.cfg.web.port)
+                except ImportError as exc:
+                    logger.warning(f"Web dashboard unavailable: {exc}")
+
             # ---------- Direct UNC paths ----------
             if self.cfg.targets.unc_targets:
                 paths = self._filter_paths_by_share(self.cfg.targets.unc_targets)
@@ -398,6 +402,8 @@ class SnafflerRunner:
                 logger.error("No targets specified")
                 return
 
+            self.progress.scan_complete = True
+
         except KeyboardInterrupt:
             interrupted = True
             logger.warning("Interrupted by user — shutting down")
@@ -411,8 +417,11 @@ class SnafflerRunner:
                 signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
                 if self.cfg.web.enabled:
-                    from snaffler.web.server import stop_web_server
-                    stop_web_server()
+                    try:
+                        from snaffler.web.server import stop_web_server
+                        stop_web_server()
+                    except Exception:
+                        pass
                 stop_hotkey_listener()
                 self._stop_status_thread()
                 self._sync_progress_from_state()

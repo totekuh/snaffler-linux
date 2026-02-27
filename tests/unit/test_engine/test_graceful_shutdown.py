@@ -27,6 +27,7 @@ def make_cfg():
     cfg.advanced.share_threads = 2
     cfg.advanced.tree_threads = 2
     cfg.advanced.file_threads = 2
+    cfg.web.enabled = False
     return cfg
 
 
@@ -191,6 +192,57 @@ def test_share_pipeline_cancels_futures_on_interrupt():
     assert any(c.get("cancel_futures") is True for c in shutdown_calls), (
         f"Expected shutdown(cancel_futures=True), got: {shutdown_calls}"
     )
+
+
+# ---------- runner: web ImportError handling ----------
+
+def test_runner_web_import_error_does_not_skip_cleanup():
+    """ImportError from start_web_server must not prevent state close (W1/W2)."""
+    cfg = make_cfg()
+    cfg.targets.unc_targets = ["//HOST/SHARE"]
+    cfg.web.enabled = True
+
+    runner = SnafflerRunner(cfg)
+    runner.file_pipeline.run = MagicMock()
+    runner.state = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        with patch(
+            "snaffler.web.server.create_app",
+            side_effect=ImportError("Flask not installed"),
+        ):
+            runner.execute()
+
+    runner.state.close.assert_called_once()
+
+
+def test_runner_scan_complete_flag_set_on_success():
+    """progress.scan_complete is True after successful execution."""
+    cfg = make_cfg()
+    cfg.targets.unc_targets = ["//HOST/SHARE"]
+
+    runner = SnafflerRunner(cfg)
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    assert runner.progress.scan_complete is True
+
+
+def test_runner_scan_complete_flag_not_set_on_interrupt():
+    """progress.scan_complete stays False when interrupted."""
+    cfg = make_cfg()
+    cfg.targets.unc_targets = ["//HOST/SHARE"]
+
+    runner = SnafflerRunner(cfg)
+    runner.file_pipeline.run = MagicMock(side_effect=KeyboardInterrupt)
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        with pytest.raises(KeyboardInterrupt):
+            runner.execute()
+
+    assert runner.progress.scan_complete is False
 
 
 # ---------- runner: state always present ----------
