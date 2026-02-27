@@ -200,9 +200,9 @@ Two auth paths, both in SMBTransport and LDAPTransport:
 
 **Setup order matters**: SOCKS proxy is applied first, then the DNS monkey-patch, so DNS-over-TCP queries to an internal nameserver route through the tunnel. IP addresses and `None` hosts pass through to the original resolver unchanged. Falls back to the system resolver if the custom nameserver fails.
 
-### Directory Exclusion
+### UNC Path Exclusion
 
-`--exclude-dir` accepts glob patterns (repeatable) to skip directories during tree walking. Patterns are matched against the full UNC path (case-insensitive), e.g. `*/Windows/*`, `*/node_modules/*`. Stored in `config.targets.exclude_dir` as a list of strings.
+`--exclude-unc` accepts glob patterns (repeatable) to skip directories during tree walking. Patterns are matched against the full UNC path (case-insensitive), e.g. `*/Windows/*`, `*/node_modules/*`. Stored in `config.targets.exclude_unc` as a list of strings.
 
 ### Runtime Hotkeys
 

@@ -84,30 +84,30 @@ def test_should_scan_directory_snaffle():
     assert walker._should_scan_directory("//HOST/SHARE/dir") is True
 
 
-def test_should_scan_directory_exclude_dir_match():
-    """--exclude-dir glob blocks matching directories."""
+def test_should_scan_directory_exclude_unc_match():
+    """--exclude-unc glob blocks matching directories."""
     cfg = make_cfg()
-    cfg.targets.exclude_dir = ["*/C$/Windows"]
+    cfg.targets.exclude_unc = ["*/C$/Windows"]
 
     walker = TreeWalker(cfg)
 
     assert walker._should_scan_directory("//HOST/C$/Windows") is False
 
 
-def test_should_scan_directory_exclude_dir_no_match():
-    """--exclude-dir glob does not block non-matching directories."""
+def test_should_scan_directory_exclude_unc_no_match():
+    """--exclude-unc glob does not block non-matching directories."""
     cfg = make_cfg()
-    cfg.targets.exclude_dir = ["*/C$/Windows"]
+    cfg.targets.exclude_unc = ["*/C$/Windows"]
 
     walker = TreeWalker(cfg)
 
     assert walker._should_scan_directory("//HOST/C$/Users") is True
 
 
-def test_should_scan_directory_exclude_dir_case_insensitive():
-    """--exclude-dir matching is case-insensitive."""
+def test_should_scan_directory_exclude_unc_case_insensitive():
+    """--exclude-unc matching is case-insensitive."""
     cfg = make_cfg()
-    cfg.targets.exclude_dir = ["*/C$/WINDOWS"]
+    cfg.targets.exclude_unc = ["*/C$/WINDOWS"]
 
     walker = TreeWalker(cfg)
 
@@ -115,10 +115,10 @@ def test_should_scan_directory_exclude_dir_case_insensitive():
     assert walker._should_scan_directory("//HOST/C$/Windows") is False
 
 
-def test_should_scan_directory_exclude_dir_multiple_patterns():
-    """Multiple --exclude-dir patterns are OR'd together."""
+def test_should_scan_directory_exclude_unc_multiple_patterns():
+    """Multiple --exclude-unc patterns are OR'd together."""
     cfg = make_cfg()
-    cfg.targets.exclude_dir = ["*/C$/Windows", "*/C$/ProgramData"]
+    cfg.targets.exclude_unc = ["*/C$/Windows", "*/C$/ProgramData"]
 
     walker = TreeWalker(cfg)
 
@@ -127,10 +127,10 @@ def test_should_scan_directory_exclude_dir_multiple_patterns():
     assert walker._should_scan_directory("//HOST/C$/Users") is True
 
 
-def test_should_scan_directory_exclude_dir_recursive_glob():
-    """--exclude-dir with recursive glob pattern."""
+def test_should_scan_directory_exclude_unc_recursive_glob():
+    """--exclude-unc with recursive glob pattern."""
     cfg = make_cfg()
-    cfg.targets.exclude_dir = ["*/C$/Windows*"]
+    cfg.targets.exclude_unc = ["*/C$/Windows*"]
 
     walker = TreeWalker(cfg)
 

@@ -16,7 +16,7 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 - DNS pre-resolution with TCP port 445 probe to filter stale AD objects
 - Optional file download ("snaffling")
 - Resume support via SQLite state database (auto-resume on existing DB)
-- Share and directory filtering by glob pattern (`--share`, `--exclude-share`, `--exclude-dir`)
+- Share and path filtering by glob pattern (`--share`, `--exclude-share`, `--exclude-unc`)
 - Compatible with original and custom TOML rule sets
 - Deterministic, ingestion-friendly logging (plain / JSON / TSV)
 - Custom DNS resolution (`--nameserver`) for internal AD hostname resolution through SOCKS tunnels
@@ -131,11 +131,11 @@ Only scan specific shares:
 snaffler -u USER -p PASS -d DOMAIN.LOCAL --share "SYSVOL" --share "IT*"
 ```
 
-Exclude shares and directories by glob:
+Exclude shares and paths by glob:
 ```bash
 snaffler -u USER -p PASS -d DOMAIN.LOCAL \
   --exclude-share "IPC$" --exclude-share "print$" \
-  --exclude-dir "Windows" --exclude-dir ".snapshot"
+  --exclude-unc "*/Windows/*" --exclude-unc "*/.snapshot/*"
 ```
 
 ### Pipe from NetExec (nxc)

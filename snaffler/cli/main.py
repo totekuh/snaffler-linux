@@ -153,10 +153,10 @@ def main(
             help="Skip shares matching glob pattern (case-insensitive, repeatable)",
             rich_help_panel="Targeting",
         ),
-        exclude_dir: Optional[List[str]] = typer.Option(
+        exclude_unc: Optional[List[str]] = typer.Option(
             None,
-            "--exclude-dir",
-            help="Skip directories matching glob pattern against full UNC path (case-insensitive, repeatable)",
+            "--exclude-unc",
+            help="Skip paths matching glob pattern against full UNC path (case-insensitive, repeatable)",
             rich_help_panel="Targeting",
         ),
 
@@ -342,7 +342,7 @@ def main(
     cfg.targets.skip_disabled_computers = not include_disabled
     cfg.targets.share_filter = share or []
     cfg.targets.exclude_share = exclude_share or []
-    cfg.targets.exclude_dir = exclude_dir or []
+    cfg.targets.exclude_unc = exclude_unc or []
 
     if computer and computer_file:
         raise typer.BadParameter("Use either --computer or --computer-file, not both")

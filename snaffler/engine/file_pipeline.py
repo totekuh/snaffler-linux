@@ -270,7 +270,7 @@ class FilePipeline:
                         walked_roots = {p.lower() for p in paths}
                         include_filter = self.cfg.targets.share_filter
                         exclude_filter = self.cfg.targets.exclude_share
-                        exclude_dir_patterns = self.cfg.targets.exclude_dir
+                        exclude_dir_patterns = self.cfg.targets.exclude_unc
                         unchecked = self.state.load_unchecked_files()
                         for unc_path, size, mtime in unchecked:
                             file_share = _extract_share_unc(unc_path).lower()
@@ -280,7 +280,7 @@ class FilePipeline:
                             share_name = file_share.rstrip("/").rsplit("/", 1)[-1]
                             if not share_matches_filter(share_name, include_filter, exclude_filter):
                                 continue
-                            # Respect --exclude-dir for DB-seeded files
+                            # Respect --exclude-unc for DB-seeded files
                             if exclude_dir_patterns:
                                 path_lower = unc_path.lower()
                                 if any(fnmatch.fnmatch(path_lower, p.lower()) for p in exclude_dir_patterns):

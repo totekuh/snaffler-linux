@@ -20,7 +20,7 @@ def make_cfg():
 
     cfg.targets.share_filter = []
     cfg.targets.exclude_share = []
-    cfg.targets.exclude_dir = []
+    cfg.targets.exclude_unc = []
 
     return cfg
 
@@ -449,10 +449,10 @@ def test_preseed_respects_exclude_share():
     assert "//HOST/DATA/report.txt" in scanned
 
 
-def test_preseed_respects_exclude_dir():
-    """Files in DB under an excluded directory are NOT scanned on resume."""
+def test_preseed_respects_exclude_unc():
+    """Files in DB under an excluded UNC pattern are NOT scanned on resume."""
     cfg = make_cfg()
-    cfg.targets.exclude_dir = ["*/C$/Windows*"]
+    cfg.targets.exclude_unc = ["*/C$/Windows*"]
 
     state = MagicMock()
     state.should_skip_share.return_value = False
