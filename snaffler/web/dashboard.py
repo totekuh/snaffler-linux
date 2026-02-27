@@ -162,7 +162,7 @@ def render_dashboard() -> str:
 
   // ── Elapsed timer ──────────────────────────────────────────────
   var elapsedEl = document.getElementById("elapsed");
-  setInterval(function() {
+  var timerIval = setInterval(function() {
     var now = Date.now();
     var totalSec = serverElapsed + Math.floor((now - localSyncTime) / 1000);
     if (totalSec < 0) totalSec = 0;
@@ -235,6 +235,26 @@ def render_dashboard() -> str:
 
   // ── Sortable columns ─────────────────────────────────────────
   var sortCol = -1, sortAsc = true;
+
+  function sortTable() {
+    if (sortCol === -1) return;
+    var tbody = document.querySelector("#tbl tbody");
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    rows.sort(function(a, b) {
+      if (sortCol === 0) {
+        var at = a.getAttribute("data-triage");
+        var bt = b.getAttribute("data-triage");
+        var ao = at in TRIAGE_ORDER ? TRIAGE_ORDER[at] : 99;
+        var bo = bt in TRIAGE_ORDER ? TRIAGE_ORDER[bt] : 99;
+        return sortAsc ? (ao - bo) : (bo - ao);
+      }
+      var av = a.cells[sortCol] ? a.cells[sortCol].textContent.trim() : "";
+      var bv = b.cells[sortCol] ? b.cells[sortCol].textContent.trim() : "";
+      return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+    rows.forEach(function(r) { tbody.appendChild(r); });
+  }
+
   document.querySelectorAll("th[data-col]").forEach(function(th) {
     th.addEventListener("click", function() {
       var col = parseInt(this.getAttribute("data-col"));
@@ -242,19 +262,7 @@ def render_dashboard() -> str:
       sortCol = col;
       document.querySelectorAll("th").forEach(function(h) { h.classList.remove("sort-asc", "sort-desc"); });
       th.classList.add(sortAsc ? "sort-asc" : "sort-desc");
-      var tbody = document.querySelector("#tbl tbody");
-      var rows = Array.from(tbody.querySelectorAll("tr"));
-      rows.sort(function(a, b) {
-        if (col === 0) {
-          var ao = TRIAGE_ORDER[a.getAttribute("data-triage")];
-          var bo = TRIAGE_ORDER[b.getAttribute("data-triage")];
-          return sortAsc ? (ao - bo) : (bo - ao);
-        }
-        var av = a.cells[col] ? a.cells[col].textContent.trim() : "";
-        var bv = b.cells[col] ? b.cells[col].textContent.trim() : "";
-        return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
-      });
-      rows.forEach(function(r) { tbody.appendChild(r); });
+      sortTable();
     });
   });
 
@@ -383,6 +391,9 @@ def render_dashboard() -> str:
         dotEl.classList.remove("active");
         dotEl.style.background = "#888";
         pollActive = false;
+        clearInterval(timerIval);
+        clearInterval(progressIval);
+        clearInterval(findingsIval);
       } else {
         dotEl.classList.add("active");
         dotEl.style.background = "#27ae60";
@@ -423,23 +434,17 @@ def render_dashboard() -> str:
           addFindingRow(f);
         }
         lastRowid = data.max_rowid || lastRowid;
+        sortTable();
       }
     }).catch(function() {});
-  }
-
-  // ── Polling: stats (heavier, less frequent) ───────────────────
-  function pollStats() {
-    if (!pollActive) return;
-    fetch("/api/stats").then(function(r) { return r.json(); }).catch(function() {});
   }
 
   // ── Start polling ─────────────────────────────────────────────
   pollProgress();
   pollFindings();
 
-  setInterval(pollProgress, 2500);
-  setInterval(pollFindings, 2500);
-  setInterval(pollStats, 10000);
+  var progressIval = setInterval(pollProgress, 2500);
+  var findingsIval = setInterval(pollFindings, 2500);
 })();
 </script>
 </body>

@@ -434,6 +434,48 @@ def test_progress_api_phase_consistent_with_snapshot(client, progress):
     assert data["scan_complete"] is True
 
 
+# ── Dashboard JS correctness ─────────────────────────────────────
+
+def test_dashboard_has_timer_interval_id(client):
+    """W5: timer interval is stored so it can be cleared on complete."""
+    resp = client.get("/")
+    html = resp.data.decode()
+    assert "var timerIval = setInterval" in html
+
+
+def test_dashboard_clears_intervals_on_complete(client):
+    """W5: all intervals are cleared when phase becomes complete."""
+    resp = client.get("/")
+    html = resp.data.decode()
+    assert "clearInterval(timerIval)" in html
+    assert "clearInterval(progressIval)" in html
+    assert "clearInterval(findingsIval)" in html
+
+
+def test_dashboard_sort_table_function(client):
+    """W6: sortTable() is a standalone function called after adding rows."""
+    resp = client.get("/")
+    html = resp.data.decode()
+    assert "function sortTable()" in html
+    # Called in pollFindings after adding rows
+    assert "sortTable();" in html
+
+
+def test_dashboard_no_poll_stats(client):
+    """W10: pollStats removed — no wasted /api/stats fetches."""
+    resp = client.get("/")
+    html = resp.data.decode()
+    assert "pollStats" not in html
+
+
+def test_dashboard_unknown_triage_sort(client):
+    """W15: unknown triage values get sort order 99 instead of NaN."""
+    resp = client.get("/")
+    html = resp.data.decode()
+    # The sort function uses `in TRIAGE_ORDER` guard with fallback to 99
+    assert "TRIAGE_ORDER[at] : 99" in html
+
+
 # ── Werkzeug logging suppression ─────────────────────────────────
 
 def test_werkzeug_logging_suppressed(progress, db_path, start_time):

@@ -112,6 +112,25 @@ def test_cli_socks_calls_setup():
     mock_setup.assert_called_once_with("socks5://127.0.0.1:1080")
 
 
+def test_cli_web_port_without_web_warns():
+    """W11: --web-port without --web emits a warning to stderr."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--unc", "//HOST/SHARE",
+                "--web-port", "9999",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert "--web-port has no effect without --web" in result.output
+
+
 def test_cli_load_config_file(tmp_path):
     cfg = tmp_path / "config.toml"
     cfg.write_text("""

@@ -7,7 +7,7 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler) — a post-exp
 - **Language**: Python 3.9+
 - **Package manager**: pip / setuptools
 - **Entry point**: `snaffler.cli.main:app` (Typer CLI, registered as `snaffler` console script)
-- **Version**: 1.2.0
+- **Version**: 1.2.1
 - **License**: Apache 2.0
 - **Author**: totekuh
 

@@ -17,7 +17,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.2.0"  # fallback for PyInstaller builds
+        return "1.2.1"  # fallback for PyInstaller builds
 
 
 def _version_callback(value: bool):
@@ -435,6 +435,8 @@ def main(
     # ---------- WEB DASHBOARD ----------
     cfg.web.enabled = web
     cfg.web.port = web_port
+    if web_port != 8080 and not web:
+        typer.echo("Warning: --web-port has no effect without --web", err=True)
 
     # ---------- validate ----------
     cfg.validate()
