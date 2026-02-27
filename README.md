@@ -29,10 +29,12 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 
 ## Installation
 
-### pip
+### pip / pipx
 
 ```bash
 pip install snaffler-ng
+# or
+pipx install snaffler-ng
 ```
 
 Optional extras:
@@ -40,6 +42,8 @@ Optional extras:
 ```bash
 pip install snaffler-ng[socks]  # SOCKS proxy support
 pip install snaffler-ng[web]    # Live web dashboard
+# pipx: use --pip-args
+pipx install snaffler-ng --pip-args="[socks,web]"
 ```
 
 ### Standalone Binary
