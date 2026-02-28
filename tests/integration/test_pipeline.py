@@ -1207,7 +1207,7 @@ class TestArchivePeek:
         assert len(ntds_findings) >= 1
 
     def test_archive_member_unc_path_format(self, cfg):
-        """Archive member findings use //server/share/archive.zip→member format."""
+        """Archive member findings use //server/share/archive.{zip,rar}→member format."""
         _, _, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
 
         archive_findings = [f for f in findings if "\u2192" in f]
@@ -1216,11 +1216,9 @@ class TestArchivePeek:
         for path in archive_findings:
             # Must start with UNC prefix
             assert path.startswith("//")
-            # Must contain .zip→
-            assert ".zip\u2192" in path
-            # Part before → must end with .zip
+            # Part before → must end with a supported archive extension
             archive_part, member_part = path.split("\u2192", 1)
-            assert archive_part.endswith(".zip")
+            assert archive_part.endswith((".zip", ".rar", ".7z"))
             # Member part must be a filename (not empty)
             assert len(member_part) > 0
 
@@ -1343,6 +1341,117 @@ class TestArchivePeek:
         # The finding path contains id_rsa
         archive_findings = [f for f in findings if "\u2192" in f and "id_rsa" in f]
         assert len(archive_findings) >= 1
+
+    # ---------------------------------------- positive: RAR archives
+
+    def test_rar_sensitive_archive_produces_findings(self, cfg):
+        """RAR containing id_rsa → findings via archive peeking."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "sensitive_archive.rar", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) > 0
+
+    def test_rar_finds_ssh_key(self, cfg):
+        """id_rsa inside RAR triggers KeepSSHKeysByFileName (BLACK)."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "sensitive_archive.rar", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        ssh_findings = [f for f in findings if "\u2192" in f and "id_rsa" in f]
+        assert len(ssh_findings) >= 1
+
+    def test_rar_finds_password_file(self, cfg):
+        """passwords.txt inside RAR triggers KeepPasswordFilesByName (RED)."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "password_archive.rar", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        pw_findings = [f for f in findings if "\u2192" in f and "passwords.txt" in f]
+        assert len(pw_findings) >= 1
+
+    def test_rar_finds_ppk_key(self, cfg):
+        """.ppk file inside RAR triggers KeepSSHKeysByFileExtension (BLACK)."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "ppk_archive.rar", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        ppk_findings = [f for f in findings if "\u2192" in f and ".ppk" in f]
+        assert len(ppk_findings) >= 1
+
+    def test_rar_finds_ntds(self, cfg):
+        """NTDS.DIT inside RAR subdir triggers KeepWinHashesByName (BLACK)."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "ntds_archive.rar", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        ntds_findings = [f for f in findings if "\u2192" in f and "NTDS.DIT" in f]
+        assert len(ntds_findings) >= 1
+
+    def test_rar_member_unc_path_format(self, cfg):
+        """RAR member findings use //server/share/archive.rar→member format."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "sensitive_archive.rar", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) > 0
+
+        for path in archive_findings:
+            assert path.startswith("//")
+            assert ".rar\u2192" in path
+            archive_part, member_part = path.split("\u2192", 1)
+            assert archive_part.endswith(".rar")
+            assert len(member_part) > 0
+
+    # ---------------------------------------- negative: RAR boring / oversized
+
+    def test_rar_boring_archive_no_member_findings(self, cfg):
+        """RAR with only boring files → no archive-member findings."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "boring_archive.rar", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) == 0
+
+    def test_rar_oversized_archive_not_peeked(self, cfg):
+        """10MB+ RAR exceeds max_read_bytes (2MB) → no peeking."""
+        _, _, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
+
+        oversized_findings = [
+            f for f in findings
+            if "oversized_archive.rar\u2192" in f
+        ]
+        assert len(oversized_findings) == 0
+
+    def test_rar_raising_max_read_bytes_peeks_oversized(self, cfg):
+        """Bumping max_read_bytes above RAR size enables peeking."""
+        cfg.scanning.max_read_bytes = 20 * 1024 * 1024
+
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "oversized_archive.rar", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) > 0
 
     # ---------------------------------------- full data dir (regression)
 

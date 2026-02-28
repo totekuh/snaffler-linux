@@ -392,6 +392,25 @@ class FileScanner:
             except Exception:
                 return None
 
+        if ext_lower == ".rar":
+            try:
+                import rarfile as _rarfile
+            except ImportError:
+                logger.warning(
+                    "rarfile not installed — skipping RAR archive peek. "
+                    "Install with: pip install snaffler-ng[rar]"
+                )
+                return None
+            try:
+                with _rarfile.RarFile(bio) as rf:
+                    return [
+                        (info.filename, info.file_size)
+                        for info in rf.infolist()
+                        if not info.is_dir()
+                    ]
+            except Exception:
+                return None
+
         return None
 
     # -------------------------------------------------------------- Certs

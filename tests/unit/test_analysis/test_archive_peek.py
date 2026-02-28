@@ -22,6 +22,12 @@ from snaffler.classifiers.rules import (
 TEST_ARCHIVE = os.path.join(
     os.path.dirname(__file__), os.pardir, os.pardir, "data", "test_archive.zip"
 )
+TEST_RAR_SENSITIVE = os.path.join(
+    os.path.dirname(__file__), os.pardir, os.pardir, "data", "archives", "sensitive_archive.rar"
+)
+TEST_RAR_BORING = os.path.join(
+    os.path.dirname(__file__), os.pardir, os.pardir, "data", "archives", "boring_archive.rar"
+)
 
 
 # ---------------- helpers ----------------
@@ -382,3 +388,139 @@ class TestArchivePeek:
         assert isinstance(result, FileResult)
         assert result.triage == Triage.BLACK
         assert "\u2192subdir/passwords.txt" in result.file_path
+
+
+class TestRarArchivePeek:
+
+    def test_rar_with_sensitive_file(self):
+        """RAR containing id_rsa → Black finding."""
+        with open(TEST_RAR_SENSITIVE, "rb") as f:
+            rar_data = f.read()
+
+        accessor = MagicMock()
+        accessor.read.return_value = rar_data
+
+        evaluator = RuleEvaluator(
+            file_rules=[_archive_rule(".rar"), _password_rule(), _ssh_key_rule()],
+            content_rules=[],
+            postmatch_rules=[],
+        )
+
+        scanner = FileScanner(make_cfg(), accessor, evaluator)
+
+        with patch("snaffler.analysis.file_scanner.parse_unc_path",
+                    return_value=("srv", "share", "/backup.rar", "backup.rar", ".rar")), \
+             patch("snaffler.analysis.file_scanner.log_file_result"):
+            result = scanner.scan_file("//srv/share/backup.rar", len(rar_data), 1700000000.0)
+
+        assert isinstance(result, FileResult)
+        assert result.triage == Triage.BLACK
+        assert "\u2192" in result.file_path
+
+    def test_rar_nothing_interesting(self):
+        """RAR with only boring files → no finding."""
+        with open(TEST_RAR_BORING, "rb") as f:
+            rar_data = f.read()
+
+        accessor = MagicMock()
+        accessor.read.return_value = rar_data
+
+        evaluator = RuleEvaluator(
+            file_rules=[_archive_rule(".rar"), _password_rule()],
+            content_rules=[],
+            postmatch_rules=[],
+        )
+
+        scanner = FileScanner(make_cfg(), accessor, evaluator)
+
+        with patch("snaffler.analysis.file_scanner.parse_unc_path",
+                    return_value=("srv", "share", "/stuff.rar", "stuff.rar", ".rar")), \
+             patch("snaffler.analysis.file_scanner.log_file_result"):
+            result = scanner.scan_file("//srv/share/stuff.rar", len(rar_data), 1700000000.0)
+
+        assert result is None
+
+    def test_rar_corrupt_returns_none(self):
+        """Corrupt RAR data → no crash, returns None."""
+        accessor = MagicMock()
+        accessor.read.return_value = b"this is not a rar file"
+
+        evaluator = RuleEvaluator(
+            file_rules=[_archive_rule(".rar"), _password_rule()],
+            content_rules=[],
+            postmatch_rules=[],
+        )
+
+        scanner = FileScanner(make_cfg(), accessor, evaluator)
+
+        with patch("snaffler.analysis.file_scanner.parse_unc_path",
+                    return_value=("srv", "share", "/bad.rar", "bad.rar", ".rar")), \
+             patch("snaffler.analysis.file_scanner.log_file_result"):
+            result = scanner.scan_file("//srv/share/bad.rar", 100, 1700000000.0)
+
+        assert result is None
+
+    def test_rar_missing_rarfile_skips(self):
+        """When rarfile is not installed, RAR peeking is skipped gracefully."""
+        accessor = MagicMock()
+        accessor.read.return_value = b"fakerardata"
+
+        evaluator = RuleEvaluator(
+            file_rules=[_archive_rule(".rar"), _password_rule()],
+            content_rules=[],
+            postmatch_rules=[],
+        )
+
+        scanner = FileScanner(make_cfg(), accessor, evaluator)
+
+        with patch("snaffler.analysis.file_scanner.parse_unc_path",
+                    return_value=("srv", "share", "/stuff.rar", "stuff.rar", ".rar")), \
+             patch("snaffler.analysis.file_scanner.log_file_result"), \
+             patch.dict("sys.modules", {"rarfile": None}):
+            result = scanner.scan_file("//srv/share/stuff.rar", 500, 1700000000.0)
+
+        assert result is None
+
+    def test_rar_over_max_read_bytes_skipped(self):
+        """RAR larger than max_read_bytes → no peeking, no read() call."""
+        accessor = MagicMock()
+
+        evaluator = RuleEvaluator(
+            file_rules=[_archive_rule(".rar"), _password_rule()],
+            content_rules=[],
+            postmatch_rules=[],
+        )
+
+        scanner = FileScanner(make_cfg(max_read=100), accessor, evaluator)
+
+        with patch("snaffler.analysis.file_scanner.parse_unc_path",
+                    return_value=("srv", "share", "/big.rar", "big.rar", ".rar")), \
+             patch("snaffler.analysis.file_scanner.log_file_result"):
+            result = scanner.scan_file("//srv/share/big.rar", 999999, 1700000000.0)
+
+        accessor.read.assert_not_called()
+        assert result is None
+
+    def test_rar_member_unc_path_format(self):
+        """RAR member UNC path uses → separator."""
+        with open(TEST_RAR_SENSITIVE, "rb") as f:
+            rar_data = f.read()
+
+        accessor = MagicMock()
+        accessor.read.return_value = rar_data
+
+        evaluator = RuleEvaluator(
+            file_rules=[_archive_rule(".rar"), _ssh_key_rule()],
+            content_rules=[],
+            postmatch_rules=[],
+        )
+
+        scanner = FileScanner(make_cfg(), accessor, evaluator)
+
+        with patch("snaffler.analysis.file_scanner.parse_unc_path",
+                    return_value=("srv", "share", "/archive.rar", "archive.rar", ".rar")), \
+             patch("snaffler.analysis.file_scanner.log_file_result"):
+            result = scanner.scan_file("//srv/share/archive.rar", len(rar_data), 1700000000.0)
+
+        assert result is not None
+        assert result.file_path == "//srv/share/archive.rar\u2192id_rsa"

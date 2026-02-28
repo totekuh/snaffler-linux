@@ -1065,6 +1065,16 @@ def get_archive_rules() -> List[ClassifierRule]:
             triage=Triage.GREEN,
             description="Peek inside 7z archives for sensitive filenames",
         ),
+        ClassifierRule(
+            rule_name="EnterRarByExtension",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.ENTER_ARCHIVE,
+            match_location=MatchLocation.FILE_EXTENSION,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=[".rar"],
+            triage=Triage.GREEN,
+            description="Peek inside RAR archives for sensitive filenames",
+        ),
     ]
 
 
