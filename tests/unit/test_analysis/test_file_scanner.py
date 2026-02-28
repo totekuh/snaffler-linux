@@ -332,6 +332,46 @@ def test_match_filter_blocks_non_matching_finding():
            mock_log.call_args[1].get("suppress_log") is True
 
 
+def test_match_filter_still_downloads_non_matching():
+    """--match filter does not suppress snaffle downloads."""
+    accessor = MagicMock()
+
+    rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        triage=Triage.RED,
+        name="SecretRule",
+    )
+
+    evaluator = MagicMock()
+    evaluator.file_rules = [rule]
+    evaluator.should_discard_postmatch.return_value = False
+    evaluator.evaluate_file_rule.return_value = RuleDecision(
+        action=MatchAction.SNAFFLE,
+        match="secret",
+    )
+
+    cfg = make_cfg(match_filter="nomatch_pattern")
+    cfg.scanning.snaffle = True
+    cfg.scanning.snaffle_path = "/tmp/loot"
+
+    scanner = FileScanner(cfg, accessor, evaluator)
+
+    with patch(
+        "snaffler.analysis.file_scanner.parse_unc_path",
+        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
+    ), patch(
+        "snaffler.analysis.file_scanner.log_file_result"
+    ):
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+
+    # Return value is None (filtered from output)
+    assert result is None
+    # But file was still downloaded
+    accessor.copy_to_local.assert_called_once_with(
+        "srv", "share", "/f.txt", "/tmp/loot"
+    )
+
+
 def test_match_filter_case_insensitive():
     """--match is case-insensitive: uppercase pattern matches lowercase content."""
     accessor = MagicMock()
