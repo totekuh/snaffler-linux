@@ -14,6 +14,10 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 - Kerberos authentication (with ccache support)
 - Multithreaded scanning (DNS / share / tree / file stages) with automatic thread rebalancing
 - DNS pre-resolution with TCP port 445 probe to filter stale AD objects
+- Archive peeking — scan filenames inside ZIP, 7z, and RAR archives without extraction
+- Tree depth limiting (`--max-depth`)
+- Finding post-filter (`--match`) — regex filter on findings by hostname, filename, rule, or content
+- Host exclusion file (`--exclusions`)
 - Optional file download ("snaffling")
 - Resume support via SQLite state database (auto-resume on existing DB)
 - Share and path filtering by glob pattern (`--share`, `--exclude-share`, `--exclude-unc`)
@@ -42,6 +46,8 @@ Optional extras:
 ```bash
 pip install snaffler-ng[socks]  # SOCKS proxy support
 pip install snaffler-ng[web]    # Live web dashboard
+pip install snaffler-ng[7z]     # 7-Zip archive peeking
+pip install snaffler-ng[rar]    # RAR archive peeking
 # pipx: use --pip-args
 pipx install snaffler-ng --pip-args="[socks,web]"
 ```
@@ -124,6 +130,15 @@ snaffler \
   --computer-file targets.txt
 ```
 
+### Archive Peeking
+
+snaffler-ng can look inside ZIP, 7z, and RAR archives without extracting files. Archive members are matched against file rules — if an archive contains `web.config` or `id_rsa`, it gets flagged:
+
+```bash
+# ZIP works out of the box. For 7z and RAR, install optional extras:
+pip install snaffler-ng[7z,rar]
+```
+
 ### Filtering Shares and Directories
 
 Only scan specific shares:
@@ -136,6 +151,23 @@ Exclude shares and paths by glob:
 snaffler -u USER -p PASS -d DOMAIN.LOCAL \
   --exclude-share "IPC$" --exclude-share "print$" \
   --exclude-unc "*/Windows/*" --exclude-unc "*/.snapshot/*"
+```
+
+### Depth Limiting and Post-Filtering
+
+Limit directory recursion depth to avoid deep trees:
+```bash
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --max-depth 5
+```
+
+Filter findings by regex (matches against hostname, filename, rule name, or content):
+```bash
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --match "password|connectionstring"
+```
+
+Exclude specific hosts from scanning:
+```bash
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --exclusions hosts_to_skip.txt
 ```
 
 ### Pipe from NetExec (nxc)

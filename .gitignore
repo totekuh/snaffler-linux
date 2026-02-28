@@ -6,3 +6,4 @@ snaffler.db
 .pytest_cache
 build
 CLAUDE.md
+.claude/

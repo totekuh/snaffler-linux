@@ -36,6 +36,6 @@ Description: SMB share credential and sensitive data scanner
  data on Windows file systems.
  .
  Features include NTLM and Kerberos authentication, DFS namespace discovery,
- regex-based file and content classification with 50+ built-in rules, triage
- severity levels (Black/Red/Yellow/Green), resume support via SQLite, and
- multiple output formats (plain, JSON, TSV).
+ regex-based file and content classification with 103 built-in rules, archive
+ peeking (ZIP/7z/RAR), triage severity levels (Black/Red/Yellow/Green), resume
+ support via SQLite, and multiple output formats (plain, JSON, TSV).
