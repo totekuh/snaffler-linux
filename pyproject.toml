@@ -32,6 +32,7 @@ snaffler = ["rules/*.toml"]
 [project.optional-dependencies]
 socks = ["pysocks>=1.7.0"]
 web = ["flask>=3.0.0"]
+7z = ["py7zr>=0.20.0"]
 test = [
     "pytest>=8.0",
     "pytest-cov",

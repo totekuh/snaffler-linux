@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
+import io
 import logging
+import os
 import re
+import zipfile
 from datetime import datetime
 from typing import Optional, List
 
@@ -145,6 +148,16 @@ class FileScanner:
                         best_result = FileResult.pick_best(best_result, cert)
                     continue
 
+                if action == MatchAction.ENTER_ARCHIVE:
+                    if size <= self.cfg.scanning.max_read_bytes:
+                        archive_result = self._peek_archive(
+                            ctx, server, share, smb_path
+                        )
+                        best_result = FileResult.pick_best(
+                            best_result, archive_result
+                        )
+                    continue
+
                 if action != MatchAction.SNAFFLE:
                     continue
 
@@ -264,6 +277,122 @@ class FileScanner:
                 break
 
         return best_result
+
+    # -------------------------------------------------------------- Archives
+
+    def _peek_archive(
+            self,
+            ctx: FileContext,
+            server: str,
+            share: str,
+            smb_path: str,
+    ) -> Optional[FileResult]:
+        """List filenames inside an archive and evaluate file rules against them."""
+        try:
+            data = self.file_accessor.read(
+                server, share, smb_path,
+                max_bytes=self.cfg.scanning.max_read_bytes,
+            )
+            if not data:
+                return None
+
+            bio = io.BytesIO(data)
+            members = self._list_archive_members(ctx.ext, bio)
+            if not members:
+                return None
+
+            best_result: Optional[FileResult] = None
+            for member_name, member_size in members:
+                basename = os.path.basename(member_name)
+                member_ext = os.path.splitext(basename)[1].lower()
+                member_unc = f"{ctx.unc_path}\u2192{member_name}"
+
+                member_ctx = FileContext(
+                    unc_path=member_unc,
+                    smb_path=smb_path,
+                    name=basename,
+                    ext=member_ext,
+                    size=member_size,
+                    modified=ctx.modified,
+                )
+
+                for rule in self.rule_evaluator.file_rules:
+                    decision = self.rule_evaluator.evaluate_file_rule(
+                        rule, member_ctx
+                    )
+                    if not decision:
+                        continue
+
+                    action = decision.action
+                    if action == MatchAction.DISCARD:
+                        break
+                    if action != MatchAction.SNAFFLE:
+                        continue
+
+                    if self.rule_evaluator.should_discard_postmatch(member_ctx):
+                        continue
+
+                    result = FileResult(
+                        file_path=member_unc,
+                        size=member_size,
+                        modified=ctx.modified,
+                        triage=rule.triage,
+                        rule_name=rule.rule_name,
+                        match=decision.match,
+                    )
+                    result = self._finalize_result(
+                        result, server, share, smb_path
+                    )
+                    best_result = FileResult.pick_best(best_result, result)
+
+                    if best_result and best_result.triage == Triage.BLACK:
+                        return best_result
+
+            return best_result
+        except Exception as e:
+            logger.debug(
+                f"Archive peek failed for {ctx.unc_path}: {e}"
+            )
+            return None
+
+    @staticmethod
+    def _list_archive_members(
+            ext: str, bio: io.BytesIO
+    ) -> Optional[List[tuple]]:
+        """Return list of (name, size) tuples for archive members."""
+        ext_lower = ext.lower()
+
+        if ext_lower == ".zip":
+            try:
+                with zipfile.ZipFile(bio) as zf:
+                    return [
+                        (info.filename, info.file_size)
+                        for info in zf.infolist()
+                        if not info.is_dir()
+                    ]
+            except (zipfile.BadZipFile, Exception):
+                return None
+
+        if ext_lower == ".7z":
+            try:
+                import py7zr
+            except ImportError:
+                logger.warning(
+                    "py7zr not installed — skipping 7z archive peek. "
+                    "Install with: pip install snaffler-ng[7z]"
+                )
+                return None
+            try:
+                with py7zr.SevenZipFile(bio, mode="r") as sz:
+                    return [
+                        (entry.filename, entry.uncompressed)
+                        for entry in sz.list()
+                        if not entry.is_directory
+                    ]
+            except Exception:
+                return None
+
+        return None
 
     # -------------------------------------------------------------- Certs
 

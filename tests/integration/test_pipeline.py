@@ -1118,3 +1118,246 @@ class TestExclusions:
         assert p.computers_total == 0
         assert p.shares_found == 0
         assert p.files_scanned == 0
+
+
+class TestArchivePeek:
+    """Archive peeking through the full pipeline."""
+
+    _ARCHIVE_DIR = _DATA_DIR / "archives"
+
+    # ------------------------------------------------------------------ helpers
+
+    def _run_pipeline(self, cfg, share_root=None):
+        """Run FilePipeline against *share_root* and return (matched, progress, findings)."""
+        root = share_root or _DATA_DIR
+        smb = _make_smb_mock(root)
+        findings = []
+        original_log = None
+
+        # Intercept log_file_result to capture individual findings
+        import snaffler.analysis.file_scanner as fs_mod
+        original_log = fs_mod.log_file_result
+
+        def capture_log(logger, file_path, *args, **kwargs):
+            findings.append(file_path)
+            return original_log(logger, file_path, *args, **kwargs)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
+                patch("snaffler.analysis.file_scanner.log_file_result", side_effect=capture_log):
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress = ProgressState()
+            matched = FilePipeline(cfg=cfg, progress=progress).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        return matched, progress, findings
+
+    # ---------------------------------------- positive: sensitive archive
+
+    def test_sensitive_archive_produces_findings(self, cfg):
+        """ZIP containing id_rsa / passwords.txt → findings via archive peeking."""
+        matched, progress, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
+
+        assert matched > 0
+        # At least one finding must come from inside an archive (→ separator)
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) > 0
+
+    def test_sensitive_archive_finds_ssh_key(self, cfg):
+        """id_rsa inside ZIP triggers KeepSSHKeysByFileName (BLACK)."""
+        matched, progress, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
+
+        ssh_findings = [f for f in findings if "\u2192" in f and "id_rsa" in f]
+        assert len(ssh_findings) >= 1
+
+    def test_sensitive_archive_finds_password_file(self, cfg):
+        """passwords.txt inside ZIP triggers KeepPasswordFilesByName (RED)."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "password_archive.zip", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        pw_findings = [f for f in findings if "\u2192" in f and "passwords.txt" in f]
+        assert len(pw_findings) >= 1
+
+    def test_sensitive_archive_finds_ppk_key(self, cfg):
+        """.ppk file inside ZIP triggers KeepSSHKeysByFileExtension (BLACK)."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "ppk_archive.zip", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        ppk_findings = [f for f in findings if "\u2192" in f and ".ppk" in f]
+        assert len(ppk_findings) >= 1
+
+    def test_sensitive_archive_finds_ntds(self, cfg):
+        """NTDS.DIT inside ZIP subdir triggers KeepWinHashesByName (BLACK)."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "ntds_archive.zip", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        ntds_findings = [f for f in findings if "\u2192" in f and "NTDS.DIT" in f]
+        assert len(ntds_findings) >= 1
+
+    def test_archive_member_unc_path_format(self, cfg):
+        """Archive member findings use //server/share/archive.zip→member format."""
+        _, _, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
+
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) > 0
+
+        for path in archive_findings:
+            # Must start with UNC prefix
+            assert path.startswith("//")
+            # Must contain .zip→
+            assert ".zip\u2192" in path
+            # Part before → must end with .zip
+            archive_part, member_part = path.split("\u2192", 1)
+            assert archive_part.endswith(".zip")
+            # Member part must be a filename (not empty)
+            assert len(member_part) > 0
+
+    # ---------------------------------------- positive: progress counters
+
+    def test_archive_findings_counted_in_progress(self, cfg):
+        """Archive member findings are reflected in progress.files_matched."""
+        matched, progress, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
+
+        assert progress.files_matched == matched
+        assert matched > 0
+        # Severity counts sum to matched
+        severity_sum = (
+            progress.severity_black
+            + progress.severity_red
+            + progress.severity_yellow
+            + progress.severity_green
+        )
+        assert severity_sum == matched
+
+    # ---------------------------------------- negative: boring archive
+
+    def test_boring_archive_no_member_findings(self, cfg):
+        """ZIP with only readme.txt / notes.dat → no archive-member findings."""
+        # Use a temp dir with only the boring archive
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "boring_archive.zip", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) == 0
+
+    def test_boring_archive_still_scanned(self, cfg):
+        """Boring archive is still counted as a scanned file even with no member findings."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "boring_archive.zip", tmp)
+            _, progress, _ = self._run_pipeline(cfg, Path(tmp))
+
+        assert progress.files_scanned >= 1
+
+    # ---------------------------------------- negative: oversized archive
+
+    def test_oversized_archive_not_peeked(self, cfg):
+        """10MB+ archive exceeds max_read_bytes (2MB) → no peeking, no member findings."""
+        # Run against the full archives dir; oversized_archive.zip is ~10.5MB
+        _, _, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
+
+        # oversized_archive.zip has id_rsa and passwords.txt inside, but it's
+        # too big to peek — so no findings should reference oversized_archive.zip→
+        oversized_findings = [
+            f for f in findings
+            if "oversized_archive.zip\u2192" in f
+        ]
+        assert len(oversized_findings) == 0
+
+    def test_oversized_archive_still_scanned_as_file(self, cfg):
+        """Oversized archive is still counted as a scanned file."""
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "oversized_archive.zip", tmp)
+            _, progress, _ = self._run_pipeline(cfg, Path(tmp))
+
+        # The file itself is scanned (file rules evaluated), just not peeked
+        assert progress.files_scanned >= 1
+
+    def test_raising_max_read_bytes_peeks_oversized(self, cfg):
+        """Bumping max_read_bytes above archive size enables peeking."""
+        cfg.scanning.max_read_bytes = 20 * 1024 * 1024  # 20MB
+
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "oversized_archive.zip", tmp)
+            _, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        # NOW the oversized archive should be peeked and findings produced
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) > 0
+
+    # ---------------------------------------- negative: max_read_bytes gate
+
+    def test_lowering_max_read_bytes_blocks_all_peeking(self, cfg):
+        """Setting max_read_bytes=1 prevents peeking into any archive."""
+        cfg.scanning.max_read_bytes = 1  # 1 byte — nothing gets peeked
+
+        _, _, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
+
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) == 0
+
+    # ---------------------------------------- negative: match filter on archive members
+
+    def test_match_filter_suppresses_archive_findings(self, cfg):
+        """--match filter that doesn't match archive members suppresses them."""
+        cfg.scanning.match_filter = "this_will_never_match_anything_12345"
+
+        matched, _, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
+
+        # All findings (archive and non-archive) are suppressed
+        # because nothing matches the filter
+        assert matched == 0
+
+    def test_match_filter_passes_archive_findings(self, cfg):
+        """--match filter matching archive member names passes them through."""
+        cfg.scanning.match_filter = "id_rsa"
+
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(self._ARCHIVE_DIR / "sensitive_archive.zip", tmp)
+            matched, _, findings = self._run_pipeline(cfg, Path(tmp))
+
+        # id_rsa matches the filter → pipeline returns it
+        assert matched >= 1
+        # The finding path contains id_rsa
+        archive_findings = [f for f in findings if "\u2192" in f and "id_rsa" in f]
+        assert len(archive_findings) >= 1
+
+    # ---------------------------------------- full data dir (regression)
+
+    def test_archives_in_full_data_dir_produce_findings(self, cfg):
+        """Archives in the full test data dir contribute findings alongside regular files."""
+        matched, progress, findings = self._run_pipeline(cfg)
+
+        # Full data dir has both regular files and archives
+        assert matched > 0
+        assert progress.files_scanned > 0
+
+        # Some findings come from archives
+        archive_findings = [f for f in findings if "\u2192" in f]
+        assert len(archive_findings) > 0
+
+        # Some findings come from regular files
+        regular_findings = [f for f in findings if "\u2192" not in f]
+        assert len(regular_findings) > 0

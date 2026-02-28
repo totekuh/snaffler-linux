@@ -44,6 +44,7 @@ def get_default_rules() -> List[ClassifierRule]:
     rules.extend(get_sccm_rules())
     rules.extend(get_gpp_rules())
     rules.extend(get_multilingual_filename_rules())
+    rules.extend(get_archive_rules())
     rules.extend(get_content_grep_rules())
     rules.extend(get_postmatch_rules())
 
@@ -1033,6 +1034,36 @@ def get_multilingual_filename_rules() -> List[ClassifierRule]:
             ],
             triage=Triage.RED,
             description="Italian filename patterns: credentials."
+        ),
+    ]
+
+
+# ==============================================================================
+# ARCHIVE RULES
+# ==============================================================================
+
+def get_archive_rules() -> List[ClassifierRule]:
+    """Rules for peeking inside archive files"""
+    return [
+        ClassifierRule(
+            rule_name="EnterZipByExtension",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.ENTER_ARCHIVE,
+            match_location=MatchLocation.FILE_EXTENSION,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=[".zip"],
+            triage=Triage.GREEN,
+            description="Peek inside ZIP archives for sensitive filenames",
+        ),
+        ClassifierRule(
+            rule_name="Enter7zByExtension",
+            enumeration_scope=EnumerationScope.FILE_ENUMERATION,
+            match_action=MatchAction.ENTER_ARCHIVE,
+            match_location=MatchLocation.FILE_EXTENSION,
+            wordlist_type=MatchListType.EXACT,
+            wordlist=[".7z"],
+            triage=Triage.GREEN,
+            description="Peek inside 7z archives for sensitive filenames",
         ),
     ]
 
