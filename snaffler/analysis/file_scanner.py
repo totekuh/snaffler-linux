@@ -50,13 +50,16 @@ class FileScanner:
         if result.triage.below(self.cfg.scanning.min_interest):
             return None
 
+        # --match is purely an output filter — DB persistence and downloads
+        # are not affected, only console/file log output is suppressed
+        suppress_log = False
         if self._match_re:
             haystack = "\n".join(filter(None, [
                 result.file_path, result.rule_name,
                 result.match, result.context,
             ]))
             if not self._match_re.search(haystack):
-                return None
+                suppress_log = True
 
         log_file_result(
             logger,
@@ -69,6 +72,7 @@ class FileScanner:
             result.modified.strftime("%Y-%m-%d %H:%M:%S")
             if result.modified
             else None,
+            suppress_log=suppress_log,
         )
 
         if (
@@ -81,6 +85,9 @@ class FileScanner:
                 smb_path,
                 self.cfg.scanning.snaffle_path,
             )
+
+        if suppress_log:
+            return None
 
         return result
 

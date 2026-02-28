@@ -297,7 +297,7 @@ def test_match_filter_passes_matching_finding():
 
 
 def test_match_filter_blocks_non_matching_finding():
-    """Finding that does not match --match regex is suppressed."""
+    """Finding that does not match --match regex is suppressed but still persisted."""
     accessor = MagicMock()
 
     rule = make_rule(
@@ -321,10 +321,15 @@ def test_match_filter_blocks_non_matching_finding():
         return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
     ), patch(
         "snaffler.analysis.file_scanner.log_file_result"
-    ):
+    ) as mock_log:
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
+    # Return value is None (filtered from pipeline output)
     assert result is None
+    # But log_file_result was still called (for DB persistence) with suppress_log=True
+    mock_log.assert_called_once()
+    assert mock_log.call_args.kwargs.get("suppress_log") is True or \
+           mock_log.call_args[1].get("suppress_log") is True
 
 
 def test_match_filter_case_insensitive():

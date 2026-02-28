@@ -205,6 +205,7 @@ def log_file_result(
         context: Optional[str] = None,
         size: Optional[int] = None,
         modified: Optional[str] = None,
+        suppress_log: bool = False,
 ):
 
     use_colors = (
@@ -261,7 +262,8 @@ def log_file_result(
     if modified:
         extra["mtime"] = modified
 
-    logger.warning(message, extra=extra)
+    if not suppress_log:
+        logger.warning(message, extra=extra)
 
     if _finding_store is not None:
         try:
