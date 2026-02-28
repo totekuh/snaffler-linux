@@ -38,4 +38,6 @@ test = [
     "pytest>=8.0",
     "pytest-cov",
     "flask>=3.0.0",
+    "py7zr>=0.20.0",
+    "rarfile>=4.0",
 ]
