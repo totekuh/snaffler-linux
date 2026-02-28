@@ -62,6 +62,8 @@ class ScanningConfig:
     snaffle: bool = False
     snaffle_path: Optional[str] = None
     match_context_bytes: int = 200
+    max_depth: Optional[int] = None  # Max directory recursion depth (None = unlimited)
+    match_filter: Optional[str] = None  # Regex filter for findings (path/rule/match/context)
     cert_passwords: List[str] = field(default_factory=lambda: [
         "", "password", "mimikatz", "1234", "abcd", "secret",
         "MyPassword", "myPassword", "MyClearTextPassword",
@@ -149,10 +151,6 @@ class SnafflerConfiguration:
 
         # ---------- AUTH VALIDATION ----------
         if self.auth.kerberos:
-            if self.auth.password or self.auth.nthash:
-                raise typer.BadParameter(
-                    "Kerberos cannot be used with password or NT hash authentication"
-                )
             if not self.auth.domain:
                 raise typer.BadParameter(
                     "Kerberos authentication requires a domain"

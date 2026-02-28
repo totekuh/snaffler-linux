@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import logging
+import re
 from datetime import datetime
 from typing import Optional, List
 
@@ -30,6 +31,11 @@ class FileScanner:
         self.cert_checker = CertificateChecker(
             custom_passwords=cfg.scanning.cert_passwords
         )
+        mf = getattr(cfg.scanning, 'match_filter', None)
+        self._match_re = (
+            re.compile(mf, re.IGNORECASE)
+            if isinstance(mf, str) else None
+        )
 
     # -------------------------------------------------------------- Results
 
@@ -43,6 +49,14 @@ class FileScanner:
 
         if result.triage.below(self.cfg.scanning.min_interest):
             return None
+
+        if self._match_re:
+            haystack = "\n".join(filter(None, [
+                result.file_path, result.rule_name,
+                result.match, result.context,
+            ]))
+            if not self._match_re.search(haystack):
+                return None
 
         log_file_result(
             logger,
@@ -209,14 +223,19 @@ class FileScanner:
             if self.rule_evaluator.should_discard_postmatch(ctx):
                 continue
 
-            start = max(
-                0,
-                match.start() - self.cfg.scanning.match_context_bytes,
-            )
-            end = min(
-                len(text),
-                match.end() + self.cfg.scanning.match_context_bytes,
-            )
+            # matches() returns re.Match for regex, str for EXACT
+            if isinstance(match, str):
+                match_text = match
+                pos = text.find(match)
+                match_start = pos if pos >= 0 else 0
+                match_end = match_start + len(match)
+            else:
+                match_text = match.group(0)
+                match_start = match.start()
+                match_end = match.end()
+
+            start = max(0, match_start - self.cfg.scanning.match_context_bytes)
+            end = min(len(text), match_end + self.cfg.scanning.match_context_bytes)
 
             result = FileResult(
                 file_path=ctx.unc_path,
@@ -224,7 +243,7 @@ class FileScanner:
                 modified=ctx.modified,
                 triage=rule.triage,
                 rule_name=rule.rule_name,
-                match=match.group(0),
+                match=match_text,
                 context=text[start:end],
             )
 

@@ -13,7 +13,7 @@ from snaffler.classifiers.rules import (
 
 # ---------------- helpers ----------------
 
-def make_cfg():
+def make_cfg(match_filter=None):
     cfg = MagicMock()
     cfg.scanning.min_interest = 0
     cfg.scanning.max_read_bytes = 1024 * 1024
@@ -22,6 +22,7 @@ def make_cfg():
     cfg.scanning.snaffle = False
     cfg.scanning.snaffle_path = None
     cfg.scanning.cert_passwords = []
+    cfg.scanning.match_filter = match_filter
     return cfg
 
 
@@ -261,3 +262,130 @@ def test_scan_file_black_triage_skips_content_scan():
     assert result.rule_name == "KeepNtdsBlack"
     # read() should NOT have been called — content scan was skipped
     accessor.read.assert_not_called()
+
+
+def test_match_filter_passes_matching_finding():
+    """Finding whose path matches --match regex is emitted."""
+    accessor = MagicMock()
+
+    rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        triage=Triage.RED,
+        name="SecretRule",
+    )
+
+    evaluator = MagicMock()
+    evaluator.file_rules = [rule]
+    evaluator.should_discard_postmatch.return_value = False
+    evaluator.evaluate_file_rule.return_value = RuleDecision(
+        action=MatchAction.SNAFFLE,
+        match="secret",
+    )
+
+    scanner = FileScanner(make_cfg(match_filter="SecretRule"), accessor, evaluator)
+
+    with patch(
+        "snaffler.analysis.file_scanner.parse_unc_path",
+        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
+    ), patch(
+        "snaffler.analysis.file_scanner.log_file_result"
+    ):
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+
+    assert isinstance(result, FileResult)
+    assert result.rule_name == "SecretRule"
+
+
+def test_match_filter_blocks_non_matching_finding():
+    """Finding that does not match --match regex is suppressed."""
+    accessor = MagicMock()
+
+    rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        triage=Triage.RED,
+        name="SecretRule",
+    )
+
+    evaluator = MagicMock()
+    evaluator.file_rules = [rule]
+    evaluator.should_discard_postmatch.return_value = False
+    evaluator.evaluate_file_rule.return_value = RuleDecision(
+        action=MatchAction.SNAFFLE,
+        match="secret",
+    )
+
+    scanner = FileScanner(make_cfg(match_filter="nomatch_pattern"), accessor, evaluator)
+
+    with patch(
+        "snaffler.analysis.file_scanner.parse_unc_path",
+        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
+    ), patch(
+        "snaffler.analysis.file_scanner.log_file_result"
+    ):
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+
+    assert result is None
+
+
+def test_match_filter_case_insensitive():
+    """--match is case-insensitive: uppercase pattern matches lowercase content."""
+    accessor = MagicMock()
+
+    rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        triage=Triage.YELLOW,
+        name="PasswordRule",
+    )
+
+    evaluator = MagicMock()
+    evaluator.file_rules = [rule]
+    evaluator.should_discard_postmatch.return_value = False
+    evaluator.evaluate_file_rule.return_value = RuleDecision(
+        action=MatchAction.SNAFFLE,
+        match="password",
+    )
+
+    scanner = FileScanner(make_cfg(match_filter="PASSWORD"), accessor, evaluator)
+
+    with patch(
+        "snaffler.analysis.file_scanner.parse_unc_path",
+        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
+    ), patch(
+        "snaffler.analysis.file_scanner.log_file_result"
+    ):
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+
+    assert isinstance(result, FileResult)
+    assert result.rule_name == "PasswordRule"
+
+
+def test_match_filter_none_passes_all():
+    """When match_filter is None, all findings are emitted."""
+    accessor = MagicMock()
+
+    rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        triage=Triage.GREEN,
+        name="AnyRule",
+    )
+
+    evaluator = MagicMock()
+    evaluator.file_rules = [rule]
+    evaluator.should_discard_postmatch.return_value = False
+    evaluator.evaluate_file_rule.return_value = RuleDecision(
+        action=MatchAction.SNAFFLE,
+        match="data",
+    )
+
+    scanner = FileScanner(make_cfg(match_filter=None), accessor, evaluator)
+
+    with patch(
+        "snaffler.analysis.file_scanner.parse_unc_path",
+        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
+    ), patch(
+        "snaffler.analysis.file_scanner.log_file_result"
+    ):
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+
+    assert isinstance(result, FileResult)
+    assert result.rule_name == "AnyRule"

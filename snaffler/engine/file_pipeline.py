@@ -231,7 +231,7 @@ class FilePipeline:
                     # --- Seed initial share roots ---
                     for path in paths:
                         cancel = threading.Event()
-                        cancel_events[path] = cancel
+                        cancel_events[path.lower()] = cancel
                         submitted_dirs.add(path.lower())
                         future = executor.submit(
                             self.tree_walker.walk_directory,
@@ -239,7 +239,7 @@ class FilePipeline:
                         )
                         dir_for_future[future] = path
                         share_for_future[future] = path
-                        share_pending[path] = 1
+                        share_pending[path.lower()] = 1
                         pending.add(future)
 
                     # --- Resume: re-walk unwalked directories ---
@@ -247,20 +247,20 @@ class FilePipeline:
                         for unwalked_dir in self.state.load_unwalked_dirs():
                             share_root = _extract_share_unc(unwalked_dir)
                             # Only re-walk dirs belonging to shares we're processing
-                            if share_root not in cancel_events:
+                            if share_root.lower() not in cancel_events:
                                 continue
                             # Skip dirs already submitted (e.g. share roots)
                             if unwalked_dir.lower() in submitted_dirs:
                                 continue
                             submitted_dirs.add(unwalked_dir.lower())
-                            cancel = cancel_events[share_root]
+                            cancel = cancel_events[share_root.lower()]
                             future = executor.submit(
                                 self.tree_walker.walk_directory,
                                 unwalked_dir, on_file, on_dir, cancel,
                             )
                             dir_for_future[future] = unwalked_dir
                             share_for_future[future] = share_root
-                            share_pending[share_root] = share_pending.get(share_root, 0) + 1
+                            share_pending[share_root.lower()] = share_pending.get(share_root.lower(), 0) + 1
                             pending.add(future)
 
                     # --- Resume: seed unchecked files into queue ---
@@ -323,24 +323,30 @@ class FilePipeline:
                                     self.state.mark_dir_walked(dir_unc)
 
                                 # Submit subdirectories
+                                max_depth = self.cfg.scanning.max_depth
                                 for subdir in subdirs:
                                     if subdir.lower() in submitted_dirs:
                                         continue
+                                    if max_depth is not None and share_root:
+                                        rel = subdir[len(share_root):].strip("/")
+                                        depth = len(rel.split("/")) if rel else 0
+                                        if depth > max_depth:
+                                            continue
                                     submitted_dirs.add(subdir.lower())
-                                    cancel = cancel_events.get(share_root, threading.Event())
+                                    cancel = cancel_events.get(share_root.lower(), threading.Event())
                                     sub_future = executor.submit(
                                         self.tree_walker.walk_directory,
                                         subdir, on_file, on_dir, cancel,
                                     )
                                     dir_for_future[sub_future] = subdir
                                     share_for_future[sub_future] = share_root
-                                    share_pending[share_root] = share_pending.get(share_root, 0) + 1
+                                    share_pending[share_root.lower()] = share_pending.get(share_root.lower(), 0) + 1
                                     pending.add(sub_future)
 
                                 # Track share completion
                                 if share_root:
-                                    share_pending[share_root] -= 1
-                                    if share_pending[share_root] == 0:
+                                    share_pending[share_root.lower()] -= 1
+                                    if share_pending[share_root.lower()] == 0:
                                         # Don't mark shares with errors as done — retry on resume
                                         if share_root not in shares_with_errors:
                                             walked_shares.append(share_root)
@@ -389,9 +395,6 @@ class FilePipeline:
                     if self.state:
                         self.state.mark_file_done(unc_path)
 
-                    if self.progress:
-                        self.progress.files_scanned += 1
-
                     if result:
                         with consumer_lock:
                             consumer_results[0] += 1
@@ -403,6 +406,7 @@ class FilePipeline:
                     logger.debug(f"Error scanning {unc_path}: {e}")
                 finally:
                     if self.progress:
+                        self.progress.files_scanned += 1
                         self.progress.files_in_progress -= 1
 
         # ---------- Launch producer + consumers ----------

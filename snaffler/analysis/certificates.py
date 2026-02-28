@@ -66,7 +66,7 @@ class CertificateChecker:
             cert_data, passwords_to_try, filename
         )
 
-        if cert is None:
+        if cert is None and private_key is None:
             return match_reasons  # Could not parse
 
         # Check for private key
@@ -103,7 +103,7 @@ class CertificateChecker:
 
         # Try PKCS#12/PFX format (.pfx, .p12, .pkcs12)
         cert, private_key, password_used = self._try_parse_pkcs12(cert_data, passwords)
-        if cert is not None:
+        if cert is not None or private_key is not None:
             return cert, private_key, password_used
 
         # Try DER format
@@ -134,9 +134,8 @@ class CertificateChecker:
                 # Try with passwords
                 for pwd in passwords:
                     try:
-                        pwd_bytes = pwd.encode('utf-8') if pwd else None
                         private_key = serialization.load_pem_private_key(
-                            cert_data, password=pwd_bytes, backend=default_backend()
+                            cert_data, password=pwd.encode('utf-8'), backend=default_backend()
                         )
                         password_used = pwd
                         break
@@ -163,9 +162,8 @@ class CertificateChecker:
         # Try with passwords
         for pwd in passwords:
             try:
-                pwd_bytes = pwd.encode('utf-8') if pwd else None
                 private_key, cert, additional_certs = pkcs12.load_key_and_certificates(
-                    cert_data, password=pwd_bytes, backend=default_backend()
+                    cert_data, password=pwd.encode('utf-8'), backend=default_backend()
                 )
                 return cert, private_key, pwd
             except Exception:

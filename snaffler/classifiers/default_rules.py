@@ -1179,7 +1179,7 @@ def get_content_grep_rules() -> List[ClassifierRule]:
                 r'[\s]+-passw?o?r?d?',
                 r'api[kK]ey>\s*[^\s<]+\s*<',
                 r'[_\-\.]oauth\s*=\s*[\'"][^\'"]....',
-                r'client_secret\s*=*\s*',
+                r'client_secret\s*=\s*[\'"][^\'"]{4,}',
                 r'<ExtendedMatchKey>ClientAuth',
                 r'GIUserPassword'
             ],
@@ -1195,7 +1195,7 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
             wordlist=[
-                r's3[a]?:\/\/[a-zA-Z0-9\-\+\/]{2,16}'
+                r's3[a]?:\/\/[a-zA-Z0-9\-\+\/\._]{2,64}'
             ],
             triage=Triage.YELLOW,
             description="Files with content matching an AWS S3 or Apache Hadoop S3A URI Prefix"

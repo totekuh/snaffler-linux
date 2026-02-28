@@ -22,6 +22,8 @@ def make_cfg():
     cfg.targets.exclude_share = []
     cfg.targets.exclude_unc = []
 
+    cfg.scanning.max_depth = None
+
     return cfg
 
 
@@ -773,3 +775,99 @@ def test_extract_share_unc():
     assert _extract_share_unc("//HOST/SHARE/dir/file.txt") == "//HOST/SHARE"
     assert _extract_share_unc("//HOST/SHARE") == "//HOST/SHARE"
     assert _extract_share_unc("//10.0.0.1/Data$/path") == "//10.0.0.1/Data$"
+
+
+# ── max_depth ────────────────────────────────────────────────────
+
+def test_max_depth_zero_no_recursion():
+    """--max-depth 0 scans files in share root only, no subdirs walked."""
+    cfg = make_cfg()
+    cfg.scanning.max_depth = 0
+    pipeline = FilePipeline(cfg)
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            if on_file:
+                on_file("//HOST/SHARE/root.txt", 100, 0.0)
+            if on_dir:
+                on_dir("//HOST/SHARE/subdir")
+            return ["//HOST/SHARE/subdir"]
+        # Should never reach here
+        if on_file:
+            on_file(f"{path}/deep.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # Root walk called, but subdir NOT submitted
+    walked = [c[0][0] for c in pipeline.tree_walker.walk_directory.call_args_list]
+    assert "//HOST/SHARE" in walked
+    assert "//HOST/SHARE/subdir" not in walked
+
+    scanned = [c[0][0] for c in pipeline.file_scanner.scan_file.call_args_list]
+    assert scanned == ["//HOST/SHARE/root.txt"]
+
+
+def test_max_depth_limits_recursion():
+    """--max-depth 1 allows one level of subdirs but not deeper."""
+    cfg = make_cfg()
+    cfg.scanning.max_depth = 1
+    pipeline = FilePipeline(cfg)
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            if on_dir:
+                on_dir("//HOST/SHARE/level1")
+            return ["//HOST/SHARE/level1"]
+        if path == "//HOST/SHARE/level1":
+            if on_file:
+                on_file("//HOST/SHARE/level1/file.txt", 100, 0.0)
+            if on_dir:
+                on_dir("//HOST/SHARE/level1/level2")
+            return ["//HOST/SHARE/level1/level2"]
+        if on_file:
+            on_file(f"{path}/deep.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    walked = [c[0][0] for c in pipeline.tree_walker.walk_directory.call_args_list]
+    assert "//HOST/SHARE" in walked
+    assert "//HOST/SHARE/level1" in walked
+    assert "//HOST/SHARE/level1/level2" not in walked
+
+    scanned = [c[0][0] for c in pipeline.file_scanner.scan_file.call_args_list]
+    assert scanned == ["//HOST/SHARE/level1/file.txt"]
+
+
+def test_max_depth_none_unlimited():
+    """No --max-depth means unlimited recursion (default)."""
+    cfg = make_cfg()
+    assert cfg.scanning.max_depth is None
+    pipeline = FilePipeline(cfg)
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            return ["//HOST/SHARE/a"]
+        if path == "//HOST/SHARE/a":
+            return ["//HOST/SHARE/a/b"]
+        if path == "//HOST/SHARE/a/b":
+            return ["//HOST/SHARE/a/b/c"]
+        if path == "//HOST/SHARE/a/b/c":
+            if on_file:
+                on_file("//HOST/SHARE/a/b/c/deep.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    walked = [c[0][0] for c in pipeline.tree_walker.walk_directory.call_args_list]
+    assert "//HOST/SHARE/a/b/c" in walked

@@ -35,6 +35,7 @@ def make_cfg():
     cfg.targets.shares_only = False
     cfg.targets.share_filter = []
     cfg.targets.exclude_share = []
+    cfg.targets.exclusions = []
 
     # ---------- auth ----------
     cfg.auth.domain = None
@@ -1268,3 +1269,94 @@ def test_runner_resume_share_filter_after_pipeline_run():
     assert "//HOST1/Users" in paths
     assert "//HOST1/ADMIN$" not in paths
     assert "//HOST1/IPC$" not in paths
+
+
+# ---------- --exclusions computer/UNC filtering ----------
+
+
+def test_exclusions_filter_computer_targets():
+    """--exclusions removes matching computers before DNS resolution."""
+    cfg = make_cfg()
+    cfg.targets.computer_targets = ["HOST1", "HOST2", "HOST3"]
+    cfg.targets.exclusions = ["HOST2"]
+
+    runner = SnafflerRunner(cfg)
+    runner.share_pipeline.run = MagicMock(return_value=["//HOST1/SHARE", "//HOST3/SHARE"])
+    runner.file_pipeline.run = MagicMock()
+
+    resolvable = {"HOST1": "10.0.0.1", "HOST3": "10.0.0.3"}
+
+    with patch(
+        "snaffler.engine.runner.socket.getaddrinfo",
+        side_effect=_mock_getaddrinfo(resolvable),
+    ), _port_always_open(), patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    # Only HOST1 and HOST3 should reach share pipeline (HOST2 excluded)
+    runner.share_pipeline.run.assert_called_once()
+    called_hosts = runner.share_pipeline.run.call_args[0][0]
+    assert sorted(called_hosts) == ["HOST1", "HOST3"]
+
+
+def test_exclusions_filter_unc_targets():
+    """--exclusions drops UNC paths whose hostname matches the exclusion list."""
+    cfg = make_cfg()
+    cfg.targets.unc_targets = [
+        "//HOST1/Share1",
+        "//HOST2/Share2",
+        "//HOST3/Share3",
+    ]
+    cfg.targets.exclusions = ["HOST2"]
+
+    runner = SnafflerRunner(cfg)
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert "//HOST1/Share1" in paths
+    assert "//HOST3/Share3" in paths
+    assert "//HOST2/Share2" not in paths
+
+
+def test_exclusions_case_insensitive():
+    """Exclusion matching is case-insensitive."""
+    cfg = make_cfg()
+    cfg.targets.computer_targets = ["Server1", "SERVER2", "server3"]
+    cfg.targets.exclusions = ["server1", "Server3"]
+
+    runner = SnafflerRunner(cfg)
+    runner.share_pipeline.run = MagicMock(return_value=[])
+    runner.file_pipeline.run = MagicMock()
+
+    resolvable = {"SERVER2": "10.0.0.2"}
+
+    with patch(
+        "snaffler.engine.runner.socket.getaddrinfo",
+        side_effect=_mock_getaddrinfo(resolvable),
+    ), _port_always_open(), patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    # Only SERVER2 should pass through (Server1 and server3 excluded)
+    runner.share_pipeline.run.assert_called_once()
+    called_hosts = runner.share_pipeline.run.call_args[0][0]
+    assert called_hosts == ["SERVER2"]
+
+
+def test_exclusions_empty_no_effect():
+    """Empty exclusions list doesn't filter anything."""
+    cfg = make_cfg()
+    cfg.targets.unc_targets = ["//HOST1/A", "//HOST2/B"]
+    cfg.targets.exclusions = []
+
+    runner = SnafflerRunner(cfg)
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert paths == ["//HOST1/A", "//HOST2/B"]

@@ -355,8 +355,7 @@ def test_classify_share_c_dollar_logged(caplog):
     cfg.rules.share = get_share_rules()
     finder = ShareFinder(cfg)
 
-    with patch.object(finder, "is_share_readable", return_value=True), \
-         caplog.at_level(logging.WARNING, logger="snaffler"):
+    with caplog.at_level(logging.INFO, logger="snaffler"):
         result = finder._classify_share("//DC01/C$")
 
     assert result is False  # SNAFFLE keeps the share for scanning

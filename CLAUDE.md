@@ -54,7 +54,7 @@ Note: `_get_version()` in `cli/main.py` has a hardcoded fallback for frozen buil
 
 ### CI Pipeline
 
-CI runs on Python 3.11 via GitHub Actions (`.github/workflows/ci.yml`). Five jobs:
+CI runs on Python 3.11 via GitHub Actions (`.github/workflows/ci.yml`). Six jobs:
 1. **test-build** — pytest + build Python package
 2. **build-binary** — PyInstaller single ELF binary (Linux x86_64, ~23MB), smoke test (`--version`)
 3. **build-binary-arm64** — PyInstaller single ELF binary (Linux aarch64), native ARM runner, smoke test (`--version`)
@@ -113,7 +113,7 @@ snaffler/
 │   ├── evaluator.py         # RuleEvaluator: applies rules against FileContext
 │   └── loader.py            # RuleLoader: loads default or custom TOML rules into config
 ├── analysis/
-│   ├── file_scanner.py      # FileScanner: main scan logic (file rules → content rules → cert checks)
+│   ├── file_scanner.py      # FileScanner: main scan logic (file rules → content rules → cert checks → --match filter)
 │   ├── certificates.py      # CertificateChecker: PEM/DER/PKCS12 parsing, private key detection
 │   └── model/
 │       ├── file_context.py  # FileContext: frozen dataclass (unc_path, name, ext, size, modified)
@@ -204,6 +204,14 @@ Two auth paths, both in SMBTransport and LDAPTransport:
 ### UNC Path Exclusion
 
 `--exclude-unc` accepts glob patterns (repeatable) to skip directories during tree walking. Patterns are matched against the full UNC path (case-insensitive), e.g. `*/Windows/*`, `*/node_modules/*`. Stored in `config.targets.exclude_unc` as a list of strings.
+
+### Finding Post-Filter
+
+`--match` accepts a regex pattern to filter findings before output. Applied in `FileScanner._finalize_result()` right after the `--min-interest` severity check. The regex is matched case-insensitively against a newline-joined concatenation of `file_path`, `rule_name`, `match`, and `context` — so it works for filtering by hostname, filename, rule name, or matched content. Compiled once in `FileScanner.__init__`, stored as `self._match_re`. Config field: `cfg.scanning.match_filter` (string or None).
+
+### Host Exclusion
+
+`--exclusions` accepts a file of hostnames/IPs (one per line) to skip entirely. In computer mode, excluded hosts never reach DNS resolution or share discovery. In UNC mode, UNC paths with excluded hostnames are filtered out before file scanning. Stored in `config.targets.exclusions` as a list of uppercase strings.
 
 ### Runtime Hotkeys
 

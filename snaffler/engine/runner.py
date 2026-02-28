@@ -142,6 +142,33 @@ class SnafflerRunner:
                 logger.debug(f"Skipping UNC path {p} (excluded by share filter)")
         return filtered
 
+    # ---------- exclusion helpers ----------
+
+    def _apply_exclusions(self, computers: List[str]) -> List[str]:
+        """Remove computers matching the --exclusions list."""
+        exclusions = self.cfg.targets.exclusions
+        if not exclusions:
+            return computers
+        exc_set = {e.upper() for e in exclusions}
+        before = len(computers)
+        filtered = [c for c in computers if c.upper() not in exc_set]
+        diff = before - len(filtered)
+        if diff:
+            logger.info(f"Excluded {diff} computer(s) via --exclusions")
+        return filtered
+
+    def _filter_paths_by_exclusions(self, paths: List[str]) -> List[str]:
+        """Remove UNC paths whose hostname matches the --exclusions list."""
+        exclusions = self.cfg.targets.exclusions
+        if not exclusions:
+            return paths
+        exc_set = {e.upper() for e in exclusions}
+        filtered = [p for p in paths if p.split("/")[2].upper() not in exc_set]
+        diff = len(paths) - len(filtered)
+        if diff:
+            logger.info(f"Excluded {diff} UNC path(s) via --exclusions")
+        return filtered
+
     # ---------- resume helpers ----------
 
     def _resume_computer_discovery(self, domain_pipeline) -> List[str]:
@@ -351,6 +378,7 @@ class SnafflerRunner:
             # ---------- Direct UNC paths ----------
             if self.cfg.targets.unc_targets:
                 paths = self._filter_paths_by_share(self.cfg.targets.unc_targets)
+                paths = self._filter_paths_by_exclusions(paths)
                 # Seed progress counters from UNC paths so summary stats
                 # include computer/share counts even without SharePipeline.
                 hosts = {p.split("/")[2] for p in paths if p.startswith("//")}
@@ -363,9 +391,10 @@ class SnafflerRunner:
 
             # ---------- Explicit computer list ----------
             elif self.cfg.targets.computer_targets:
-                resolved = self._resolve_computers(
+                computers = self._apply_exclusions(
                     self.cfg.targets.computer_targets
                 )
+                resolved = self._resolve_computers(computers) if computers else []
                 share_paths = self._resume_share_discovery(resolved) if resolved else []
                 if share_paths:
                     self._rebalance_file_threads()

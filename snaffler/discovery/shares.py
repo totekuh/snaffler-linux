@@ -158,12 +158,8 @@ class ShareFinder:
                     logger.debug(f"Share {unc_path} matched DISCARD rule: {classifier.rule_name}")
                     return True
                 elif classifier.match_action == MatchAction.SNAFFLE:
-                    # Log the interesting share (only if readable)
-                    # Extract computer and share name from unc_path
-                    parts = unc_path.strip('/').split('/', 1)
-                    if len(parts) == 2 and self.is_share_readable(parts[0], parts[1]):
-                        logger.warning(f"[{classifier.triage.label}] [{classifier.rule_name}] Share: {unc_path}")
-                    # Continue scanning this share
+                    # Log the finding — readability is checked later in get_computer_shares()
+                    logger.info(f"[{classifier.triage.label}] [{classifier.rule_name}] Share: {unc_path}")
                     return False
 
         return False

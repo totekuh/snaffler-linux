@@ -404,7 +404,7 @@ def render_dashboard() -> str:
       document.getElementById("card-computers").textContent =
         (d.computers_done || 0).toLocaleString() + " / " + (d.computers_total || 0).toLocaleString();
       document.getElementById("card-shares").textContent =
-        (d.shares_walked || 0).toLocaleString() + " / " + (d.shares_found || 0).toLocaleString();
+        (d.shares_walked || 0).toLocaleString() + " / " + (d.shares_total || d.shares_found || 0).toLocaleString();
       document.getElementById("card-files").textContent =
         (d.files_scanned || 0).toLocaleString() + " / " + (d.files_total || 0).toLocaleString();
 

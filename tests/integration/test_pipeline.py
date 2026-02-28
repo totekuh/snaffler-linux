@@ -301,6 +301,417 @@ class TestEndToEnd:
         assert len(caplog.records) > 0
 
 
+class TestMaxDepth:
+    """--max-depth limits how deep the tree walker recurses."""
+
+    def test_depth_zero_only_share_root_files(self, cfg):
+        """max_depth=0 means only files in the share root are scanned."""
+        cfg.scanning.max_depth = 0
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress_d0 = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_d0).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Now unlimited for comparison
+        cfg.scanning.max_depth = None
+        smb2 = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb2
+            at.return_value.connect.return_value = smb2
+
+            progress_all = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_all).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Depth 0 scans only root-level files (tests/data has ~20)
+        assert progress_d0.files_scanned > 0
+        # But far fewer than unlimited
+        assert progress_d0.files_scanned < progress_all.files_scanned
+
+    def test_depth_one_only_first_level_subdirs(self, cfg):
+        """max_depth=1 recurses into top-level subdirectories but no deeper."""
+        cfg.scanning.max_depth = 1
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress_limited = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_limited).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Now run unlimited for comparison
+        cfg.scanning.max_depth = None
+        smb2 = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb2
+            at.return_value.connect.return_value = smb2
+
+            progress_unlimited = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_unlimited).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Depth-1 should scan files (top-level dirs have files)
+        assert progress_limited.files_scanned > 0
+        # But fewer than unlimited (some files are in deeper subdirs)
+        assert progress_limited.files_scanned < progress_unlimited.files_scanned
+
+    def test_unlimited_depth_scans_deepest_files(self, cfg):
+        """Without max_depth, files at any depth are scanned."""
+        cfg.scanning.max_depth = None
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # tests/data/ has files nested 2-3 levels deep (e.g. home/user/.ssh/)
+        assert progress.files_scanned > 200
+
+
+class TestExcludeUNC:
+    """--exclude-unc glob patterns skip matching directories."""
+
+    def test_exclude_pattern_reduces_files(self, cfg):
+        """Excluding a directory pattern means fewer files scanned."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        # Baseline: no exclusions
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress_full = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_full).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Now with exclusions
+        cfg.targets.exclude_unc = ["*/relay_*"]
+        smb2 = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb2
+            at.return_value.connect.return_value = smb2
+
+            progress_excl = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_excl).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Excluding relay_* dirs should mean fewer files
+        assert progress_excl.files_scanned < progress_full.files_scanned
+        # But still some files (non-relay dirs)
+        assert progress_excl.files_scanned > 0
+
+    def test_multiple_exclude_patterns(self, cfg):
+        """Multiple --exclude-unc patterns stack additively."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        # Exclude two specific directories
+        cfg.targets.exclude_unc = ["*/relay_*", "*/gpp*"]
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress_two = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_two).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Now exclude only one
+        cfg.targets.exclude_unc = ["*/relay_*"]
+        smb2 = _make_smb_mock(_DATA_DIR)
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb2
+            at.return_value.connect.return_value = smb2
+
+            progress_one = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_one).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Two exclusions should scan fewer files than one
+        assert progress_two.files_scanned < progress_one.files_scanned
+
+
+class TestShareFilters:
+    """--share and --exclude-share filter shares in the pipeline."""
+
+    def test_include_filter_limits_shares(self, cfg):
+        """--share glob limits which shares are returned."""
+        cfg.targets.share_filter = ["Test*"]
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.shares.SMBTransport") as t:
+            t.return_value.connect.return_value = smb
+            paths = SharePipeline(cfg=cfg).run(["10.0.0.1"])
+
+        assert paths == ["//10.0.0.1/TestShare"]
+
+    def test_exclude_filter_drops_shares(self, cfg):
+        """--exclude-share glob removes matching shares."""
+        cfg.targets.exclude_share = ["Test*"]
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.shares.SMBTransport") as t:
+            t.return_value.connect.return_value = smb
+            paths = SharePipeline(cfg=cfg).run(["10.0.0.1"])
+
+        assert paths == []
+
+    def test_share_filter_end_to_end_no_files_when_excluded(self, cfg):
+        """Excluding the only share means no files are scanned."""
+        cfg.targets.exclude_share = ["Test*"]
+        smb = _make_smb_mock(_DATA_DIR)
+        progress = ProgressState()
+
+        with patch("snaffler.discovery.shares.SMBTransport") as st, \
+                patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            st.return_value.connect.return_value = smb
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            paths = SharePipeline(cfg=cfg, progress=progress).run(["10.0.0.1"])
+            matched = FilePipeline(cfg=cfg, progress=progress).run(paths)
+
+        assert progress.shares_found == 0
+        assert progress.files_scanned == 0
+        assert matched == 0
+
+
+class TestResumeIntegration:
+    """Resume from SQLite state survives interrupt and resumes correctly."""
+
+    def test_resume_skips_checked_files(self, cfg):
+        """Files marked checked in state DB are not re-scanned on resume."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
+            db_path = f.name
+
+        try:
+            cfg.state.state_db = db_path
+
+            # Run 1: full scan
+            with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                    patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+                tt.return_value.connect.return_value = smb
+                at.return_value.connect.return_value = smb
+
+                progress1 = ProgressState()
+                state1 = ScanState(SQLiteStateStore(db_path))
+                matched1 = FilePipeline(cfg=cfg, progress=progress1, state=state1).run(
+                    ["//10.0.0.1/TestShare"]
+                )
+                state1.close()
+
+            scanned_run1 = progress1.files_scanned
+            assert scanned_run1 > 0
+
+            # Run 2: resume — all files already checked
+            smb2 = _make_smb_mock(_DATA_DIR)
+
+            with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                    patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+                tt.return_value.connect.return_value = smb2
+                at.return_value.connect.return_value = smb2
+
+                progress2 = ProgressState()
+                state2 = ScanState(SQLiteStateStore(db_path))
+                matched2 = FilePipeline(cfg=cfg, progress=progress2, state=state2).run(
+                    ["//10.0.0.1/TestShare"]
+                )
+                state2.close()
+
+            # Run 2 walks dirs (re-walks are expected) but skips checked files
+            assert progress2.files_scanned == 0
+        finally:
+            import os
+            for suffix in ("", "-wal", "-shm"):
+                p = db_path + suffix
+                if os.path.exists(p):
+                    os.unlink(p)
+
+    def test_resume_state_persists_shares(self, cfg):
+        """Share done flags persist across runs."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
+            db_path = f.name
+
+        try:
+            cfg.state.state_db = db_path
+
+            with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                    patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+                tt.return_value.connect.return_value = smb
+                at.return_value.connect.return_value = smb
+
+                state = ScanState(SQLiteStateStore(db_path))
+                FilePipeline(cfg=cfg, state=state).run(
+                    ["//10.0.0.1/TestShare"]
+                )
+                state.close()
+
+            # Verify share is marked done in state DB
+            store = SQLiteStateStore(db_path)
+            assert store.has_checked_share("//10.0.0.1/TestShare")
+            store.close()
+        finally:
+            import os
+            for suffix in ("", "-wal", "-shm"):
+                p = db_path + suffix
+                if os.path.exists(p):
+                    os.unlink(p)
+
+
+class TestProgressCounters:
+    """Progress counters are accurate through the full pipeline."""
+
+    def test_severity_counts_match_total(self, cfg):
+        """Sum of severity counts equals total files_matched."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress = ProgressState()
+            matched = FilePipeline(cfg=cfg, progress=progress).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        severity_sum = (
+            progress.severity_black
+            + progress.severity_red
+            + progress.severity_yellow
+            + progress.severity_green
+        )
+        assert severity_sum == matched
+        assert matched == progress.files_matched
+
+    def test_files_scanned_equals_total_when_no_errors(self, cfg):
+        """When everything succeeds, files_scanned == files_total."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        assert progress.files_scanned == progress.files_total
+        assert progress.files_scanned > 0
+
+
+class TestMinInterest:
+    """--min-interest filters findings by triage severity."""
+
+    def test_min_interest_zero_most_findings(self, cfg):
+        """min_interest=0 (GREEN) reports everything."""
+        cfg.scanning.min_interest = 0
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress_all = ProgressState()
+            matched_all = FilePipeline(cfg=cfg, progress=progress_all).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Now with higher threshold
+        cfg.scanning.min_interest = 2  # RED and above
+        smb2 = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb2
+            at.return_value.connect.return_value = smb2
+
+            progress_high = ProgressState()
+            matched_high = FilePipeline(cfg=cfg, progress=progress_high).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Fewer findings with higher threshold
+        assert matched_high < matched_all
+        assert matched_high > 0  # test data has RED/BLACK findings
+
+
+class TestMatchFilter:
+    """--match regex filter reduces findings output."""
+
+    def test_match_filter_reduces_findings(self, cfg):
+        """Pipeline with match_filter produces fewer matches than without."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        # Baseline: no filter
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress_all = ProgressState()
+            matched_all = FilePipeline(cfg=cfg, progress=progress_all).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Now with a narrow filter
+        cfg.scanning.match_filter = "password"
+        smb2 = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb2
+            at.return_value.connect.return_value = smb2
+
+            progress_filtered = ProgressState()
+            matched_filtered = FilePipeline(cfg=cfg, progress=progress_filtered).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Filter should produce strictly fewer findings
+        assert matched_filtered < matched_all
+        # But still some (test data has password-related files)
+        assert matched_filtered > 0
+
+
 class TestDNSPreResolution:
     """DNS pre-resolution filters dead hosts before share discovery."""
 
@@ -518,3 +929,111 @@ class TestDNSPreResolution:
         finally:
             import os
             os.unlink(db_path)
+
+
+class TestExclusions:
+    """--exclusions skips hosts matching the exclusion file."""
+
+    def _make_dns_mock(self, resolvable: dict):
+        """Return a getaddrinfo side_effect that resolves only hosts in *resolvable*."""
+        def fake(host, port, family=0, type_=0, proto=0, flags=0):
+            if host in resolvable:
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (resolvable[host], port))]
+            raise socket.gaierror(8, "nodename nor servname provided, or not known")
+        return fake
+
+    def test_exclusions_skip_host_in_computer_mode(self, cfg):
+        """Excluded host never reaches DNS, share discovery, or file scanning."""
+        cfg.targets.computer_targets = ["INCLUDED", "EXCLUDED"]
+        cfg.targets.exclusions = ["EXCLUDED"]
+
+        smb = _make_smb_mock(_DATA_DIR)
+        resolvable = {"INCLUDED": "10.0.0.1", "EXCLUDED": "10.0.0.2"}
+        dns_hosts_queried = []
+
+        def tracking_dns(host, port, family=0, type_=0, proto=0, flags=0):
+            dns_hosts_queried.append(host)
+            if host in resolvable:
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (resolvable[host], port))]
+            raise socket.gaierror(8, "not found")
+
+        with patch("snaffler.engine.runner.socket.getaddrinfo",
+                    side_effect=tracking_dns), \
+             patch("snaffler.engine.runner.socket.create_connection",
+                   return_value=MagicMock()), \
+             patch("snaffler.discovery.shares.SMBTransport") as st, \
+             patch("snaffler.discovery.tree.SMBTransport") as tt, \
+             patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
+             patch("snaffler.engine.runner.print_completion_stats"):
+
+            st.return_value.connect.return_value = smb
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            runner = SnafflerRunner(cfg)
+            runner.execute()
+
+        p = runner.progress
+
+        # EXCLUDED never reached DNS
+        assert "EXCLUDED" not in dns_hosts_queried
+        assert "INCLUDED" in dns_hosts_queried
+
+        # Only INCLUDED reached share discovery
+        assert p.dns_total == 1
+        assert p.dns_resolved == 1
+        assert p.computers_total == 1
+        assert p.computers_done == 1
+
+        # File pipeline ran on INCLUDED's shares and found matches
+        assert p.shares_found >= 1
+        assert p.files_scanned > 0
+        assert p.files_matched > 0
+
+    def test_exclusions_skip_host_in_unc_mode(self, cfg):
+        """UNC paths with excluded hostnames produce no file scans."""
+        cfg.targets.unc_targets = [
+            "//INCLUDED/TestShare",
+            "//EXCLUDED/TestShare",
+        ]
+        cfg.targets.exclusions = ["EXCLUDED"]
+
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+             patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
+             patch("snaffler.engine.runner.print_completion_stats"):
+
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            runner = SnafflerRunner(cfg)
+            runner.execute()
+
+        p = runner.progress
+
+        # Only INCLUDED host counted
+        assert p.computers_total == 1
+        assert p.shares_found == 1
+
+        # File pipeline ran and found matches in test data
+        assert p.files_scanned > 0
+        assert p.files_matched > 0
+
+    def test_exclusions_all_hosts_excluded(self, cfg):
+        """Excluding every host means nothing runs."""
+        cfg.targets.computer_targets = ["HOST1", "HOST2"]
+        cfg.targets.exclusions = ["HOST1", "HOST2"]
+
+        with patch("snaffler.engine.runner.socket.getaddrinfo",
+                    side_effect=AssertionError("DNS should not be called")), \
+             patch("snaffler.engine.runner.print_completion_stats"):
+
+            runner = SnafflerRunner(cfg)
+            runner.execute()
+
+        p = runner.progress
+        assert p.dns_total == 0
+        assert p.computers_total == 0
+        assert p.shares_found == 0
+        assert p.files_scanned == 0

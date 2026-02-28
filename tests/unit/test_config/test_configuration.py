@@ -58,14 +58,24 @@ def test_validate_rule_dir_not_directory(tmp_path):
 
 # ---------- kerberos ----------
 
-def test_kerberos_with_password_invalid():
+def test_kerberos_with_password_valid():
+    """Kerberos + password is valid — impacket requests a TGT from the KDC."""
     cfg = SnafflerConfiguration()
     cfg.auth.kerberos = True
     cfg.auth.password = "secret"
     cfg.auth.domain = "example.com"
 
-    with pytest.raises(typer.BadParameter):
-        cfg.validate()
+    cfg.validate()  # no exception
+
+
+def test_kerberos_with_nthash_valid():
+    """Kerberos + nthash is valid — impacket uses RC4 for the TGT."""
+    cfg = SnafflerConfiguration()
+    cfg.auth.kerberos = True
+    cfg.auth.nthash = "aad3b435b51404eeaad3b435b51404ee"
+    cfg.auth.domain = "example.com"
+
+    cfg.validate()  # no exception
 
 
 def test_kerberos_requires_domain():

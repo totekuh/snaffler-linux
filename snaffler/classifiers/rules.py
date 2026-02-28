@@ -2,12 +2,15 @@
 Classification rules system
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
 import tomlkit
+
+logger = logging.getLogger("snaffler")
 
 
 class EnumerationScope(Enum):
@@ -184,7 +187,7 @@ def load_rules_from_toml(toml_path: str) -> List[ClassifierRule]:
                 rule = ClassifierRule.from_toml(rule_data)
                 rules.append(rule)
             except Exception as e:
-                print(f"Error loading rule: {e}")
+                logger.warning(f"Error loading rule: {e}")
                 continue
 
     return rules
@@ -211,6 +214,6 @@ def load_rules_from_directory(rules_dir: str) -> List[ClassifierRule]:
             file_rules = load_rules_from_toml(str(toml_file))
             rules.extend(file_rules)
         except Exception as e:
-            print(f"Error loading {toml_file}: {e}")
+            logger.warning(f"Error loading {toml_file}: {e}")
 
     return rules

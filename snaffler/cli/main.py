@@ -159,6 +159,11 @@ def main(
             help="Skip paths matching glob pattern against full UNC path (case-insensitive, repeatable)",
             rich_help_panel="Targeting",
         ),
+        exclusions_file: Optional[Path] = typer.Option(
+            None, "--exclusions",
+            help="File of hostnames/IPs to skip (one per line)",
+            rich_help_panel="Targeting",
+        ),
 
         # ---------------- NETWORK ----------------
         dc_host: Optional[str] = typer.Option(
@@ -256,6 +261,17 @@ def main(
             help=f"Bytes of context around matched strings (default: {DEFAULT_MATCH_CONTEXT})",
             rich_help_panel="Scanning",
         ),
+        max_depth: Optional[int] = typer.Option(
+            None,
+            "--max-depth",
+            help="Maximum directory recursion depth (0 = share root only)",
+            rich_help_panel="Scanning",
+        ),
+        match_filter: Optional[str] = typer.Option(
+            None, "--match",
+            help="Only output findings matching this regex (applied to path, rule, match, context)",
+            rich_help_panel="Scanning",
+        ),
 
         # ---------------- ADVANCED ----------------
         max_threads: int = typer.Option(
@@ -326,23 +342,29 @@ def main(
     if config_file:
         cfg.load_from_toml(str(config_file))
 
+    # ---------- CLI → config (only override TOML when explicitly provided) ----------
+    def _explicit(param: str) -> bool:
+        """True if the CLI param was explicitly provided (not just the default)."""
+        from click.core import ParameterSource
+        return ctx.get_parameter_source(param) != ParameterSource.DEFAULT
+
     # ---------- AUTH ----------
-    cfg.auth.username = username
-    cfg.auth.password = password
-    cfg.auth.nthash = nthash
-    cfg.auth.domain = domain
-    cfg.auth.dc_host = dc_host
-    cfg.auth.smb_timeout = smb_timeout
-    cfg.auth.kerberos = kerberos
-    cfg.auth.use_kcache = use_kcache
+    if _explicit("username"):     cfg.auth.username = username
+    if _explicit("password"):     cfg.auth.password = password
+    if _explicit("nthash"):       cfg.auth.nthash = nthash
+    if _explicit("domain"):       cfg.auth.domain = domain
+    if _explicit("dc_host"):      cfg.auth.dc_host = dc_host
+    if _explicit("smb_timeout"):  cfg.auth.smb_timeout = smb_timeout
+    if _explicit("kerberos"):     cfg.auth.kerberos = kerberos
+    if _explicit("use_kcache"):   cfg.auth.use_kcache = use_kcache
 
     # ---------- TARGETING ----------
-    cfg.targets.unc_targets = unc_targets or []
-    cfg.targets.shares_only = shares_only
-    cfg.targets.skip_disabled_computers = not include_disabled
-    cfg.targets.share_filter = share or []
-    cfg.targets.exclude_share = exclude_share or []
-    cfg.targets.exclude_unc = exclude_unc or []
+    if _explicit("unc_targets"):      cfg.targets.unc_targets = unc_targets or []
+    if _explicit("shares_only"):      cfg.targets.shares_only = shares_only
+    if _explicit("include_disabled"): cfg.targets.skip_disabled_computers = not include_disabled
+    if _explicit("share"):            cfg.targets.share_filter = share or []
+    if _explicit("exclude_share"):    cfg.targets.exclude_share = exclude_share or []
+    if _explicit("exclude_unc"):      cfg.targets.exclude_unc = exclude_unc or []
 
     if computer and computer_file:
         raise typer.BadParameter("Use either --computer or --computer-file, not both")
@@ -353,6 +375,11 @@ def main(
     if computer_file:
         cfg.targets.computer_targets = [
             l.strip().upper() for l in computer_file.read_text().splitlines() if l.strip()
+        ]
+
+    if exclusions_file:
+        cfg.targets.exclusions = [
+            l.strip().upper() for l in exclusions_file.read_text().splitlines() if l.strip()
         ]
 
     # ---------- STDIN (NXC) ----------
@@ -384,26 +411,35 @@ def main(
             "--unc, --computer/--computer-file, --stdin, or --domain"
         )
     # ---------- SCANNING ----------
-    cfg.scanning.min_interest = min_interest
-    cfg.scanning.max_read_bytes = max_read_bytes
-    cfg.scanning.max_file_bytes = max_file_bytes
-    cfg.scanning.match_context_bytes = context
+    if _explicit("min_interest"):   cfg.scanning.min_interest = min_interest
+    if _explicit("max_read_bytes"): cfg.scanning.max_read_bytes = max_read_bytes
+    if _explicit("max_file_bytes"): cfg.scanning.max_file_bytes = max_file_bytes
+    if _explicit("context"):        cfg.scanning.match_context_bytes = context
+    if _explicit("max_depth"):      cfg.scanning.max_depth = max_depth
+
+    if match_filter:
+        import re
+        try:
+            re.compile(match_filter)
+        except re.error as exc:
+            raise typer.BadParameter(f"Invalid --match regex: {exc}")
+        cfg.scanning.match_filter = match_filter
 
     if snaffle_path:
         cfg.scanning.snaffle = True
         cfg.scanning.snaffle_path = str(snaffle_path)
 
     # ---------- ADVANCED ----------
-    cfg.advanced.max_threads = max_threads
-    cfg.advanced.dns_threads = dns_threads
-    cfg.advanced.stealth = stealth
+    if _explicit("max_threads"):  cfg.advanced.max_threads = max_threads
+    if _explicit("dns_threads"):  cfg.advanced.dns_threads = dns_threads
+    if _explicit("stealth"):      cfg.advanced.stealth = stealth
 
-    per_bucket = max(1, max_threads // 3)
+    per_bucket = max(1, cfg.advanced.max_threads // 3)
     cfg.advanced.share_threads = per_bucket
     cfg.advanced.tree_threads = per_bucket
     cfg.advanced.file_threads = per_bucket
 
-    if rule_dir:
+    if _explicit("rule_dir"):
         cfg.rules.rule_dir = f"{rule_dir}"
 
     # ---------- OUTPUT ----------
@@ -430,12 +466,12 @@ def main(
     if fresh and state_path.exists():
         state_path.unlink()
     cfg.state.state_db = str(state_path)
-    cfg.state.fresh = fresh
+    if _explicit("fresh"):      cfg.state.fresh = fresh
 
     # ---------- WEB DASHBOARD ----------
-    cfg.web.enabled = web
-    cfg.web.port = web_port
-    if web_port != 8080 and not web:
+    if _explicit("web"):        cfg.web.enabled = web
+    if _explicit("web_port"):   cfg.web.port = web_port
+    if _explicit("web_port") and not cfg.web.enabled:
         typer.echo("Warning: --web-port has no effect without --web", err=True)
 
     # ---------- validate ----------

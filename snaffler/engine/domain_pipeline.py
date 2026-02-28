@@ -49,8 +49,9 @@ class DomainPipeline:
         logger.info(f"Discovered {len(computers)} computers from AD")
 
         if self.exclusions:
+            exc_set = {e.upper() for e in self.exclusions}
             before = len(computers)
-            computers = [c for c in computers if c not in self.exclusions]
+            computers = [c for c in computers if c.upper() not in exc_set]
             logger.info(
                 f"Excluded {before - len(computers)} computers via exclusions list"
             )
