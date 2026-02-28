@@ -285,6 +285,16 @@ jobs:
         id: version
         run: echo "version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')" >> "$GITHUB_OUTPUT"
 
+      - name: Generate SHA256 checksums
+        run: |
+          sha256sum binary/snaffler-linux-x86_64 \
+                    binary-arm64/snaffler-linux-aarch64 \
+                    binary-windows/snaffler-windows-x86_64.exe \
+                    deb/*.deb \
+                    dist/*.tar.gz \
+                    dist/*.whl \
+            | sed 's|  .*/|  |' > SHA256SUMS.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -297,3 +307,4 @@ jobs:
             binary-arm64/snaffler-linux-aarch64
             binary-windows/snaffler-windows-x86_64.exe
             deb/*.deb
+            SHA256SUMS.txt
