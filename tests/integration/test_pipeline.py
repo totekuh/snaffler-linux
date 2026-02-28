@@ -711,6 +711,87 @@ class TestMatchFilter:
         # But still some (test data has password-related files)
         assert matched_filtered > 0
 
+    def test_match_filter_does_not_affect_files_scanned(self, cfg):
+        """--match only filters output, not scanning — files_scanned is unchanged."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        # Baseline: no filter
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            progress_all = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_all).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Now with filter
+        cfg.scanning.match_filter = "password"
+        smb2 = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb2
+            at.return_value.connect.return_value = smb2
+
+            progress_filtered = ProgressState()
+            FilePipeline(cfg=cfg, progress=progress_filtered).run(
+                ["//10.0.0.1/TestShare"]
+            )
+
+        # Same number of files scanned regardless of --match
+        assert progress_filtered.files_scanned == progress_all.files_scanned
+
+    def test_match_filter_persists_to_finding_store(self, cfg):
+        """Filtered-out findings are still written to the finding store (DB)."""
+        smb = _make_smb_mock(_DATA_DIR)
+        stored_findings = []
+
+        def fake_store(**kwargs):
+            stored_findings.append(kwargs)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            # Baseline: count all findings persisted without filter
+            set_finding_store(fake_store)
+            progress_all = ProgressState()
+            matched_all = FilePipeline(cfg=cfg, progress=progress_all).run(
+                ["//10.0.0.1/TestShare"]
+            )
+            total_stored = len(stored_findings)
+            set_finding_store(None)
+
+        # Now with filter — DB should still get all findings
+        cfg.scanning.match_filter = "password"
+        smb2 = _make_smb_mock(_DATA_DIR)
+        stored_findings_filtered = []
+
+        def fake_store_filtered(**kwargs):
+            stored_findings_filtered.append(kwargs)
+
+        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+            tt.return_value.connect.return_value = smb2
+            at.return_value.connect.return_value = smb2
+
+            set_finding_store(fake_store_filtered)
+            progress_filtered = ProgressState()
+            matched_filtered = FilePipeline(cfg=cfg, progress=progress_filtered).run(
+                ["//10.0.0.1/TestShare"]
+            )
+            set_finding_store(None)
+
+        # Pipeline return count is reduced (output filter)
+        assert matched_filtered < matched_all
+        # DB persistence count is NOT reduced — all findings still stored
+        # (may be slightly higher because filtered BLACK results don't trigger
+        # the early-exit optimization, allowing content rules to run too)
+        assert len(stored_findings_filtered) >= total_stored
+
 
 class TestDNSPreResolution:
     """DNS pre-resolution filters dead hosts before share discovery."""
