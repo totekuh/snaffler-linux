@@ -62,11 +62,7 @@ def test_scan_file_unreadable_content():
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert result is None
     accessor.read.assert_called_once()
@@ -74,7 +70,6 @@ def test_scan_file_unreadable_content():
 
 def test_scan_file_discard_rule():
     accessor = MagicMock()
-
 
     rule = make_rule(action=MatchAction.DISCARD)
 
@@ -86,18 +81,13 @@ def test_scan_file_discard_rule():
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert result is None
 
 
 def test_scan_file_snaffle_rule():
     accessor = MagicMock()
-
 
     rule = make_rule(
         action=MatchAction.SNAFFLE,
@@ -115,12 +105,7 @@ def test_scan_file_snaffle_rule():
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ), patch(
-        "snaffler.analysis.file_scanner.log_file_result"
-    ):
+    with patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
@@ -144,16 +129,11 @@ def test_scan_file_check_for_keys():
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/cert.pfx", "cert.pfx", ".pfx"),
-    ), patch.object(
+    with patch.object(
         scanner.cert_checker,
         "check_certificate",
         return_value=["HasPrivateKey"],
-    ), patch(
-        "snaffler.analysis.file_scanner.log_file_result"
-    ):
+    ), patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/cert.pfx", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
@@ -187,12 +167,7 @@ def test_scan_file_content_rule():
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ), patch(
-        "snaffler.analysis.file_scanner.log_file_result"
-    ):
+    with patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
@@ -204,18 +179,13 @@ def test_scan_file_zero_mtime():
     """mtime_epoch=0 should result in modified=None."""
     accessor = MagicMock()
 
-
     evaluator = MagicMock()
     evaluator.file_rules = []
     evaluator.content_rules = []
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 0.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 0.0)
 
     # No rules match → None result, but we just verify it doesn't crash
     assert result is None
@@ -249,12 +219,7 @@ def test_scan_file_black_triage_skips_content_scan():
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/ntds.dit", "ntds.dit", ".dit"),
-    ), patch(
-        "snaffler.analysis.file_scanner.log_file_result"
-    ):
+    with patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/ntds.dit", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
@@ -284,12 +249,7 @@ def test_match_filter_passes_matching_finding():
 
     scanner = FileScanner(make_cfg(match_filter="SecretRule"), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ), patch(
-        "snaffler.analysis.file_scanner.log_file_result"
-    ):
+    with patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
@@ -316,12 +276,7 @@ def test_match_filter_blocks_non_matching_finding():
 
     scanner = FileScanner(make_cfg(match_filter="nomatch_pattern"), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ), patch(
-        "snaffler.analysis.file_scanner.log_file_result"
-    ) as mock_log:
+    with patch("snaffler.analysis.file_scanner.log_file_result") as mock_log:
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     # Return value is None (filtered from pipeline output)
@@ -356,19 +311,14 @@ def test_match_filter_still_downloads_non_matching():
 
     scanner = FileScanner(cfg, accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ), patch(
-        "snaffler.analysis.file_scanner.log_file_result"
-    ):
+    with patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     # Return value is None (filtered from output)
     assert result is None
     # But file was still downloaded
     accessor.copy_to_local.assert_called_once_with(
-        "srv", "share", "/f.txt", "/tmp/loot"
+        "//srv/share/f.txt", "/tmp/loot"
     )
 
 
@@ -392,12 +342,7 @@ def test_match_filter_case_insensitive():
 
     scanner = FileScanner(make_cfg(match_filter="PASSWORD"), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ), patch(
-        "snaffler.analysis.file_scanner.log_file_result"
-    ):
+    with patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
@@ -424,12 +369,7 @@ def test_match_filter_none_passes_all():
 
     scanner = FileScanner(make_cfg(match_filter=None), accessor, evaluator)
 
-    with patch(
-        "snaffler.analysis.file_scanner.parse_unc_path",
-        return_value=("srv", "share", "/f.txt", "f.txt", ".txt"),
-    ), patch(
-        "snaffler.analysis.file_scanner.log_file_result"
-    ):
+    with patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)

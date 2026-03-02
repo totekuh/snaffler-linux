@@ -13,7 +13,6 @@ from snaffler.classifiers.rules import MatchLocation, MatchAction
 def make_ctx(
         *,
         unc_path="//HOST/SHARE/secret.txt",
-        smb_path="\\secret.txt",
         name="secret.txt",
         ext=".txt",
         size=1337,
@@ -21,7 +20,6 @@ def make_ctx(
 ):
     return FileContext(
         unc_path=unc_path,
-        smb_path=smb_path,
         name=name,
         ext=ext,
         size=size,

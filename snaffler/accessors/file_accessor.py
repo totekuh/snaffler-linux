@@ -1,4 +1,4 @@
-# snaffler/transport/file_accessor.py
+# snaffler/accessors/file_accessor.py
 
 from abc import ABC, abstractmethod
 from typing import Optional
@@ -6,15 +6,9 @@ from typing import Optional
 
 class FileAccessor(ABC):
     @abstractmethod
-    def read(self, server: str, share: str, path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
+    def read(self, file_path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
         ...
 
     @abstractmethod
-    def copy_to_local(
-            self,
-            server: str,
-            share: str,
-            path: str,
-            dest_root,
-    ) -> None:
+    def copy_to_local(self, file_path: str, dest_root) -> None:
         ...

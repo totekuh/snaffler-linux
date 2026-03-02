@@ -24,7 +24,6 @@ def evaluator():
 def make_ctx(path: Path) -> FileContext:
     return FileContext(
         unc_path=str(path),
-        smb_path=str(path),
         name=path.name,
         ext=path.suffix.lower(),
         size=path.stat().st_size,

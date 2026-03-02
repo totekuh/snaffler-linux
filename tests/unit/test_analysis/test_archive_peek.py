@@ -127,9 +127,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/backups/stuff.zip", "stuff.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/backups/stuff.zip", 500, 1700000000.0)
 
         assert isinstance(result, FileResult)
@@ -154,9 +152,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/stuff.zip", "stuff.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         assert result is None
@@ -174,9 +170,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/bad.zip", "bad.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/bad.zip", 100, 1700000000.0)
 
         assert result is None
@@ -193,9 +187,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(max_read=100), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/big.zip", "big.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/big.zip", 999999, 1700000000.0)
 
         # No read because size > max_read_bytes
@@ -218,9 +210,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/nested.zip", "nested.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/nested.zip", 500, 1700000000.0)
 
         # inner.zip triggers ENTER_ARCHIVE but _peek_archive skips recursive
@@ -243,9 +233,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/stuff.zip", "stuff.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         assert result is None
@@ -265,9 +253,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/archive.zip", "archive.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/archive.zip", 500, 1700000000.0)
 
         assert result is not None
@@ -286,9 +272,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/stuff.7z", "stuff.7z", ".7z")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"), \
+        with patch("snaffler.analysis.file_scanner.log_file_result"), \
              patch.dict("sys.modules", {"py7zr": None}):
             result = scanner.scan_file("//srv/share/stuff.7z", 500, 1700000000.0)
 
@@ -307,9 +291,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/stuff.zip", "stuff.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         assert result is None
@@ -330,9 +312,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/test_archive.zip", "test_archive.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file(
                 "//srv/share/test_archive.zip", len(zip_data), 1700000000.0
             )
@@ -357,9 +337,7 @@ class TestArchivePeek:
             make_cfg(match_filter="nomatch_pattern"), accessor, evaluator
         )
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/stuff.zip", "stuff.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         # --match filter suppresses the output
@@ -380,9 +358,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/stuff.zip", "stuff.zip", ".zip")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         assert isinstance(result, FileResult)
@@ -408,9 +384,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/backup.rar", "backup.rar", ".rar")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/backup.rar", len(rar_data), 1700000000.0)
 
         assert isinstance(result, FileResult)
@@ -433,9 +407,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/stuff.rar", "stuff.rar", ".rar")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/stuff.rar", len(rar_data), 1700000000.0)
 
         assert result is None
@@ -453,9 +425,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/bad.rar", "bad.rar", ".rar")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/bad.rar", 100, 1700000000.0)
 
         assert result is None
@@ -473,9 +443,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/stuff.rar", "stuff.rar", ".rar")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"), \
+        with patch("snaffler.analysis.file_scanner.log_file_result"), \
              patch.dict("sys.modules", {"rarfile": None}):
             result = scanner.scan_file("//srv/share/stuff.rar", 500, 1700000000.0)
 
@@ -493,9 +461,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(max_read=100), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/big.rar", "big.rar", ".rar")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/big.rar", 999999, 1700000000.0)
 
         accessor.read.assert_not_called()
@@ -517,9 +483,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.parse_unc_path",
-                    return_value=("srv", "share", "/archive.rar", "archive.rar", ".rar")), \
-             patch("snaffler.analysis.file_scanner.log_file_result"):
+        with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/archive.rar", len(rar_data), 1700000000.0)
 
         assert result is not None

@@ -38,7 +38,6 @@ def evaluator():
 def make_ctx(path: Path) -> FileContext:
     return FileContext(
         unc_path=str(path),
-        smb_path=str(path),
         name=path.name,
         ext=path.suffix.lower(),
         size=path.stat().st_size,
@@ -95,7 +94,6 @@ def test_non_vm_disk_not_matched(evaluator):
     path = DATA_ROOT / "test.vmdk"
     ctx = FileContext(
         unc_path="//server/share/notes.txt",
-        smb_path="\\share\\notes.txt",
         name="notes.txt",
         ext=".txt",
         size=path.stat().st_size,

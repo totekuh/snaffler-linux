@@ -15,7 +15,6 @@ from snaffler.analysis.model.file_result import FileResult
 from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.classifiers.rules import MatchLocation, MatchAction, Triage
 from snaffler.utils.logger import log_file_result
-from snaffler.utils.path_utils import parse_unc_path
 
 logger = logging.getLogger("snaffler")
 
@@ -45,9 +44,7 @@ class FileScanner:
     def _finalize_result(
             self,
             result: FileResult,
-            server: str,
-            share: str,
-            smb_path: str,
+            download_path: str,
     ) -> Optional[FileResult]:
 
         if result.triage.below(self.cfg.scanning.min_interest):
@@ -83,9 +80,7 @@ class FileScanner:
                 and result.size <= self.cfg.scanning.max_file_bytes
         ):
             self.file_accessor.copy_to_local(
-                server,
-                share,
-                smb_path,
+                download_path,
                 self.cfg.scanning.snaffle_path,
             )
 
@@ -96,18 +91,14 @@ class FileScanner:
 
     # -------------------------------------------------------------- Scanning
 
-    def scan_file(self, unc_path: str, size: int, mtime_epoch: float) -> Optional[FileResult]:
+    def scan_file(self, file_path: str, size: int, mtime_epoch: float) -> Optional[FileResult]:
         try:
-            parsed = parse_unc_path(unc_path)
-            if not parsed:
-                return None
-
-            server, share, smb_path, file_name, file_ext = parsed
+            file_name = os.path.basename(file_path)
+            file_ext = os.path.splitext(file_name)[1]
             modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch else None
 
             ctx = FileContext(
-                unc_path=unc_path,
-                smb_path=smb_path,
+                unc_path=file_path,
                 name=file_name,
                 ext=file_ext,
                 size=size,
@@ -117,7 +108,7 @@ class FileScanner:
             content_rule_names: set[str] = set()
             best_result: Optional[FileResult] = None
 
-            logger.debug(f"Evaluating file rules: {unc_path} (size={size})")
+            logger.debug(f"Evaluating file rules: {file_path} (size={size})")
 
             # ---------------- File rules
             for rule in self.rule_evaluator.file_rules:
@@ -125,7 +116,7 @@ class FileScanner:
                 if not decision:
                     continue
 
-                logger.debug(f"{decision.action.name}: {unc_path}")
+                logger.debug(f"{decision.action.name}: {file_path}")
 
                 action = decision.action
 
@@ -140,19 +131,15 @@ class FileScanner:
                 if action == MatchAction.CHECK_FOR_KEYS:
                     if self.rule_evaluator.should_discard_postmatch(ctx):
                         continue
-                    cert = self._check_certificate(ctx, server, share, smb_path, modified)
+                    cert = self._check_certificate(ctx, modified)
                     if cert:
-                        cert = self._finalize_result(
-                            cert, server, share, smb_path
-                        )
+                        cert = self._finalize_result(cert, file_path)
                         best_result = FileResult.pick_best(best_result, cert)
                     continue
 
                 if action == MatchAction.ENTER_ARCHIVE:
                     if size <= self.cfg.scanning.max_read_bytes:
-                        archive_result = self._peek_archive(
-                            ctx, server, share, smb_path
-                        )
+                        archive_result = self._peek_archive(ctx)
                         best_result = FileResult.pick_best(
                             best_result, archive_result
                         )
@@ -165,7 +152,7 @@ class FileScanner:
                     continue
 
                 result = FileResult(
-                    file_path=unc_path,
+                    file_path=file_path,
                     size=size,
                     modified=modified,
                     triage=rule.triage,
@@ -173,9 +160,7 @@ class FileScanner:
                     match=decision.match,
                 )
 
-                result = self._finalize_result(
-                    result, server, share, smb_path
-                )
+                result = self._finalize_result(result, file_path)
                 best_result = FileResult.pick_best(best_result, result)
 
             # Black (level 3) is the maximum severity — skip content scan
@@ -197,32 +182,24 @@ class FileScanner:
                 content_rules = self.rule_evaluator.content_rules
 
             if size <= self.cfg.scanning.max_read_bytes:
-                logger.debug(f"Scanning file content: {unc_path}")
-                content_result = self._scan_file_contents(
-                    ctx,
-                    server,
-                    share,
-                    content_rules,
-                )
+                logger.debug(f"Scanning file content: {file_path}")
+                content_result = self._scan_file_contents(ctx, content_rules)
                 return FileResult.pick_best(best_result, content_result)
 
             return best_result
 
         except Exception as e:
-            logger.debug(f"Unhandled exception while scanning {unc_path}: {e}")
+            logger.debug(f"Unhandled exception while scanning {file_path}: {e}")
             return
 
     def _scan_file_contents(
             self,
             ctx: FileContext,
-            server: str,
-            share: str,
             rules,
     ) -> Optional[FileResult]:
-        smb_path = ctx.smb_path
 
         data = self.file_accessor.read(
-            server, share, smb_path,
+            ctx.unc_path,
             max_bytes=self.cfg.scanning.max_read_bytes,
         )
         if not data:
@@ -267,9 +244,7 @@ class FileScanner:
                 context=text[start:end],
             )
 
-            result = self._finalize_result(
-                result, server, share, smb_path
-            )
+            result = self._finalize_result(result, ctx.unc_path)
             best_result = FileResult.pick_best(best_result, result)
 
             # Black (level 3) is the maximum severity — nothing can beat it
@@ -283,14 +258,11 @@ class FileScanner:
     def _peek_archive(
             self,
             ctx: FileContext,
-            server: str,
-            share: str,
-            smb_path: str,
     ) -> Optional[FileResult]:
         """List filenames inside an archive and evaluate file rules against them."""
         try:
             data = self.file_accessor.read(
-                server, share, smb_path,
+                ctx.unc_path,
                 max_bytes=self.cfg.scanning.max_read_bytes,
             )
             if not data:
@@ -309,7 +281,6 @@ class FileScanner:
 
                 member_ctx = FileContext(
                     unc_path=member_unc,
-                    smb_path=smb_path,
                     name=basename,
                     ext=member_ext,
                     size=member_size,
@@ -340,9 +311,8 @@ class FileScanner:
                         rule_name=rule.rule_name,
                         match=decision.match,
                     )
-                    result = self._finalize_result(
-                        result, server, share, smb_path
-                    )
+                    # Download the archive itself, not the member
+                    result = self._finalize_result(result, ctx.unc_path)
                     best_result = FileResult.pick_best(best_result, result)
 
                     if best_result and best_result.triage == Triage.BLACK:
@@ -418,14 +388,11 @@ class FileScanner:
     def _check_certificate(
             self,
             ctx: FileContext,
-            server: str,
-            share: str,
-            smb_path: str,
             modified: datetime,
     ) -> Optional[FileResult]:
 
         data = self.file_accessor.read(
-            server, share, smb_path,
+            ctx.unc_path,
             max_bytes=self.cfg.scanning.max_read_bytes,
         )
         if not data:

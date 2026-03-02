@@ -1,4 +1,4 @@
-# snaffler/transport/smb_file_accessor.py
+# snaffler/accessors/smb_file_accessor.py
 
 import threading
 from pathlib import Path
@@ -8,6 +8,7 @@ from impacket.smb import FILE_READ_DATA, FILE_READ_ATTRIBUTES, FILE_SHARE_READ
 
 from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.transport.smb import SMBTransport
+from snaffler.utils.path_utils import parse_unc_path
 
 
 class SMBFileAccessor(FileAccessor):
@@ -15,6 +16,15 @@ class SMBFileAccessor(FileAccessor):
         self._transport = SMBTransport(cfg)
         self._thread_local = threading.local()
         self._max_file_bytes = cfg.scanning.max_file_bytes
+
+    @staticmethod
+    def _parse(file_path: str):
+        """Parse a UNC path into (server, share, smb_path) or None."""
+        parsed = parse_unc_path(file_path)
+        if not parsed:
+            return None
+        server, share, smb_path, _name, _ext = parsed
+        return server, share, smb_path
 
     def _get_smb(self, server: str):
         cache = getattr(self._thread_local, "smb_cache", {})
@@ -36,14 +46,18 @@ class SMBFileAccessor(FileAccessor):
         cache[server] = smb
         return smb
 
-    def read(self, server: str, share: str, path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
+    def read(self, file_path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
+        parsed = self._parse(file_path)
+        if not parsed:
+            return None
+        server, share, smb_path = parsed
         try:
             smb = self._get_smb(server)
             tid = smb.connectTree(share)
             try:
                 fid = smb.openFile(
                     tid,
-                    path,
+                    smb_path,
                     desiredAccess=FILE_READ_DATA | FILE_READ_ATTRIBUTES,
                     shareMode=FILE_SHARE_READ,
                 )
@@ -60,9 +74,13 @@ class SMBFileAccessor(FileAccessor):
                 cache.pop(server, None)
             return None
 
-    def copy_to_local(self, server, share, path, dest_root):
+    def copy_to_local(self, file_path: str, dest_root) -> None:
+        parsed = self._parse(file_path)
+        if not parsed:
+            return
+        server, share, smb_path = parsed
         try:
-            clean = path.lstrip("\\/")
+            clean = smb_path.lstrip("\\/")
             local = (Path(dest_root) / server / share / clean).resolve()
             root = Path(dest_root).resolve()
             if not local.is_relative_to(root):
@@ -70,7 +88,7 @@ class SMBFileAccessor(FileAccessor):
 
             local.parent.mkdir(parents=True, exist_ok=True)
 
-            data = self.read(server, share, path, max_bytes=self._max_file_bytes)
+            data = self.read(file_path, max_bytes=self._max_file_bytes)
             if data:
                 local.write_bytes(data)
         except Exception:
