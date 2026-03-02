@@ -180,7 +180,7 @@ def _patch_transports(share_root):
         smb,
         patch("snaffler.discovery.shares.SMBTransport",
               return_value=MagicMock(connect=MagicMock(return_value=smb))),
-        patch("snaffler.discovery.tree.SMBTransport",
+        patch("snaffler.discovery.smb_tree_walker.SMBTransport",
               return_value=MagicMock(connect=MagicMock(return_value=smb))),
         patch("snaffler.accessors.smb_file_accessor.SMBTransport",
               return_value=MagicMock(connect=MagicMock(return_value=smb))),
@@ -224,7 +224,7 @@ class TestFilePipeline:
         """Pipeline produces findings from the test data directory."""
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -244,7 +244,7 @@ class TestFilePipeline:
         """Pipeline scans files that don't match (images, benign txt)."""
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -267,7 +267,7 @@ class TestEndToEnd:
         progress = ProgressState()
 
         with patch("snaffler.discovery.shares.SMBTransport") as st, \
-                patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             st.return_value.connect.return_value = smb
             tt.return_value.connect.return_value = smb
@@ -288,7 +288,7 @@ class TestEndToEnd:
         """Findings are emitted as log records (the output the user sees)."""
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
                 caplog.at_level(logging.WARNING, logger="snaffler"):
             tt.return_value.connect.return_value = smb
@@ -309,7 +309,7 @@ class TestMaxDepth:
         cfg.scanning.max_depth = 0
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -323,7 +323,7 @@ class TestMaxDepth:
         cfg.scanning.max_depth = None
         smb2 = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb2
             at.return_value.connect.return_value = smb2
@@ -343,7 +343,7 @@ class TestMaxDepth:
         cfg.scanning.max_depth = 1
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -357,7 +357,7 @@ class TestMaxDepth:
         cfg.scanning.max_depth = None
         smb2 = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb2
             at.return_value.connect.return_value = smb2
@@ -377,7 +377,7 @@ class TestMaxDepth:
         cfg.scanning.max_depth = None
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -399,7 +399,7 @@ class TestExcludeUNC:
         smb = _make_smb_mock(_DATA_DIR)
 
         # Baseline: no exclusions
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -413,7 +413,7 @@ class TestExcludeUNC:
         cfg.targets.exclude_unc = ["*/relay_*"]
         smb2 = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb2
             at.return_value.connect.return_value = smb2
@@ -434,7 +434,7 @@ class TestExcludeUNC:
 
         # Exclude two specific directories
         cfg.targets.exclude_unc = ["*/relay_*", "*/gpp*"]
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -447,7 +447,7 @@ class TestExcludeUNC:
         # Now exclude only one
         cfg.targets.exclude_unc = ["*/relay_*"]
         smb2 = _make_smb_mock(_DATA_DIR)
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb2
             at.return_value.connect.return_value = smb2
@@ -493,7 +493,7 @@ class TestShareFilters:
         progress = ProgressState()
 
         with patch("snaffler.discovery.shares.SMBTransport") as st, \
-                patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             st.return_value.connect.return_value = smb
             tt.return_value.connect.return_value = smb
@@ -521,7 +521,7 @@ class TestResumeIntegration:
             cfg.state.state_db = db_path
 
             # Run 1: full scan
-            with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+            with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                     patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
                 tt.return_value.connect.return_value = smb
                 at.return_value.connect.return_value = smb
@@ -539,7 +539,7 @@ class TestResumeIntegration:
             # Run 2: resume — all files already checked
             smb2 = _make_smb_mock(_DATA_DIR)
 
-            with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+            with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                     patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
                 tt.return_value.connect.return_value = smb2
                 at.return_value.connect.return_value = smb2
@@ -570,7 +570,7 @@ class TestResumeIntegration:
         try:
             cfg.state.state_db = db_path
 
-            with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+            with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                     patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
                 tt.return_value.connect.return_value = smb
                 at.return_value.connect.return_value = smb
@@ -600,7 +600,7 @@ class TestProgressCounters:
         """Sum of severity counts equals total files_matched."""
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -623,7 +623,7 @@ class TestProgressCounters:
         """When everything succeeds, files_scanned == files_total."""
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -645,7 +645,7 @@ class TestMinInterest:
         cfg.scanning.min_interest = 0
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -659,7 +659,7 @@ class TestMinInterest:
         cfg.scanning.min_interest = 2  # RED and above
         smb2 = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb2
             at.return_value.connect.return_value = smb2
@@ -682,7 +682,7 @@ class TestMatchFilter:
         smb = _make_smb_mock(_DATA_DIR)
 
         # Baseline: no filter
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -696,7 +696,7 @@ class TestMatchFilter:
         cfg.scanning.match_filter = "password"
         smb2 = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb2
             at.return_value.connect.return_value = smb2
@@ -716,7 +716,7 @@ class TestMatchFilter:
         smb = _make_smb_mock(_DATA_DIR)
 
         # Baseline: no filter
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -730,7 +730,7 @@ class TestMatchFilter:
         cfg.scanning.match_filter = "password"
         smb2 = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb2
             at.return_value.connect.return_value = smb2
@@ -751,7 +751,7 @@ class TestMatchFilter:
         def fake_store(**kwargs):
             stored_findings.append(kwargs)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -773,7 +773,7 @@ class TestMatchFilter:
         def fake_store_filtered(**kwargs):
             stored_findings_filtered.append(kwargs)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
             tt.return_value.connect.return_value = smb2
             at.return_value.connect.return_value = smb2
@@ -817,7 +817,7 @@ class TestDNSPreResolution:
              patch("snaffler.engine.runner.socket.create_connection",
                    return_value=MagicMock()), \
              patch("snaffler.discovery.shares.SMBTransport") as st, \
-             patch("snaffler.discovery.tree.SMBTransport") as tt, \
+             patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
              patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
              patch("snaffler.engine.runner.print_completion_stats"):
 
@@ -882,7 +882,7 @@ class TestDNSPreResolution:
              patch("snaffler.engine.runner.socket.create_connection",
                    return_value=MagicMock()), \
              patch("snaffler.discovery.shares.SMBTransport") as st, \
-             patch("snaffler.discovery.tree.SMBTransport") as tt, \
+             patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
              patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
              patch("snaffler.engine.runner.print_completion_stats"):
 
@@ -933,7 +933,7 @@ class TestDNSPreResolution:
                  patch("snaffler.engine.runner.socket.create_connection",
                        return_value=MagicMock()), \
                  patch("snaffler.discovery.shares.SMBTransport") as st, \
-                 patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                 patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                  patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
                  patch("snaffler.engine.runner.print_completion_stats"):
 
@@ -982,7 +982,7 @@ class TestDNSPreResolution:
                  patch("snaffler.engine.runner.socket.create_connection",
                        return_value=MagicMock()), \
                  patch("snaffler.discovery.shares.SMBTransport") as st, \
-                 patch("snaffler.discovery.tree.SMBTransport") as tt, \
+                 patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                  patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
                  patch("snaffler.engine.runner.print_completion_stats"):
 
@@ -1043,7 +1043,7 @@ class TestExclusions:
              patch("snaffler.engine.runner.socket.create_connection",
                    return_value=MagicMock()), \
              patch("snaffler.discovery.shares.SMBTransport") as st, \
-             patch("snaffler.discovery.tree.SMBTransport") as tt, \
+             patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
              patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
              patch("snaffler.engine.runner.print_completion_stats"):
 
@@ -1081,7 +1081,7 @@ class TestExclusions:
 
         smb = _make_smb_mock(_DATA_DIR)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
              patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
              patch("snaffler.engine.runner.print_completion_stats"):
 
@@ -1142,7 +1142,7 @@ class TestArchivePeek:
             findings.append(file_path)
             return original_log(logger, file_path, *args, **kwargs)
 
-        with patch("snaffler.discovery.tree.SMBTransport") as tt, \
+        with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
                 patch("snaffler.analysis.file_scanner.log_file_result", side_effect=capture_log):
             tt.return_value.connect.return_value = smb

@@ -6,11 +6,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from typing import List
 
+from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.accessors.smb_file_accessor import SMBFileAccessor
 from snaffler.analysis.file_scanner import FileScanner
 from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.discovery.shares import share_matches_filter
+from snaffler.discovery.smb_tree_walker import SMBTreeWalker
 from snaffler.discovery.tree import TreeWalker
 from snaffler.resume.scan_state import ScanState
 from snaffler.utils.progress import ProgressState
@@ -123,6 +125,8 @@ class FilePipeline:
             cfg: SnafflerConfiguration,
             state: ScanState | None = None,
             progress: ProgressState | None = None,
+            tree_walker: TreeWalker | None = None,
+            file_accessor: FileAccessor | None = None,
     ):
         self.cfg = cfg
         self.state = state
@@ -131,9 +135,9 @@ class FilePipeline:
         self.tree_threads = cfg.advanced.tree_threads
         self.file_threads = cfg.advanced.file_threads
 
-        self.tree_walker = TreeWalker(cfg)
+        self.tree_walker = tree_walker or SMBTreeWalker(cfg)
 
-        file_accessor = SMBFileAccessor(cfg)
+        file_accessor = file_accessor or SMBFileAccessor(cfg)
         rule_evaluator = RuleEvaluator(
             file_rules=cfg.rules.file,
             content_rules=cfg.rules.content,

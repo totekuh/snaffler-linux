@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from snaffler.discovery.tree import TreeWalker
+from snaffler.discovery.smb_tree_walker import SMBTreeWalker
 from snaffler.classifiers.rules import MatchAction, EnumerationScope, MatchLocation
 
 
@@ -69,7 +69,7 @@ def test_should_scan_directory_discard():
     rule = make_rule(MatchAction.DISCARD)
     cfg.rules.directory = [rule]
 
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     assert walker._should_scan_directory("//HOST/SHARE/dir") is False
 
@@ -79,7 +79,7 @@ def test_should_scan_directory_snaffle():
     rule = make_rule(MatchAction.SNAFFLE)
     cfg.rules.directory = [rule]
 
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     assert walker._should_scan_directory("//HOST/SHARE/dir") is True
 
@@ -89,7 +89,7 @@ def test_should_scan_directory_exclude_unc_match():
     cfg = make_cfg()
     cfg.targets.exclude_unc = ["*/C$/Windows"]
 
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     assert walker._should_scan_directory("//HOST/C$/Windows") is False
 
@@ -99,7 +99,7 @@ def test_should_scan_directory_exclude_unc_no_match():
     cfg = make_cfg()
     cfg.targets.exclude_unc = ["*/C$/Windows"]
 
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     assert walker._should_scan_directory("//HOST/C$/Users") is True
 
@@ -109,7 +109,7 @@ def test_should_scan_directory_exclude_unc_case_insensitive():
     cfg = make_cfg()
     cfg.targets.exclude_unc = ["*/C$/WINDOWS"]
 
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     assert walker._should_scan_directory("//HOST/C$/windows") is False
     assert walker._should_scan_directory("//HOST/C$/Windows") is False
@@ -120,7 +120,7 @@ def test_should_scan_directory_exclude_unc_multiple_patterns():
     cfg = make_cfg()
     cfg.targets.exclude_unc = ["*/C$/Windows", "*/C$/ProgramData"]
 
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     assert walker._should_scan_directory("//HOST/C$/Windows") is False
     assert walker._should_scan_directory("//HOST/C$/ProgramData") is False
@@ -132,7 +132,7 @@ def test_should_scan_directory_exclude_unc_recursive_glob():
     cfg = make_cfg()
     cfg.targets.exclude_unc = ["*/C$/Windows*"]
 
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     assert walker._should_scan_directory("//HOST/C$/Windows") is False
     assert walker._should_scan_directory("//HOST/C$/Windows.old") is False
@@ -144,7 +144,7 @@ def test_should_scan_directory_exclude_unc_recursive_glob():
 def test_connection_reuse_same_server():
     """Two walk_directory() calls to the same server should reuse the connection."""
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     smb = MagicMock()
     smb.listPath.return_value = [FakeEntry("file.txt", False)]
@@ -165,7 +165,7 @@ def test_connection_reuse_same_server():
 def test_connection_different_servers():
     """walk_directory() to different servers should create separate connections."""
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     smb_a = MagicMock()
     smb_a.listPath.return_value = [FakeEntry("a.txt", False)]
@@ -194,7 +194,7 @@ def test_connection_different_servers():
 def test_stale_connection_reconnects():
     """If the cached connection goes stale, _get_smb evicts it and reconnects."""
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     stale_smb = MagicMock()
     stale_smb.listPath.return_value = [FakeEntry("file.txt", False)]
@@ -241,7 +241,7 @@ def test_stale_connection_reconnects():
 def test_walk_directory_returns_subdirs():
     """walk_directory() returns subdirectory UNC paths."""
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     smb = MagicMock()
     smb.listPath.return_value = [
@@ -265,7 +265,7 @@ def test_walk_directory_returns_subdirs():
 def test_walk_directory_on_dir_callback():
     """walk_directory() calls on_dir for each subdirectory."""
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     smb = MagicMock()
     smb.listPath.return_value = [
@@ -287,7 +287,7 @@ def test_walk_directory_cancel():
     from concurrent.futures import CancelledError
 
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     smb = MagicMock()
     smb.listPath.return_value = [FakeEntry("file.txt", False)]
@@ -310,7 +310,7 @@ def test_walk_directory_discard_rule():
     rule = make_rule(MatchAction.DISCARD)
     cfg.rules.directory = [rule]
 
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     smb = MagicMock()
     smb.listPath.return_value = [
@@ -332,7 +332,7 @@ def test_walk_directory_session_error_propagates():
     from impacket.nt_errors import STATUS_ACCESS_DENIED
 
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     smb = MagicMock()
     smb.listPath.side_effect = SessionError(STATUS_ACCESS_DENIED)
@@ -348,7 +348,7 @@ def test_walk_directory_session_error_propagates():
 def test_walk_directory_connection_error_invalidates():
     """Non-SessionError (e.g. connection drop) invalidates the cached connection."""
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     smb = MagicMock()
     smb.listPath.side_effect = OSError("connection reset")
@@ -364,7 +364,7 @@ def test_walk_directory_connection_error_invalidates():
 def test_walk_directory_invalid_unc():
     """walk_directory() with invalid UNC returns empty list."""
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     subdirs = walker.walk_directory("INVALID")
     assert subdirs == []
@@ -373,7 +373,7 @@ def test_walk_directory_invalid_unc():
 def test_walk_directory_subpath():
     """walk_directory() works with a subdirectory UNC path."""
     cfg = make_cfg()
-    walker = TreeWalker(cfg)
+    walker = SMBTreeWalker(cfg)
 
     smb = MagicMock()
     smb.listPath.return_value = [
