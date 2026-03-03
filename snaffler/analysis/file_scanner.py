@@ -5,10 +5,11 @@ import logging
 import os
 import re
 import zipfile
+from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Optional, List
 
-from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.analysis.certificates import CertificateChecker
 from snaffler.analysis.model.file_context import FileContext
 from snaffler.analysis.model.file_result import FileResult
@@ -19,12 +20,41 @@ from snaffler.utils.logger import log_file_result
 logger = logging.getLogger("snaffler")
 
 
+class FileCheckStatus(Enum):
+    """Outcome of a metadata-only file check."""
+    DISCARD = "discard"
+    SNAFFLE = "snaffle"
+    NEEDS_CONTENT = "needs_content"
+    CHECK_KEYS = "check_keys"
+    PEEK_ARCHIVE = "peek_archive"
+
+
+@dataclass
+class FileCheckResult:
+    """Result of :meth:`FileScanner.check_file`.
+
+    For ``SNAFFLE`` status the finding is in *result*.
+    For ``NEEDS_CONTENT`` / ``CHECK_KEYS`` / ``PEEK_ARCHIVE`` the caller
+    should fetch bytes and call :meth:`FileScanner.scan_with_data`, passing
+    this object as *prior* to avoid re-evaluating file rules.
+    """
+    status: FileCheckStatus
+    result: Optional[FileResult] = None
+    content_rule_names: list = field(default_factory=list)
+    # -- internal state for Phase 2 (underscore = not part of public API) --
+    _ctx: Optional[FileContext] = None
+    _best_result: Optional[FileResult] = None
+    _needs_cert_check: bool = False
+    _needs_archive_peek: bool = False
+    _can_scan_content: bool = False
+
+
 class FileScanner:
     def __init__(
             self,
             cfg,
-            file_accessor: FileAccessor,
-            rule_evaluator: RuleEvaluator,
+            file_accessor=None,
+            rule_evaluator: RuleEvaluator = None,
     ):
         self.cfg = cfg
         self.file_accessor = file_accessor
@@ -38,6 +68,8 @@ class FileScanner:
             re.compile(mf, re.IGNORECASE)
             if isinstance(mf, str) else None
         )
+        self._max_read_bytes = cfg.scanning.max_read_bytes
+        self._match_context_bytes = cfg.scanning.match_context_bytes
 
     # -------------------------------------------------------------- Results
 
@@ -78,6 +110,7 @@ class FileScanner:
         if (
                 self.cfg.scanning.snaffle
                 and result.size <= self.cfg.scanning.max_file_bytes
+                and self.file_accessor is not None
         ):
             self.file_accessor.copy_to_local(
                 download_path,
@@ -89,90 +122,154 @@ class FileScanner:
 
         return result
 
-    # -------------------------------------------------------------- Scanning
+    # -------------------------------------------------------------- Phase 1
 
-    def scan_file(self, file_path: str, size: int, mtime_epoch: float) -> Optional[FileResult]:
-        try:
-            file_name = os.path.basename(file_path)
-            file_ext = os.path.splitext(file_name)[1]
-            modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch else None
+    def check_file(self, file_path: str, size: int, mtime_epoch: float) -> FileCheckResult:
+        """Phase 1 — evaluate file rules only (zero I/O).
 
-            ctx = FileContext(
-                unc_path=file_path,
-                name=file_name,
-                ext=file_ext,
+        Returns a :class:`FileCheckResult` whose *status* tells the caller
+        what to do next.
+        """
+        file_name = os.path.basename(file_path)
+        file_ext = os.path.splitext(file_name)[1]
+        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch else None
+
+        ctx = FileContext(
+            unc_path=file_path,
+            name=file_name,
+            ext=file_ext,
+            size=size,
+            modified=modified,
+        )
+
+        content_rule_names: set = set()
+        best_result: Optional[FileResult] = None
+        needs_cert_check = False
+        needs_archive_peek = False
+        relay_fired = False
+
+        logger.debug(f"Evaluating file rules: {file_path} (size={size})")
+
+        for rule in self.rule_evaluator.file_rules:
+            decision = self.rule_evaluator.evaluate_file_rule(rule, ctx)
+            if not decision:
+                continue
+
+            logger.debug(f"{decision.action.name}: {file_path}")
+
+            action = decision.action
+
+            if action == MatchAction.DISCARD:
+                return FileCheckResult(status=FileCheckStatus.DISCARD)
+
+            if action == MatchAction.RELAY:
+                relay_fired = True
+                if decision.content_rule_names:
+                    content_rule_names.update(decision.content_rule_names)
+                continue
+
+            if action == MatchAction.CHECK_FOR_KEYS:
+                if not self.rule_evaluator.should_discard_postmatch(ctx):
+                    needs_cert_check = True
+                continue
+
+            if action == MatchAction.ENTER_ARCHIVE:
+                if size <= self._max_read_bytes:
+                    needs_archive_peek = True
+                continue
+
+            if action != MatchAction.SNAFFLE:
+                continue
+
+            if self.rule_evaluator.should_discard_postmatch(ctx):
+                continue
+
+            result = FileResult(
+                file_path=file_path,
                 size=size,
-                modified=modified
+                modified=modified,
+                triage=rule.triage,
+                rule_name=rule.rule_name,
+                match=decision.match,
+            )
+            best_result = FileResult.pick_best(best_result, result)
+
+        # Black is max severity — no need for content scan
+        if best_result and best_result.triage == Triage.BLACK:
+            return FileCheckResult(
+                status=FileCheckStatus.SNAFFLE,
+                result=best_result,
+                _ctx=ctx,
+                _best_result=best_result,
             )
 
-            content_rule_names: set[str] = set()
-            best_result: Optional[FileResult] = None
+        # Determine what Phase 2 needs
+        if needs_cert_check:
+            return FileCheckResult(
+                status=FileCheckStatus.CHECK_KEYS,
+                _ctx=ctx,
+                _best_result=best_result,
+                _needs_cert_check=True,
+            )
 
-            logger.debug(f"Evaluating file rules: {file_path} (size={size})")
+        if needs_archive_peek:
+            return FileCheckResult(
+                status=FileCheckStatus.PEEK_ARCHIVE,
+                _ctx=ctx,
+                _best_result=best_result,
+                _needs_archive_peek=True,
+            )
 
-            # ---------------- File rules
-            for rule in self.rule_evaluator.file_rules:
-                decision = self.rule_evaluator.evaluate_file_rule(rule, ctx)
-                if not decision:
-                    continue
-
-                logger.debug(f"{decision.action.name}: {file_path}")
-
-                action = decision.action
-
-                if action == MatchAction.DISCARD:
-                    return None
-
-                if action == MatchAction.RELAY:
-                    if decision.content_rule_names:
-                        content_rule_names.update(decision.content_rule_names)
-                    continue
-
-                if action == MatchAction.CHECK_FOR_KEYS:
-                    if self.rule_evaluator.should_discard_postmatch(ctx):
-                        continue
-                    cert = self._check_certificate(ctx, modified)
-                    if cert:
-                        cert = self._finalize_result(cert, file_path)
-                        best_result = FileResult.pick_best(best_result, cert)
-                    continue
-
-                if action == MatchAction.ENTER_ARCHIVE:
-                    if size <= self.cfg.scanning.max_read_bytes:
-                        archive_result = self._peek_archive(ctx)
-                        best_result = FileResult.pick_best(
-                            best_result, archive_result
-                        )
-                    continue
-
-                if action != MatchAction.SNAFFLE:
-                    continue
-
-                if self.rule_evaluator.should_discard_postmatch(ctx):
-                    continue
-
-                result = FileResult(
-                    file_path=file_path,
-                    size=size,
-                    modified=modified,
-                    triage=rule.triage,
-                    rule_name=rule.rule_name,
-                    match=decision.match,
+        # Content scan needed: RELAY fired, targeted content rules exist,
+        # or no file-rule SNAFFLE found
+        if relay_fired or content_rule_names or not best_result:
+            if size <= self._max_read_bytes:
+                return FileCheckResult(
+                    status=FileCheckStatus.NEEDS_CONTENT,
+                    content_rule_names=sorted(content_rule_names),
+                    _ctx=ctx,
+                    _best_result=best_result,
+                    _can_scan_content=True,
                 )
 
-                result = self._finalize_result(result, file_path)
-                best_result = FileResult.pick_best(best_result, result)
+        if best_result:
+            return FileCheckResult(
+                status=FileCheckStatus.SNAFFLE,
+                result=best_result,
+                _ctx=ctx,
+                _best_result=best_result,
+            )
 
-            # Black (level 3) is the maximum severity — skip content scan
-            if best_result and best_result.triage == Triage.BLACK:
-                return best_result
+        return FileCheckResult(status=FileCheckStatus.DISCARD)
 
-            # ---------------- Content rules
-            if content_rule_names:
+    # -------------------------------------------------------------- Phase 2
+
+    def scan_with_data(self, data: bytes, prior: FileCheckResult) -> Optional[FileResult]:
+        """Phase 2 — run cert/archive/content checks using raw data.
+
+        Returns the best unfiltered :class:`FileResult`, or ``None``.
+        Does NOT apply ``_finalize_result`` (min_interest, match_filter,
+        logging, downloads) — that is the caller's responsibility.
+        """
+        ctx = prior._ctx
+        best_result = prior._best_result
+
+        if prior._needs_cert_check:
+            cert = self._evaluate_certificate(ctx, data)
+            best_result = FileResult.pick_best(best_result, cert)
+
+        if prior._needs_archive_peek:
+            archive = self._evaluate_archive(ctx, data)
+            best_result = FileResult.pick_best(best_result, archive)
+
+        if prior._can_scan_content:
+            # Select content rules
+            targeted_names = set(prior.content_rule_names)
+            if targeted_names:
                 content_rules = sorted(
                     (
                         self.rule_evaluator.content_rules_by_name[n]
-                        for n in content_rule_names
+                        for n in targeted_names
                         if n in self.rule_evaluator.content_rules_by_name
                     ),
                     key=lambda r: r.triage.level,
@@ -181,27 +278,61 @@ class FileScanner:
             else:
                 content_rules = self.rule_evaluator.content_rules
 
-            if size <= self.cfg.scanning.max_read_bytes:
-                logger.debug(f"Scanning file content: {file_path}")
-                content_result = self._scan_file_contents(ctx, content_rules)
-                return FileResult.pick_best(best_result, content_result)
+            content = self._evaluate_content(ctx, data, content_rules)
+            best_result = FileResult.pick_best(best_result, content)
 
-            return best_result
+        return best_result
+
+    # -------------------------------------------------------------- Scanning (composed)
+
+    def scan_file(self, file_path: str, size: int, mtime_epoch: float) -> Optional[FileResult]:
+        """Full scan: check_file → optional I/O → scan_with_data → finalize.
+
+        This is the main entry point used by FilePipeline.
+        """
+        try:
+            check = self.check_file(file_path, size, mtime_epoch)
+
+            if check.status == FileCheckStatus.DISCARD:
+                return None
+
+            if check.status == FileCheckStatus.SNAFFLE:
+                return self._finalize_result(check.result, file_path)
+
+            # Phase 2 requires data — read it
+            if self.file_accessor is None:
+                if check._best_result:
+                    return self._finalize_result(check._best_result, file_path)
+                return None
+
+            data = self.file_accessor.read(
+                file_path,
+                max_bytes=self._max_read_bytes,
+            )
+            if not data:
+                # Access denied or empty — finalize whatever we have from Phase 1
+                if check._best_result:
+                    return self._finalize_result(check._best_result, file_path)
+                return None
+
+            result = self.scan_with_data(data, check)
+            if result:
+                return self._finalize_result(result, file_path)
+            return None
 
         except Exception as e:
             logger.debug(f"Unhandled exception while scanning {file_path}: {e}")
             return
 
-    def _scan_file_contents(
+    # -------------------------------------------------------------- Pure evaluation (no I/O)
+
+    def _evaluate_content(
             self,
             ctx: FileContext,
-            rules,
+            data: bytes,
+            content_rules,
     ) -> Optional[FileResult]:
-
-        data = self.file_accessor.read(
-            ctx.unc_path,
-            max_bytes=self.cfg.scanning.max_read_bytes,
-        )
+        """Evaluate content rules against raw data. No I/O, no finalization."""
         if not data:
             return None
 
@@ -212,7 +343,7 @@ class FileScanner:
 
         best_result: Optional[FileResult] = None
 
-        for rule in rules:
+        for rule in content_rules:
             match = rule.matches(text)
             if not match:
                 continue
@@ -231,8 +362,8 @@ class FileScanner:
                 match_start = match.start()
                 match_end = match.end()
 
-            start = max(0, match_start - self.cfg.scanning.match_context_bytes)
-            end = min(len(text), match_end + self.cfg.scanning.match_context_bytes)
+            start = max(0, match_start - self._match_context_bytes)
+            end = min(len(text), match_end + self._match_context_bytes)
 
             result = FileResult(
                 file_path=ctx.unc_path,
@@ -244,7 +375,6 @@ class FileScanner:
                 context=text[start:end],
             )
 
-            result = self._finalize_result(result, ctx.unc_path)
             best_result = FileResult.pick_best(best_result, result)
 
             # Black (level 3) is the maximum severity — nothing can beat it
@@ -255,19 +385,13 @@ class FileScanner:
 
     # -------------------------------------------------------------- Archives
 
-    def _peek_archive(
+    def _evaluate_archive(
             self,
             ctx: FileContext,
+            data: bytes,
     ) -> Optional[FileResult]:
-        """List filenames inside an archive and evaluate file rules against them."""
+        """Evaluate archive members against file rules. No I/O, no finalization."""
         try:
-            data = self.file_accessor.read(
-                ctx.unc_path,
-                max_bytes=self.cfg.scanning.max_read_bytes,
-            )
-            if not data:
-                return None
-
             bio = io.BytesIO(data)
             members = self._list_archive_members(ctx.ext, bio)
             if not members:
@@ -311,8 +435,6 @@ class FileScanner:
                         rule_name=rule.rule_name,
                         match=decision.match,
                     )
-                    # Download the archive itself, not the member
-                    result = self._finalize_result(result, ctx.unc_path)
                     best_result = FileResult.pick_best(best_result, result)
 
                     if best_result and best_result.triage == Triage.BLACK:
@@ -385,16 +507,12 @@ class FileScanner:
 
     # -------------------------------------------------------------- Certs
 
-    def _check_certificate(
+    def _evaluate_certificate(
             self,
             ctx: FileContext,
-            modified: datetime,
+            data: bytes,
     ) -> Optional[FileResult]:
-
-        data = self.file_accessor.read(
-            ctx.unc_path,
-            max_bytes=self.cfg.scanning.max_read_bytes,
-        )
+        """Evaluate certificate data for private keys. No I/O, no finalization."""
         if not data:
             return None
 
@@ -407,7 +525,7 @@ class FileScanner:
         return FileResult(
             file_path=ctx.unc_path,
             size=ctx.size,
-            modified=modified,
+            modified=ctx.modified,
             triage=Triage.RED,
             rule_name="RelayCertByExtension",
             match=ctx.name,

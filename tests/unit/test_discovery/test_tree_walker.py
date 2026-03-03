@@ -32,6 +32,7 @@ class FakeEntry:
 def make_cfg():
     cfg = MagicMock()
     cfg.rules.directory = []
+    cfg.targets.exclude_unc = []
     return cfg
 
 

@@ -9,6 +9,16 @@ from typing import List, Optional
 import tomlkit
 import typer
 
+# Shared default cert passwords — used by both CLI (ScanningConfig) and
+# library API (Snaffler).  Keep in one place so they never diverge.
+DEFAULT_CERT_PASSWORDS: List[str] = [
+    "", "password", "mimikatz", "1234", "abcd", "secret",
+    "MyPassword", "myPassword", "MyClearTextPassword",
+    "P@ssw0rd", "testpassword", "changeme", "changeit",
+    "SolarWinds.R0cks", "ThePasswordToKeyonPFXFile",
+    "@OurPassword1", "@de08nt2128",
+]
+
 
 # ---------------- AUTH ----------------
 
@@ -64,13 +74,9 @@ class ScanningConfig:
     match_context_bytes: int = 200
     max_depth: Optional[int] = None  # Max directory recursion depth (None = unlimited)
     match_filter: Optional[str] = None  # Regex filter for findings (path/rule/match/context)
-    cert_passwords: List[str] = field(default_factory=lambda: [
-        "", "password", "mimikatz", "1234", "abcd", "secret",
-        "MyPassword", "myPassword", "MyClearTextPassword",
-        "P@ssw0rd", "testpassword", "changeme", "changeit",
-        "SolarWinds.R0cks", "ThePasswordToKeyonPFXFile",
-        "@OurPassword1", "@de08nt2128",
-    ])
+    cert_passwords: List[str] = field(
+        default_factory=lambda: list(DEFAULT_CERT_PASSWORDS)
+    )
 
 
 # ---------------- OUTPUT ----------------

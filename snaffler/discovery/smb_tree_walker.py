@@ -17,7 +17,10 @@ logger = logging.getLogger("snaffler")
 
 class SMBTreeWalker(TreeWalker):
     def __init__(self, cfg: SnafflerConfiguration):
-        super().__init__(cfg)
+        super().__init__(
+            dir_rules=cfg.rules.directory,
+            exclude_unc=cfg.targets.exclude_unc,
+        )
         self.smb_transport = SMBTransport(cfg)
         self._local = threading.local()
 
