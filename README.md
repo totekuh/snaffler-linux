@@ -61,6 +61,7 @@ Pre-built single-file executables (no Python required) are attached to each [Git
 | Platform | File |
 |----------|------|
 | Linux x86_64 | `snaffler-linux-x86_64` |
+| Linux aarch64 | `snaffler-linux-aarch64` |
 | Windows x86_64 | `snaffler-windows-x86_64.exe` |
 
 ### Kali / Debian
@@ -173,6 +174,9 @@ Exclude shares and paths by glob:
 snaffler -u USER -p PASS -d DOMAIN.LOCAL \
   --exclude-share "IPC$" --exclude-share "print$" \
   --exclude-unc "*/Windows/*" --exclude-unc "*/.snapshot/*"
+
+# --exclude-unc works with --local too
+snaffler --local /mnt/share --exclude-unc "*/node_modules/*" --exclude-unc "*/.git/*"
 ```
 
 ### Depth Limiting and Post-Filtering
@@ -294,7 +298,7 @@ from snaffler.api import FileCheckStatus
 s = Snaffler()
 
 # Phase 1: metadata only — instant, no file read
-check = s.check_file(path, size=4096, mtime=1700000000.0)
+check = s.check_file(path, size=4096, mtime_epoch=1700000000.0)
 
 if check.status == FileCheckStatus.NEEDS_CONTENT:
     # Phase 2: only download + classify when needed
@@ -338,7 +342,7 @@ for finding in s.walk("C:\\Users"):
 | `max_read_bytes` | `2MB` | Content scan byte limit |
 | `match_context_bytes` | `200` | Context bytes around regex matches |
 | `cert_passwords` | built-in list | Passwords to try on PKCS12 certs |
-| `exclude_unc` | `None` | Glob patterns to skip directories |
+| `exclude_unc` | `None` | Glob patterns to skip directories (works on any path format despite the name) |
 | `match_filter` | `None` | Regex post-filter on findings |
 | `max_depth` | `None` | Maximum directory recursion depth |
 
