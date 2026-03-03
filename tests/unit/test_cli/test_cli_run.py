@@ -224,6 +224,21 @@ def test_cli_local_nonexistent_path():
     assert "does not exist" in result.output
 
 
+def test_cli_local_not_a_directory(tmp_path):
+    f = tmp_path / "somefile.txt"
+    f.write_text("not a dir")
+
+    with patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        result = runner.invoke(
+            app,
+            base_args() + ["--local", str(f)],
+        )
+
+    assert result.exit_code != 0
+    assert "not a directory" in result.output
+
+
 def test_cli_load_config_file(tmp_path):
     cfg = tmp_path / "config.toml"
     cfg.write_text("""

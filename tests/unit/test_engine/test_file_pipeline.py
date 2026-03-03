@@ -777,6 +777,19 @@ def test_extract_share_unc():
     assert _extract_share_unc("//10.0.0.1/Data$/path") == "//10.0.0.1/Data$"
 
 
+def test_extract_share_unc_local_paths():
+    """_extract_share_unc returns local paths unchanged (no UNC prefix)."""
+    assert _extract_share_unc("/tmp/data") == "/tmp/data"
+    assert _extract_share_unc("/tmp/data/subdir/file.txt") == "/tmp/data/subdir/file.txt"
+    assert _extract_share_unc("/home/user/docs") == "/home/user/docs"
+    assert _extract_share_unc("/data") == "/data"
+
+
+def test_extract_share_unc_backslash_unc():
+    """_extract_share_unc handles backslash UNC paths."""
+    assert _extract_share_unc("\\\\HOST\\SHARE\\dir\\file.txt") == "//HOST/SHARE"
+
+
 # ── max_depth ────────────────────────────────────────────────────
 
 def test_max_depth_zero_no_recursion():

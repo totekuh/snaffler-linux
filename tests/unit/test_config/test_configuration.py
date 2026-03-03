@@ -56,6 +56,52 @@ def test_validate_rule_dir_not_directory(tmp_path):
         cfg.validate()
 
 
+# ---------- local targets ----------
+
+def test_default_local_targets_empty():
+    cfg = SnafflerConfiguration()
+    assert cfg.targets.local_targets == []
+
+
+def test_validate_local_mixed_with_unc():
+    cfg = SnafflerConfiguration()
+    cfg.targets.local_targets = ["/tmp"]
+    cfg.targets.unc_targets = ["//HOST/SHARE"]
+
+    with pytest.raises(ValueError, match="Cannot mix local"):
+        cfg.validate()
+
+
+def test_validate_local_mixed_with_computer():
+    cfg = SnafflerConfiguration()
+    cfg.targets.local_targets = ["/tmp"]
+    cfg.targets.computer_targets = ["HOST1"]
+
+    with pytest.raises(ValueError, match="Cannot mix local"):
+        cfg.validate()
+
+
+def test_validate_local_skips_auth_validation():
+    """In local mode, Kerberos auth errors are skipped (no network needed)."""
+    cfg = SnafflerConfiguration()
+    cfg.targets.local_targets = ["/tmp"]
+    cfg.auth.kerberos = True
+    # No domain set — would normally raise "Kerberos requires domain"
+
+    cfg.validate()  # no exception
+
+
+def test_validate_local_still_checks_scan_config():
+    """Local mode still validates non-auth config like max_read_bytes."""
+    cfg = SnafflerConfiguration()
+    cfg.targets.local_targets = ["/tmp"]
+    cfg.scanning.max_read_bytes = 999999999
+    cfg.scanning.max_file_bytes = 1
+
+    with pytest.raises(ValueError, match="max_read_bytes"):
+        cfg.validate()
+
+
 # ---------- kerberos ----------
 
 def test_kerberos_with_password_valid():

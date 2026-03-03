@@ -1,7 +1,29 @@
 from unittest.mock import MagicMock
 
-from snaffler.resume.scan_state import ScanState
+from snaffler.resume.scan_state import ScanState, _extract_share
 
+
+# ---------- _extract_share ----------
+
+def test_extract_share_unc_path():
+    """UNC paths extract //server/share."""
+    assert _extract_share("//HOST/SHARE/dir/file.txt") == "//HOST/SHARE"
+    assert _extract_share("//HOST/SHARE") == "//HOST/SHARE"
+
+
+def test_extract_share_local_path():
+    """Local paths are returned unchanged."""
+    assert _extract_share("/tmp/data") == "/tmp/data"
+    assert _extract_share("/tmp/data/subdir/file.txt") == "/tmp/data/subdir/file.txt"
+    assert _extract_share("/data") == "/data"
+
+
+def test_extract_share_backslash_unc():
+    """Backslash UNC paths are normalized and extracted."""
+    assert _extract_share("\\\\HOST\\SHARE\\dir") == "//HOST/SHARE"
+
+
+# ---------- delegation ----------
 
 def test_scan_state_file_delegation():
     store = MagicMock()

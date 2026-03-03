@@ -83,7 +83,87 @@ def _make_runner_with_state(cfg):
     return runner, state
 
 
-# ---------- tests ----------
+# ---------- local mode ----------
+
+def test_runner_local_targets():
+    """--local paths are passed directly to file_pipeline.run()."""
+    cfg = make_cfg()
+    cfg.targets.local_targets = ["/tmp/data"]
+
+    runner = SnafflerRunner(cfg)
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    runner.file_pipeline.run.assert_called_once_with(["/tmp/data"])
+    assert runner.progress.shares_found == 1
+
+
+def test_runner_local_injects_local_transport():
+    """Local mode injects LocalTreeWalker and LocalFileAccessor."""
+    from snaffler.accessors.local_file_accessor import LocalFileAccessor
+    from snaffler.discovery.local_tree_walker import LocalTreeWalker
+
+    cfg = make_cfg()
+    cfg.targets.local_targets = ["/tmp"]
+
+    runner = SnafflerRunner(cfg)
+
+    assert isinstance(runner.file_pipeline.tree_walker, LocalTreeWalker)
+    assert isinstance(runner.file_pipeline.file_scanner.file_accessor, LocalFileAccessor)
+
+
+def test_runner_local_warns_shares_only(caplog):
+    """--shares-only with --local emits a warning."""
+    import logging
+
+    cfg = make_cfg()
+    cfg.targets.local_targets = ["/tmp"]
+    cfg.targets.shares_only = True
+
+    runner = SnafflerRunner(cfg)
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"), \
+            caplog.at_level(logging.WARNING, logger="snaffler"):
+        runner.execute()
+
+    assert any("--shares-only has no effect" in r.message for r in caplog.records)
+    # Still runs the pipeline (--shares-only is ignored, not blocking)
+    runner.file_pipeline.run.assert_called_once()
+
+
+def test_runner_local_warns_exclusions(caplog):
+    """--exclusions with --local emits a warning."""
+    import logging
+
+    cfg = make_cfg()
+    cfg.targets.local_targets = ["/tmp"]
+    cfg.targets.exclusions = ["SOMEHOST"]
+
+    runner = SnafflerRunner(cfg)
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"), \
+            caplog.at_level(logging.WARNING, logger="snaffler"):
+        runner.execute()
+
+    assert any("--exclusions has no effect" in r.message for r in caplog.records)
+
+
+def test_runner_local_does_not_use_smb():
+    """Local mode does NOT instantiate SMBTreeWalker."""
+    cfg = make_cfg()
+    cfg.targets.local_targets = ["/tmp"]
+
+    runner = SnafflerRunner(cfg)
+
+    from snaffler.discovery.smb_tree_walker import SMBTreeWalker
+    assert not isinstance(runner.file_pipeline.tree_walker, SMBTreeWalker)
+
+
+# ---------- SMB mode ----------
 
 def test_runner_unc_targets():
     cfg = make_cfg()
