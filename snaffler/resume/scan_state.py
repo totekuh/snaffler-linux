@@ -2,6 +2,17 @@ import sqlite3
 import threading
 
 
+def _extract_share(path: str) -> str:
+    """Extract //server/share from a UNC path, or return local paths unchanged."""
+    normalized = path.replace("\\", "/")
+    if not normalized.startswith("//"):
+        return path
+    parts = [p for p in normalized.split("/") if p]
+    if len(parts) >= 2:
+        return f"//{parts[0]}/{parts[1]}"
+    return path
+
+
 class ScanState:
     def __init__(self, store):
         self.store = store
@@ -340,10 +351,7 @@ class SQLiteStateStore:
 
     def mark_file_checked(self, unc_path: str):
         with self.lock:
-            # Extract //server/share from UNC path for INSERT fallback
-            parts = unc_path.replace("\\", "/").split("/")
-            parts = [p for p in parts if p]
-            share = f"//{parts[0]}/{parts[1]}" if len(parts) >= 2 else ""
+            share = _extract_share(unc_path)
             self.conn.execute(
                 "INSERT OR IGNORE INTO target_file (unc_path, share) VALUES (?, ?)",
                 (unc_path, share),
@@ -405,10 +413,7 @@ class SQLiteStateStore:
 
     def mark_dir_walked(self, unc_path: str):
         with self.lock:
-            # Extract //server/share from UNC path for INSERT fallback
-            parts = unc_path.replace("\\", "/").split("/")
-            parts = [p for p in parts if p]
-            share = f"//{parts[0]}/{parts[1]}" if len(parts) >= 2 else ""
+            share = _extract_share(unc_path)
             # Upsert: batch writer may not have flushed the INSERT yet
             self.conn.execute(
                 "INSERT INTO target_dir (unc_path, share, walked) VALUES (?, ?, 1) "

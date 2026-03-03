@@ -117,9 +117,6 @@ class FileScanner:
                 self.cfg.scanning.snaffle_path,
             )
 
-        if suppress_log:
-            return None
-
         return result
 
     # -------------------------------------------------------------- Phase 1
@@ -132,7 +129,7 @@ class FileScanner:
         """
         file_name = os.path.basename(file_path)
         file_ext = os.path.splitext(file_name)[1]
-        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch else None
+        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch is not None else None
 
         ctx = FileContext(
             unc_path=file_path,
@@ -175,7 +172,13 @@ class FileScanner:
 
             if action == MatchAction.ENTER_ARCHIVE:
                 if size <= self._max_read_bytes:
-                    needs_archive_peek = True
+                    if not self.rule_evaluator.should_discard_postmatch(ctx):
+                        needs_archive_peek = True
+                else:
+                    logger.debug(
+                        f"Skipping archive peek for {file_path}: "
+                        f"size {size} > max {self._max_read_bytes}"
+                    )
                 continue
 
             if action != MatchAction.SNAFFLE:
@@ -203,21 +206,16 @@ class FileScanner:
                 _best_result=best_result,
             )
 
-        # Determine what Phase 2 needs
-        if needs_cert_check:
+        # Determine what Phase 2 needs (cert + archive can coexist)
+        if needs_cert_check or needs_archive_peek:
+            status = (FileCheckStatus.CHECK_KEYS if needs_cert_check
+                      else FileCheckStatus.PEEK_ARCHIVE)
             return FileCheckResult(
-                status=FileCheckStatus.CHECK_KEYS,
+                status=status,
                 _ctx=ctx,
                 _best_result=best_result,
-                _needs_cert_check=True,
-            )
-
-        if needs_archive_peek:
-            return FileCheckResult(
-                status=FileCheckStatus.PEEK_ARCHIVE,
-                _ctx=ctx,
-                _best_result=best_result,
-                _needs_archive_peek=True,
+                _needs_cert_check=needs_cert_check,
+                _needs_archive_peek=needs_archive_peek,
             )
 
         # Content scan needed: RELAY fired, targeted content rules exist,
@@ -343,12 +341,13 @@ class FileScanner:
 
         best_result: Optional[FileResult] = None
 
+        # Postmatch result is invariant within a file — evaluate once
+        if self.rule_evaluator.should_discard_postmatch(ctx):
+            return None
+
         for rule in content_rules:
             match = rule.matches(text)
             if not match:
-                continue
-
-            if self.rule_evaluator.should_discard_postmatch(ctx):
                 continue
 
             # matches() returns re.Match for regex, str for EXACT
@@ -399,6 +398,8 @@ class FileScanner:
 
             best_result: Optional[FileResult] = None
             for member_name, member_size in members:
+                # Normalize backslash paths (Windows-created archives)
+                member_name = member_name.replace("\\", "/")
                 basename = os.path.basename(member_name)
                 member_ext = os.path.splitext(basename)[1].lower()
                 member_unc = f"{ctx.unc_path}\u2192{member_name}"
@@ -477,7 +478,7 @@ class FileScanner:
             try:
                 with py7zr.SevenZipFile(bio, mode="r") as sz:
                     return [
-                        (entry.filename, entry.uncompressed)
+                        (entry.filename, entry.uncompressed or 0)
                         for entry in sz.list()
                         if not entry.is_directory
                     ]

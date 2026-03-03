@@ -60,7 +60,23 @@ class SnafflerRunner:
         self.share_pipeline = SharePipeline(
             cfg=cfg, state=self.state, progress=self.progress,
         )
-        self.file_pipeline = FilePipeline(cfg=cfg, state=self.state, progress=self.progress)
+
+        # Inject local transport when --local is used
+        if cfg.targets.local_targets:
+            from snaffler.accessors.local_file_accessor import LocalFileAccessor
+            from snaffler.discovery.local_tree_walker import LocalTreeWalker
+
+            tree_walker = LocalTreeWalker(
+                dir_rules=cfg.rules.directory,
+                exclude_unc=cfg.targets.exclude_unc,
+            )
+            file_accessor = LocalFileAccessor()
+            self.file_pipeline = FilePipeline(
+                cfg=cfg, state=self.state, progress=self.progress,
+                tree_walker=tree_walker, file_accessor=file_accessor,
+            )
+        else:
+            self.file_pipeline = FilePipeline(cfg=cfg, state=self.state, progress=self.progress)
 
     def _start_status_thread(self):
         self._stop_event.clear()
@@ -163,7 +179,14 @@ class SnafflerRunner:
         if not exclusions:
             return paths
         exc_set = {e.upper() for e in exclusions}
-        filtered = [p for p in paths if p.split("/")[2].upper() not in exc_set]
+        filtered = []
+        for p in paths:
+            parts = p.strip("/").split("/")
+            if len(parts) < 2:
+                filtered.append(p)
+                continue
+            if parts[0].upper() not in exc_set:
+                filtered.append(p)
         diff = len(paths) - len(filtered)
         if diff:
             logger.info(f"Excluded {diff} UNC path(s) via --exclusions")
@@ -375,13 +398,28 @@ class SnafflerRunner:
                 except ImportError as exc:
                     logger.warning(f"Web dashboard unavailable: {exc}")
 
+            # ---------- Local filesystem paths ----------
+            if self.cfg.targets.local_targets:
+                if self.cfg.targets.shares_only:
+                    logger.warning("--shares-only has no effect in --local mode")
+                if self.cfg.targets.exclusions:
+                    logger.warning("--exclusions has no effect in --local mode")
+                paths = self.cfg.targets.local_targets
+                self.progress.shares_found = len(paths)
+                self._rebalance_file_threads()
+                self.file_pipeline.run(paths)
+
             # ---------- Direct UNC paths ----------
-            if self.cfg.targets.unc_targets:
+            elif self.cfg.targets.unc_targets:
                 paths = self._filter_paths_by_share(self.cfg.targets.unc_targets)
                 paths = self._filter_paths_by_exclusions(paths)
                 # Seed progress counters from UNC paths so summary stats
                 # include computer/share counts even without SharePipeline.
-                hosts = {p.split("/")[2] for p in paths if p.startswith("//")}
+                hosts = {
+                    p.strip("/").split("/")[0]
+                    for p in paths
+                    if p.startswith("//")
+                }
                 self.progress.computers_total = len(hosts)
                 self.progress.computers_done = len(hosts)
                 self.progress.shares_found = len(paths)

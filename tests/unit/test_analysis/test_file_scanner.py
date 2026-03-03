@@ -176,7 +176,7 @@ def test_scan_file_content_rule():
 
 
 def test_scan_file_zero_mtime():
-    """mtime_epoch=0 should result in modified=None."""
+    """mtime_epoch=0 is a valid epoch timestamp and should not crash."""
     accessor = MagicMock()
 
     evaluator = MagicMock()
@@ -279,9 +279,9 @@ def test_match_filter_blocks_non_matching_finding():
     with patch("snaffler.analysis.file_scanner.log_file_result") as mock_log:
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
-    # Return value is None (filtered from pipeline output)
-    assert result is None
-    # But log_file_result was still called (for DB persistence) with suppress_log=True
+    # Result is still returned (--match is purely an output filter)
+    assert result is not None
+    # log_file_result was called with suppress_log=True (console/file output suppressed)
     mock_log.assert_called_once()
     assert mock_log.call_args.kwargs.get("suppress_log") is True or \
            mock_log.call_args[1].get("suppress_log") is True
@@ -314,9 +314,9 @@ def test_match_filter_still_downloads_non_matching():
     with patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
-    # Return value is None (filtered from output)
-    assert result is None
-    # But file was still downloaded
+    # Result is still returned (--match is purely an output filter)
+    assert result is not None
+    # File was still downloaded
     accessor.copy_to_local.assert_called_once_with(
         "//srv/share/f.txt", "/tmp/loot"
     )

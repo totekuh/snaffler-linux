@@ -44,10 +44,17 @@ def should_scan_directory(
             return False
 
     for rule in dir_rules:
-        if rule.match_location != MatchLocation.FILE_PATH:
+        if rule.match_location == MatchLocation.FILE_PATH:
+            match_target = dir_path
+        elif rule.match_location == MatchLocation.FILE_NAME:
+            # Match against the directory name (last path component)
+            match_target = dir_path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+            if not match_target:
+                continue
+        else:
             continue
 
-        if not rule.matches(dir_path):
+        if not rule.matches(match_target):
             continue
 
         if rule.match_action == MatchAction.DISCARD:

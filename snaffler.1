@@ -1,4 +1,4 @@
-.TH SNAFFLER 1 "February 2026" "snaffler-ng 1.1.1" "User Commands"
+.TH SNAFFLER 1 "March 2026" "snaffler-ng 1.4.0" "User Commands"
 .SH NAME
 snaffler \- discover credentials and sensitive data on SMB shares
 .SH SYNOPSIS
@@ -86,6 +86,11 @@ DNS resolution is performed on the proxy side so internal hostnames resolve corr
 .BI \-\-unc " TEXT"
 Direct UNC path(s) to scan. Disables computer/share discovery. Can be
 specified multiple times.
+.TP
+.BI \-\-local " PATH"
+Local directory path(s) to scan. Scans the local filesystem instead of SMB.
+Can be specified multiple times. Mutually exclusive with \fB\-\-unc\fR,
+\fB\-\-computer\fR, \fB\-\-domain\fR, and \fB\-\-stdin\fR.
 .TP
 .BI \-\-computer " TEXT"
 Target computer(s) by hostname, FQDN, or IP. Can be specified multiple times.

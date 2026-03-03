@@ -32,6 +32,7 @@ def make_cfg():
     # ---------- targets ----------
     cfg.targets.unc_targets = []
     cfg.targets.computer_targets = []
+    cfg.targets.local_targets = []
     cfg.targets.shares_only = False
     cfg.targets.share_filter = []
     cfg.targets.exclude_share = []

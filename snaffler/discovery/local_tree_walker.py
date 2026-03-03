@@ -48,6 +48,9 @@ class LocalTreeWalker(TreeWalker):
                             mtime = 0.0
                         if on_file:
                             on_file(entry.path, size, mtime)
+                    elif entry.is_symlink():
+                        # Dangling or directory symlinks — not followed (loop prevention)
+                        logger.debug(f"Skipping symlink: {entry.path}")
                 except OSError as e:
                     logger.debug(f"Skipping {entry.path}: {e}")
                     continue

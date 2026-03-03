@@ -178,7 +178,7 @@ class Snaffler:
 
     # ------------------------------------------------------------------ walk
 
-    def walk(self, root_dir: str) -> Generator[FileResult, None, None]:
+    def walk(self, root_dir: str, cancel=None) -> Generator[FileResult, None, None]:
         """Walk a directory tree and yield findings.
 
         Single-threaded, depth-first traversal. Uses the configured walker
@@ -188,27 +188,44 @@ class Snaffler:
         by the walker's ``_should_scan_directory()`` when the walker is a
         :class:`TreeWalker` subclass, or by :meth:`check_dir` for duck-typed
         walkers.
+
+        Args:
+            root_dir: Root directory to start walking from.
+            cancel: Optional threading.Event for cooperative cancellation.
         """
         # Stack entries: (path, depth)
         stack = [(root_dir, 0)]
+        _is_tree_walker = isinstance(self._walker, TreeWalker)
 
         while stack:
+            if cancel and cancel.is_set():
+                return
+
             dir_path, depth = stack.pop()
 
-            # Dir filtering — delegate to walker if it's a TreeWalker,
-            # otherwise use check_dir() fallback
-            if not self._check_dir(dir_path):
-                continue
+            # Dir filtering: TreeWalker subclasses already pre-filter
+            # subdirs inside walk_directory(), so only check the root
+            # (depth 0, never pre-filtered) and duck-typed walker results.
+            if not _is_tree_walker or depth == 0:
+                if not self._check_dir(dir_path):
+                    continue
 
             files = []
+            subdirs_from_cb = []
 
             def _on_file(path, size, mtime):
                 files.append((path, size, mtime))
 
+            def _on_dir(path):
+                subdirs_from_cb.append(path)
+
             try:
                 subdirs = self._walker.walk_directory(
-                    dir_path, on_file=_on_file,
+                    dir_path, on_file=_on_file, on_dir=_on_dir,
+                    cancel=cancel,
                 )
+                # Use return value if provided, fall back to on_dir callback
+                subdirs = subdirs if subdirs is not None else subdirs_from_cb
             except Exception as e:
                 logger.debug(f"Error walking {dir_path}: {e}")
                 continue
@@ -324,6 +341,8 @@ class Snaffler:
             if prior.status == FileCheckStatus.SNAFFLE:
                 return self._apply_filters(prior.result)
 
+        if prior.status == FileCheckStatus.DISCARD:
+            return None
         if prior.status == FileCheckStatus.SNAFFLE:
             return self._apply_filters(prior.result)
 
@@ -343,10 +362,14 @@ class Snaffler:
 
         Returns a RED :class:`FileResult` if a private key is found,
         ``None`` otherwise.
+
+        Note: this is a low-level method that bypasses file-rule evaluation
+        (e.g. DISCARD rules). Use :meth:`walk` or :meth:`check_file` +
+        :meth:`scan_content` for the full classification pipeline.
         """
         file_name = os.path.basename(file_path)
         file_ext = os.path.splitext(file_name)[1]
-        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch else None
+        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch is not None else None
 
         ctx = FileContext(
             unc_path=file_path,
@@ -371,10 +394,15 @@ class Snaffler:
         """List filenames inside an archive and evaluate file rules.
 
         Supports ZIP, 7z, and RAR formats.
+
+        Note: this is a low-level method that bypasses file-rule evaluation
+        on the archive file itself (e.g. DISCARD rules). Use :meth:`walk`
+        or :meth:`check_file` + :meth:`scan_content` for the full
+        classification pipeline.
         """
         file_name = os.path.basename(file_path)
         file_ext = os.path.splitext(file_name)[1]
-        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch else None
+        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch is not None else None
 
         ctx = FileContext(
             unc_path=file_path,

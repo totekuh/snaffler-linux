@@ -677,8 +677,8 @@ class TestMinInterest:
 class TestMatchFilter:
     """--match regex filter reduces findings output."""
 
-    def test_match_filter_reduces_findings(self, cfg):
-        """Pipeline with match_filter produces fewer matches than without."""
+    def test_match_filter_does_not_reduce_finding_count(self, cfg):
+        """--match is an output filter — finding count and severity counters are unchanged."""
         smb = _make_smb_mock(_DATA_DIR)
 
         # Baseline: no filter
@@ -706,10 +706,10 @@ class TestMatchFilter:
                 ["//10.0.0.1/TestShare"]
             )
 
-        # Filter should produce strictly fewer findings
-        assert matched_filtered < matched_all
-        # But still some (test data has password-related files)
-        assert matched_filtered > 0
+        # --match is purely an output filter: finding count is unchanged,
+        # severity counters reflect all real findings
+        assert matched_filtered == matched_all
+        assert progress_filtered.files_matched == progress_all.files_matched
 
     def test_match_filter_does_not_affect_files_scanned(self, cfg):
         """--match only filters output, not scanning — files_scanned is unchanged."""
@@ -785,11 +785,9 @@ class TestMatchFilter:
             )
             set_finding_store(None)
 
-        # Pipeline return count is reduced (output filter)
-        assert matched_filtered < matched_all
-        # DB persistence count is NOT reduced — all findings still stored
-        # (may be slightly higher because filtered BLACK results don't trigger
-        # the early-exit optimization, allowing content rules to run too)
+        # --match is purely an output filter: pipeline return count is unchanged
+        assert matched_filtered == matched_all
+        # DB persistence count is also unchanged — all findings still stored
         assert len(stored_findings_filtered) >= total_stored
 
 
@@ -1316,15 +1314,16 @@ class TestArchivePeek:
 
     # ---------------------------------------- negative: match filter on archive members
 
-    def test_match_filter_suppresses_archive_findings(self, cfg):
-        """--match filter that doesn't match archive members suppresses them."""
+    def test_match_filter_suppresses_archive_log_not_count(self, cfg):
+        """--match filter suppresses log output but findings are still counted."""
+        # First get baseline without filter
+        matched_all, _, _ = self._run_pipeline(cfg, self._ARCHIVE_DIR)
+
         cfg.scanning.match_filter = "this_will_never_match_anything_12345"
+        matched, _, _ = self._run_pipeline(cfg, self._ARCHIVE_DIR)
 
-        matched, _, findings = self._run_pipeline(cfg, self._ARCHIVE_DIR)
-
-        # All findings (archive and non-archive) are suppressed
-        # because nothing matches the filter
-        assert matched == 0
+        # --match is purely an output filter: finding count is unchanged
+        assert matched == matched_all
 
     def test_match_filter_passes_archive_findings(self, cfg):
         """--match filter matching archive member names passes them through."""

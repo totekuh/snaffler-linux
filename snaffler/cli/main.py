@@ -17,7 +17,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.3.0"  # fallback for PyInstaller builds
+        return "1.4.0"  # fallback for PyInstaller builds
 
 
 def _version_callback(value: bool):
@@ -111,6 +111,11 @@ def main(
         unc_targets: Optional[List[str]] = typer.Option(
             None, "--unc",
             help="Direct UNC path(s) to scan (disables computer/share discovery)",
+            rich_help_panel="Targeting",
+        ),
+        local: Optional[List[str]] = typer.Option(
+            None, "--local",
+            help="Local directory path(s) to scan (no SMB, scans local filesystem)",
             rich_help_panel="Targeting",
         ),
         computer: Optional[List[str]] = typer.Option(
@@ -360,6 +365,7 @@ def main(
 
     # ---------- TARGETING ----------
     if _explicit("unc_targets"):      cfg.targets.unc_targets = unc_targets or []
+    if _explicit("local"):            cfg.targets.local_targets = local or []
     if _explicit("shares_only"):      cfg.targets.shares_only = shares_only
     if _explicit("include_disabled"): cfg.targets.skip_disabled_computers = not include_disabled
     if _explicit("share"):            cfg.targets.share_filter = share or []
@@ -382,11 +388,24 @@ def main(
             l.strip().upper() for l in exclusions_file.read_text().splitlines() if l.strip()
         ]
 
+    # ---------- LOCAL TARGET VALIDATION ----------
+    if cfg.targets.local_targets:
+        if cfg.targets.unc_targets or cfg.targets.computer_targets or cfg.auth.domain or stdin_mode:
+            raise typer.BadParameter(
+                "--local is mutually exclusive with --unc, --computer, --computer-file, --domain, and --stdin"
+            )
+        for lp in cfg.targets.local_targets:
+            p = Path(lp)
+            if not p.exists():
+                raise typer.BadParameter(f"--local path does not exist: {lp}")
+            if not p.is_dir():
+                raise typer.BadParameter(f"--local path is not a directory: {lp}")
+
     # ---------- STDIN (NXC) ----------
     if stdin_mode:
-        if cfg.targets.unc_targets or cfg.targets.computer_targets:
+        if cfg.targets.unc_targets or cfg.targets.computer_targets or cfg.targets.local_targets:
             raise typer.BadParameter(
-                "--stdin is mutually exclusive with --unc, --computer, and --computer-file"
+                "--stdin is mutually exclusive with --unc, --computer, --computer-file, and --local"
             )
         import sys
         from snaffler.utils.nxc_parser import parse_nxc_shares
@@ -401,14 +420,15 @@ def main(
 
     # ---------- TARGET MODE VALIDATION ----------
     has_unc = bool(cfg.targets.unc_targets)
+    has_local = bool(cfg.targets.local_targets)
     has_computers = bool(cfg.targets.computer_targets)
     has_domain = bool(cfg.auth.domain)
 
     # At least one targeting mode must be selected
-    if not (has_unc or has_computers or has_domain):
+    if not (has_unc or has_local or has_computers or has_domain):
         raise typer.BadParameter(
             "No targets specified. Use one of: "
-            "--unc, --computer/--computer-file, --stdin, or --domain"
+            "--unc, --local, --computer/--computer-file, --stdin, or --domain"
         )
     # ---------- SCANNING ----------
     if _explicit("min_interest"):   cfg.scanning.min_interest = min_interest

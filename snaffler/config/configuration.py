@@ -45,6 +45,7 @@ class AuthConfig:
 class TargetingConfig:
     unc_targets: List[str] = field(default_factory=list)
     computer_targets: List[str] = field(default_factory=list)
+    local_targets: List[str] = field(default_factory=list)
 
     shares_only: bool = False
 
@@ -148,12 +149,21 @@ class SnafflerConfiguration:
         if self.targets.unc_targets and self.targets.computer_targets:
             raise ValueError("Cannot mix UNC targets and computer targets")
 
+        if self.targets.local_targets and (
+            self.targets.unc_targets or self.targets.computer_targets
+        ):
+            raise ValueError("Cannot mix local targets with UNC or computer targets")
+
         if self.rules.rule_dir:
             p = Path(self.rules.rule_dir)
             if not p.exists():
                 raise ValueError(f"rule_dir does not exist: {p}")
             if not p.is_dir():
                 raise ValueError(f"rule_dir is not a directory: {p}")
+
+        # Auth validation is irrelevant in local mode (no network connections)
+        if self.targets.local_targets:
+            return
 
         # ---------- AUTH VALIDATION ----------
         if self.auth.kerberos:

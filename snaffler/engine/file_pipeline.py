@@ -26,9 +26,15 @@ _BATCH_INTERVAL = 1.0  # seconds
 
 
 def _extract_share_unc(unc_path: str) -> str:
-    """Extract //server/share from a full UNC path."""
-    parts = unc_path.replace("\\", "/").split("/")
-    parts = [p for p in parts if p]
+    """Extract //server/share from a full UNC path.
+
+    For local paths (not starting with ``//``), returns the path unchanged
+    so it can be used as-is as a share key in the resume database.
+    """
+    normalized = unc_path.replace("\\", "/")
+    if not normalized.startswith("//"):
+        return unc_path
+    parts = [p for p in normalized.split("/") if p]
     if len(parts) >= 2:
         return f"//{parts[0]}/{parts[1]}"
     return unc_path
@@ -48,12 +54,12 @@ class _BatchWriter:
         )
         self._thread.start()
 
-    def stop(self):
+    def stop(self, timeout=30):
         self._queue.put(None)  # sentinel
         if self._thread is not None:
-            self._thread.join(timeout=30)
+            self._thread.join(timeout=timeout)
             if self._thread.is_alive():
-                logger.warning("Batch writer did not finish within 30s")
+                logger.warning(f"Batch writer did not finish within {timeout}s")
 
     def put_dir(self, unc_path: str, share: str):
         self._queue.put(("dir", unc_path, share))
@@ -298,7 +304,12 @@ class FilePipeline:
                                 continue
                             if self.progress:
                                 self.progress.files_total += 1
-                            file_queue.put((unc_path, size or 0, mtime or 0.0))
+                            while not shutdown.is_set():
+                                try:
+                                    file_queue.put((unc_path, size or 0, mtime or 0.0), timeout=1.0)
+                                    break
+                                except queue.Full:
+                                    continue
 
                     # --- Fan-out loop ---
                     try:
@@ -332,7 +343,7 @@ class FilePipeline:
                                     if subdir.lower() in submitted_dirs:
                                         continue
                                     if max_depth is not None and share_root:
-                                        rel = subdir[len(share_root):].strip("/")
+                                        rel = subdir.lower()[len(share_root.lower()):].strip("/")
                                         depth = len(rel.split("/")) if rel else 0
                                         if depth > max_depth:
                                             continue
@@ -365,10 +376,16 @@ class FilePipeline:
                         producer_error.append(KeyboardInterrupt())
             finally:
                 if batch_writer:
-                    batch_writer.stop()
-                # Push sentinels so consumers exit
+                    # On interrupt, use a short timeout to avoid blocking shutdown
+                    timeout = 5 if producer_error else 30
+                    batch_writer.stop(timeout=timeout)
+                # Push sentinels so consumers exit (non-blocking — the
+                # outer KeyboardInterrupt handler drains the queue if needed)
                 for _ in range(self.file_threads):
-                    file_queue.put(_SENTINEL)
+                    try:
+                        file_queue.put(_SENTINEL, timeout=2)
+                    except queue.Full:
+                        pass
 
         # ---------- Consumer: queue → scan ----------
         consumer_results = [0]  # mutable container for thread access

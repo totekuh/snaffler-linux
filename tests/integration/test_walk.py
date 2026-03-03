@@ -4,6 +4,8 @@ Integration test: Snaffler.walk() against the real local filesystem.
 No mocking — real rules, real local tree walker, real local file reader,
 real test data directory.  Validates that the library API produces correct
 findings when pointed at a local directory tree.
+
+Also tests the CLI ``--local`` pipeline (FilePipeline with local transport).
 """
 
 import shutil
@@ -368,3 +370,88 @@ class TestEdgeCases:
             assert not any("noaccess" in p for p in paths)
         finally:
             bad.chmod(0o755)
+
+
+# ---------------------------------------------------------------------------
+# CLI --local pipeline (FilePipeline with local transport)
+# ---------------------------------------------------------------------------
+
+class TestLocalPipeline:
+    """Run the full CLI pipeline (SnafflerRunner) with --local against the
+    real local filesystem.  No mocking — validates that the runner correctly
+    injects LocalTreeWalker + LocalFileAccessor and produces findings."""
+
+    @pytest.fixture()
+    def cfg(self):
+        from snaffler.classifiers.loader import RuleLoader
+        from snaffler.config.configuration import SnafflerConfiguration
+
+        c = SnafflerConfiguration()
+        c.targets.local_targets = [str(_DATA_DIR)]
+        c.scanning.max_read_bytes = 2 * 1024 * 1024
+        c.scanning.max_file_bytes = 10 * 1024 * 1024
+        c.scanning.match_context_bytes = 200
+        c.scanning.min_interest = 0
+        c.advanced.share_threads = 2
+        c.advanced.tree_threads = 2
+        c.advanced.file_threads = 2
+        c.state.state_db = ":memory:"
+        RuleLoader.load(c)
+        return c
+
+    def test_runner_produces_findings(self, cfg):
+        from snaffler.engine.runner import SnafflerRunner
+        from snaffler.utils.logger import set_finding_store
+
+        runner = SnafflerRunner(cfg)
+        runner.execute()
+        set_finding_store(None)
+
+        assert runner.progress.files_scanned > 0
+        assert runner.progress.files_matched > 0
+
+    def test_runner_uses_local_transport(self, cfg):
+        from snaffler.accessors.local_file_accessor import LocalFileAccessor
+        from snaffler.discovery.local_tree_walker import LocalTreeWalker
+        from snaffler.engine.runner import SnafflerRunner
+        from snaffler.utils.logger import set_finding_store
+
+        runner = SnafflerRunner(cfg)
+        assert isinstance(runner.file_pipeline.tree_walker, LocalTreeWalker)
+        assert isinstance(runner.file_pipeline.file_scanner.file_accessor, LocalFileAccessor)
+        set_finding_store(None)
+
+    def test_runner_multiple_local_paths(self, tmp_path, cfg):
+        from snaffler.engine.runner import SnafflerRunner
+        from snaffler.utils.logger import set_finding_store
+
+        # Create two directories with interesting files
+        dir1 = tmp_path / "dir1"
+        dir1.mkdir()
+        (dir1 / "ntds.dit").write_bytes(b"creds")
+
+        dir2 = tmp_path / "dir2"
+        dir2.mkdir()
+        (dir2 / "id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n")
+
+        cfg.targets.local_targets = [str(dir1), str(dir2)]
+        runner = SnafflerRunner(cfg)
+        runner.execute()
+        set_finding_store(None)
+
+        assert runner.progress.shares_found == 2
+        assert runner.progress.files_matched >= 2
+
+    def test_runner_empty_local_dir(self, tmp_path, cfg):
+        from snaffler.engine.runner import SnafflerRunner
+        from snaffler.utils.logger import set_finding_store
+
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        cfg.targets.local_targets = [str(empty)]
+
+        runner = SnafflerRunner(cfg)
+        runner.execute()
+        set_finding_store(None)
+
+        assert runner.progress.files_matched == 0
