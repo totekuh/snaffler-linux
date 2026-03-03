@@ -2,12 +2,14 @@
 
 Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 
-**snaffler-ng** is a post-exploitation / red teaming tool designed to **discover readable SMB shares**, **walk directory trees**, and **identify credentials and sensitive data** on Windows systems.
+**snaffler-ng** is a post-exploitation / red teaming tool designed to **discover readable SMB shares**, **walk directory trees**, and **identify credentials and sensitive data** on Windows systems. Also works as a **local filesystem scanner** and a **Python library** for integration into C2 frameworks and custom tooling.
 
 ## Features
 
 - SMB share discovery via SRVSVC (NetShareEnum)
 - DFS namespace discovery via LDAP (v1 + v2), merged and deduplicated with share enumeration
+- **Local filesystem scanning** (`--local`) — same classification engine, no SMB required
+- **Python library API** — two-phase classification for C2 integration, duck-typed transport
 - Parallel directory tree walking with intra-share fan-out
 - 103 built-in regex-based file and content classification rules
 - NTLM authentication (password or pass-the-hash)
@@ -130,6 +132,26 @@ snaffler \
   --computer-file targets.txt
 ```
 
+### Local Filesystem Scanning
+
+Scan local directories without any SMB or network configuration:
+
+```bash
+snaffler --local /mnt/share
+snaffler --local /tmp/extracted --local /home/user/Documents
+```
+
+Uses the same classification engine, rules, and multithreaded pipeline as SMB mode — just reads from the local filesystem instead. Useful for:
+
+- Scanning mounted NFS/CIFS shares
+- Post-compromise triage of extracted filesystems
+- Offline analysis of forensic images
+- Testing rules against local data
+
+`--local` is mutually exclusive with `--unc`, `--computer`, `--domain`, and `--stdin`.
+
+---
+
 ### Archive Peeking
 
 snaffler-ng can look inside ZIP, 7z, and RAR archives without extracting files. Archive members are matched against file rules — if an archive contains `web.config` or `id_rsa`, it gets flagged:
@@ -245,6 +267,80 @@ snaffler results -f html > report.html        # HTML report with search bar
 snaffler results -b 2                         # Red+ severity only
 snaffler results -s /path/to/snaffler.db      # custom DB path
 ```
+
+## Library API
+
+snaffler-ng can be used as a Python library for integration into C2 frameworks, custom tooling, or automated pipelines.
+
+### Walk a directory
+
+```python
+from snaffler import Snaffler
+
+for finding in Snaffler().walk("/mnt/share"):
+    print(f"[{finding.triage.label}] {finding.file_path}")
+    if finding.match:
+        print(f"  matched: {finding.match}")
+```
+
+### Two-phase classification (for C2 integration)
+
+Minimize beacon traffic — most files are skipped at phase 1 (metadata-only, zero I/O):
+
+```python
+from snaffler import Snaffler
+from snaffler.api import FileCheckStatus
+
+s = Snaffler()
+
+# Phase 1: metadata only — instant, no file read
+check = s.check_file(path, size=4096, mtime=1700000000.0)
+
+if check.status == FileCheckStatus.NEEDS_CONTENT:
+    # Phase 2: only download + classify when needed
+    result = s.scan_content(file_bytes, prior=check)
+
+elif check.status == FileCheckStatus.MATCHED:
+    result = check.result  # matched on filename alone (e.g. ntds.dit)
+```
+
+### Custom transport (duck-typed)
+
+Plug in any transport — no ABC required, just implement `walk_directory` and `read`:
+
+```python
+class BeaconWalker:
+    def walk_directory(self, path, on_file=None, on_dir=None, cancel=None):
+        for entry in beacon.ls(path):
+            if entry.is_dir:
+                if on_dir: on_dir(entry.path)
+            elif on_file:
+                on_file(entry.path, entry.size, entry.mtime)
+        return [e.path for e in beacon.ls(path) if e.is_dir]
+
+class BeaconReader:
+    def read(self, path, max_bytes=None):
+        return beacon.download(path, max_bytes)
+
+s = Snaffler(walker=BeaconWalker(), reader=BeaconReader())
+for finding in s.walk("C:\\Users"):
+    beacon.report(finding.file_path, finding.triage.label)
+```
+
+### Constructor parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `walker` | `LocalTreeWalker()` | Directory listing provider |
+| `reader` | `LocalFileAccessor()` | File content reader |
+| `rule_dir` | `None` | Custom TOML rules directory |
+| `min_interest` | `0` | Minimum severity (0=all, 3=Black only) |
+| `max_read_bytes` | `2MB` | Content scan byte limit |
+| `match_context_bytes` | `200` | Context bytes around regex matches |
+| `cert_passwords` | built-in list | Passwords to try on PKCS12 certs |
+| `exclude_unc` | `None` | Glob patterns to skip directories |
+| `match_filter` | `None` | Regex post-filter on findings |
+| `max_depth` | `None` | Maximum directory recursion depth |
 
 ## Authentication Options
 
