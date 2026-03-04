@@ -161,29 +161,32 @@ def setup_logging(
 
     if log_to_file and log_file_path:
         Path(log_file_path).parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
 
-        if log_level == "data":
-            fh.setLevel(logging.DEBUG)
-            fh.addFilter(FindingsOnlyFilter())
-        else:
-            fh.setLevel(level)
-
-        if log_type == "json":
-            fh.setFormatter(SnafflerJSONFormatter())
-        elif log_type == "tsv":
-            Path(log_file_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(log_file_path, "w", encoding="utf-8") as f:
-                f.write(
-                    "timestamp\ttriage\trule_name\tfile_path\tsize\tmtime\tfinding_id\tmatch_context\n"
-                )
+        if log_type == "tsv":
+            tsv_path = Path(log_file_path)
+            if not tsv_path.exists() or tsv_path.stat().st_size == 0:
+                with open(log_file_path, "w", encoding="utf-8") as f:
+                    f.write(
+                        "timestamp\ttriage\trule_name\tfile_path\tsize\tmtime\tfinding_id\tmatch_context\n"
+                    )
 
             fh = logging.FileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
             fh.setLevel(logging.DEBUG)
             fh.addFilter(FindingsOnlyFilter())
             fh.setFormatter(SnafflerTSVFormatter())
         else:
-            fh.setFormatter(SnafflerFormatter(logger))
+            fh = logging.FileHandler(log_file_path, mode="a", encoding="utf-8", errors="replace")
+
+            if log_level == "data":
+                fh.setLevel(logging.DEBUG)
+                fh.addFilter(FindingsOnlyFilter())
+            else:
+                fh.setLevel(level)
+
+            if log_type == "json":
+                fh.setFormatter(SnafflerJSONFormatter())
+            else:
+                fh.setFormatter(SnafflerFormatter(logger))
 
         logger.addHandler(fh)
 
@@ -238,7 +241,8 @@ def log_file_result(
     if match:
         parts.append(f"Match: {match}")
     if context:
-        parts.append(f"Context: {context[:200]}...")
+        ctx_display = context[:200] + ("..." if len(context) > 200 else "")
+        parts.append(f"Context: {ctx_display}")
 
     is_json = any(
         isinstance(h.formatter, SnafflerJSONFormatter)
@@ -265,20 +269,20 @@ def log_file_result(
     if not suppress_log:
         logger.warning(message, extra=extra)
 
-    if _finding_store is not None:
-        try:
-            _finding_store(
-                finding_id=extra["finding_id"],
-                file_path=file_path,
-                triage=triage,
-                rule_name=rule_name,
-                match_text=match,
-                context=context,
-                size=size,
-                mtime=modified,
-            )
-        except Exception:
-            pass  # never crash the scanner on DB write failure
+        if _finding_store is not None:
+            try:
+                _finding_store(
+                    finding_id=extra["finding_id"],
+                    file_path=file_path,
+                    triage=triage,
+                    rule_name=rule_name,
+                    match_text=match,
+                    context=context,
+                    size=size,
+                    mtime=modified,
+                )
+            except Exception:
+                pass  # never crash the scanner on DB write failure
 
 
 def print_completion_stats(start_time, progress=None):

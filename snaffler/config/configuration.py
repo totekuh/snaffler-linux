@@ -2,12 +2,15 @@
 Configuration management for Snaffler Linux
 """
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
 import tomlkit
 import typer
+
+_cfg_logger = logging.getLogger("snaffler")
 
 # Shared default cert passwords — used by both CLI (ScanningConfig) and
 # library API (Snaffler).  Keep in one place so they never diverge.
@@ -118,7 +121,6 @@ class RulesConfig:
 @dataclass
 class StateConfig:
     state_db: str = "snaffler.db"
-    fresh: bool = False
 
 
 # ---------------- WEB DASHBOARD ----------------
@@ -195,4 +197,19 @@ class SnafflerConfiguration:
                 obj = getattr(self, section)
                 for key, value in values.items():
                     if hasattr(obj, key):
+                        current = getattr(obj, key)
+                        if current is not None:
+                            expected_type = type(current)
+                            # bool is a subclass of int — check bool first
+                            if expected_type is bool and not isinstance(value, bool):
+                                _cfg_logger.warning(
+                                    f"Config: {key} expected bool, got {type(value).__name__} — skipping"
+                                )
+                                continue
+                            if not isinstance(value, (expected_type, type(None))):
+                                _cfg_logger.warning(
+                                    f"Config: {key} expected {expected_type.__name__}, "
+                                    f"got {type(value).__name__} — skipping"
+                                )
+                                continue
                         setattr(obj, key, value)

@@ -28,7 +28,71 @@ def _version_callback(value: bool):
 
 app = typer.Typer(
     add_completion=False,
-    help="Snaffler Linux – Find credentials and sensitive data on Windows SMB shares"
+    help="Snaffler Linux – Find credentials and sensitive data on Windows SMB shares",
+    epilog="""
+\b
+Examples:
+  Domain discovery (auto-find all computers + shares):
+    snaffler -d CORP.LOCAL -u jsmith -p 'P@ssw0rd'
+    snaffler -d CORP.LOCAL -u admin -p 'P@ssw0rd' --dc-host dc01.corp.local
+
+  Domain-joined with Kerberos (ccache from kinit/Rubeus):
+    export KRB5CCNAME=/tmp/krb5cc_jsmith
+    snaffler -d CORP.LOCAL -k --use-kcache --dc-host dc01.corp.local
+
+  Pass-the-Hash:
+    snaffler -d CORP.LOCAL -u admin --hash aad3b435b51404eeaad3b435b51404ee -c DC01
+
+  Local account auth (omit -d to authenticate against the target's local SAM):
+    snaffler -u Administrator --hash aad3b435b51404eeaad3b435b51404ee -c 10.0.0.5
+    snaffler -u Administrator -p 'P@ssw0rd' --unc //10.0.0.5/C$
+
+  Target specific computers:
+    snaffler -u admin -p 'P@ssw0rd' -c FILESERVER01
+    snaffler -u admin -p 'P@ssw0rd' -c 10.0.0.0/24
+    snaffler -u admin -p 'P@ssw0rd' --computer-file targets.txt
+
+  Direct UNC paths:
+    snaffler -u admin -p 'P@ssw0rd' --unc //fileserver/share
+    snaffler -u admin -p 'P@ssw0rd' --unc //fs1/data --unc //fs2/backup
+
+  Local filesystem scan (no auth required):
+    snaffler --local-fs /mnt/share
+    snaffler --local-fs /home --local-fs /var --exclude-unc '*/node_modules/*'
+
+  Pipe NXC share output:
+    nxc smb targets.txt -u admin -p pass --shares | snaffler -u admin -p pass --stdin
+
+  Through a SOCKS proxy (e.g. Chisel):
+    snaffler -d CORP.LOCAL -u admin -p pass --socks socks5://127.0.0.1:1080 --ns 10.10.10.1
+
+  Custom DNS (resolve via DC):
+    snaffler -d CORP.LOCAL -u admin -p pass --ns 10.10.10.1
+
+  Host exclusions:
+    snaffler -d CORP.LOCAL -u admin -p pass --exclusions skip_hosts.txt
+
+  Path exclusions:
+    snaffler -d CORP.LOCAL -u admin -p pass --exclude-unc '*/Windows/*' --exclude-unc '*/Temp/*'
+
+  Filter shares:
+    snaffler -u admin -p pass -c FILESERVER --share 'IT*' --exclude-share 'IPC$'
+
+  Output & filtering:
+    snaffler -d CORP.LOCAL -u admin -p pass -o results.json
+    snaffler -d CORP.LOCAL -u admin -p pass -o findings.tsv -b 2
+    snaffler -d CORP.LOCAL -u admin -p pass --match 'password|secret'
+
+  Download matched files:
+    snaffler -d CORP.LOCAL -u admin -p pass -m ./loot
+
+  Resume interrupted scan:
+    snaffler -d CORP.LOCAL -u admin -p pass --state scan.db
+    snaffler -d CORP.LOCAL -u admin -p pass --state scan.db --fresh  # restart clean
+
+  Web dashboard:
+    snaffler -d CORP.LOCAL -u admin -p pass --web --web-port 9090
+""",
 )
 app.add_typer(results_app, name="results")
 
@@ -114,7 +178,7 @@ def main(
             rich_help_panel="Targeting",
         ),
         local: Optional[List[str]] = typer.Option(
-            None, "--local",
+            None, "--local-fs",
             help="Local directory path(s) to scan (no SMB, scans local filesystem)",
             rich_help_panel="Targeting",
         ),
@@ -376,12 +440,13 @@ def main(
         raise typer.BadParameter("Use either --computer or --computer-file, not both")
 
     if computer:
-        cfg.targets.computer_targets = [h.upper() for h in computer]
+        from snaffler.utils.target_parser import expand_targets
+        cfg.targets.computer_targets = expand_targets([h.upper() for h in computer])
 
     if computer_file:
-        cfg.targets.computer_targets = [
-            l.strip().upper() for l in computer_file.read_text().splitlines() if l.strip()
-        ]
+        from snaffler.utils.target_parser import expand_targets
+        raw = [l.strip().upper() for l in computer_file.read_text().splitlines() if l.strip()]
+        cfg.targets.computer_targets = expand_targets(raw)
 
     if exclusions_file:
         cfg.targets.exclusions = [
@@ -392,20 +457,20 @@ def main(
     if cfg.targets.local_targets:
         if cfg.targets.unc_targets or cfg.targets.computer_targets or cfg.auth.domain or stdin_mode:
             raise typer.BadParameter(
-                "--local is mutually exclusive with --unc, --computer, --computer-file, --domain, and --stdin"
+                "--local-fs is mutually exclusive with --unc, --computer, --computer-file, --domain, and --stdin"
             )
         for lp in cfg.targets.local_targets:
             p = Path(lp)
             if not p.exists():
-                raise typer.BadParameter(f"--local path does not exist: {lp}")
+                raise typer.BadParameter(f"--local-fs path does not exist: {lp}")
             if not p.is_dir():
-                raise typer.BadParameter(f"--local path is not a directory: {lp}")
+                raise typer.BadParameter(f"--local-fs path is not a directory: {lp}")
 
     # ---------- STDIN (NXC) ----------
     if stdin_mode:
-        if cfg.targets.unc_targets or cfg.targets.computer_targets or cfg.targets.local_targets:
+        if cfg.targets.unc_targets or cfg.targets.computer_targets or cfg.targets.local_targets or cfg.auth.domain:
             raise typer.BadParameter(
-                "--stdin is mutually exclusive with --unc, --computer, --computer-file, and --local"
+                "--stdin is mutually exclusive with --unc, --computer, --computer-file, --local-fs, and --domain"
             )
         import sys
         from snaffler.utils.nxc_parser import parse_nxc_shares
@@ -428,7 +493,7 @@ def main(
     if not (has_unc or has_local or has_computers or has_domain):
         raise typer.BadParameter(
             "No targets specified. Use one of: "
-            "--unc, --local, --computer/--computer-file, --stdin, or --domain"
+            "--unc, --local-fs, --computer/--computer-file, --stdin, or --domain"
         )
     # ---------- SCANNING ----------
     if _explicit("min_interest"):   cfg.scanning.min_interest = min_interest
@@ -486,7 +551,6 @@ def main(
     if fresh and state_path.exists():
         state_path.unlink()
     cfg.state.state_db = str(state_path)
-    if _explicit("fresh"):      cfg.state.fresh = fresh
 
     # ---------- WEB DASHBOARD ----------
     if _explicit("web"):        cfg.web.enabled = web
@@ -497,10 +561,7 @@ def main(
     # ---------- validate ----------
     cfg.validate()
 
-    # ---------- load classification rules ----------
-    RuleLoader.load(cfg)
-
-    # ---------- logging ----------
+    # ---------- logging (before rule loader so its messages are visible) ----------
     setup_logging(
         log_level=cfg.output.log_level,
         log_to_file=cfg.output.to_file,
@@ -508,6 +569,9 @@ def main(
         log_to_console=True,
         log_type=cfg.output.log_type,
     )
+
+    # ---------- load classification rules ----------
+    RuleLoader.load(cfg)
 
     # ---------- SOCKS proxy ----------
     # SOCKS must be set up before custom DNS so that DNS-over-TCP

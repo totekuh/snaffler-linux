@@ -7,6 +7,7 @@ import typer
 from snaffler.config.configuration import (
     SnafflerConfiguration,
     AuthConfig,
+    StateConfig,
 )
 
 
@@ -170,6 +171,12 @@ def test_valid_kerberos_kcache(monkeypatch):
 
 # ---------- TOML ----------
 
+def test_state_config_no_fresh_attribute():
+    """BUG-4: StateConfig.fresh field was removed."""
+    sc = StateConfig()
+    assert not hasattr(sc, "fresh")
+
+
 def test_load_from_toml(tmp_path):
     toml_file = tmp_path / "config.toml"
     toml_file.write_text("""
@@ -187,4 +194,110 @@ def test_load_from_toml(tmp_path):
     assert cfg.auth.username == "admin"
     assert cfg.auth.domain == "example.com"
     assert cfg.advanced.share_threads == 5
+
+
+# ---------- BUG-Z5: load_from_toml accepts wrong types silently ----------
+
+def test_load_from_toml_rejects_string_for_list(tmp_path):
+    """BUG-Z5: A string value where a list is expected should be skipped
+    with a warning, not silently accepted (causing character-by-character iteration)."""
+    toml_file = tmp_path / "bad_types.toml"
+    toml_file.write_text("""
+        [targets]
+        exclude_unc = "*/Windows/*"
+    """)
+
+    cfg = SnafflerConfiguration()
+    cfg.load_from_toml(str(toml_file))
+
+    # The string should NOT have been set — exclude_unc should remain a list
+    assert isinstance(cfg.targets.exclude_unc, list)
+    assert cfg.targets.exclude_unc == []
+
+
+def test_load_from_toml_rejects_int_for_string(tmp_path):
+    """BUG-Z5: An integer value where a string is expected should be skipped."""
+    toml_file = tmp_path / "bad_types.toml"
+    toml_file.write_text("""
+        [auth]
+        username = 12345
+    """)
+
+    cfg = SnafflerConfiguration()
+    cfg.load_from_toml(str(toml_file))
+
+    # username should remain unchanged (default "")
+    assert cfg.auth.username == ""
+
+
+def test_load_from_toml_accepts_correct_types(tmp_path):
+    """BUG-Z5: Correct types should still be accepted normally."""
+    toml_file = tmp_path / "good_types.toml"
+    toml_file.write_text("""
+        [auth]
+        username = "admin"
+        smb_timeout = 10
+        kerberos = true
+
+        [targets]
+        exclude_unc = ["*/Windows/*", "*/temp/*"]
+
+        [advanced]
+        max_threads = 100
+    """)
+
+    cfg = SnafflerConfiguration()
+    cfg.load_from_toml(str(toml_file))
+
+    assert cfg.auth.username == "admin"
+    assert cfg.auth.smb_timeout == 10
+    assert cfg.auth.kerberos is True
+    assert cfg.targets.exclude_unc == ["*/Windows/*", "*/temp/*"]
+    assert cfg.advanced.max_threads == 100
+
+
+def test_load_from_toml_rejects_string_for_int(tmp_path):
+    """BUG-Z5: A string value where an int is expected should be skipped."""
+    toml_file = tmp_path / "bad_types.toml"
+    toml_file.write_text("""
+        [advanced]
+        max_threads = "fast"
+    """)
+
+    cfg = SnafflerConfiguration()
+    cfg.load_from_toml(str(toml_file))
+
+    # max_threads should remain default (60)
+    assert cfg.advanced.max_threads == 60
+
+
+def test_load_from_toml_rejects_int_for_bool(tmp_path):
+    """BUG-Z5: An integer where a bool is expected should be skipped
+    (even though bool is a subclass of int in Python)."""
+    toml_file = tmp_path / "bad_types.toml"
+    toml_file.write_text("""
+        [auth]
+        kerberos = 1
+    """)
+
+    cfg = SnafflerConfiguration()
+    cfg.load_from_toml(str(toml_file))
+
+    # kerberos should remain default (False)
+    assert cfg.auth.kerberos is False
+
+
+def test_load_from_toml_allows_none_for_optional(tmp_path):
+    """BUG-Z5: None values should be accepted for Optional fields."""
+    toml_file = tmp_path / "none_types.toml"
+    toml_file.write_text("""
+        [auth]
+        domain = "example.com"
+    """)
+
+    cfg = SnafflerConfiguration()
+    cfg.load_from_toml(str(toml_file))
+
+    # domain default is None, setting to string should work
+    assert cfg.auth.domain == "example.com"
 

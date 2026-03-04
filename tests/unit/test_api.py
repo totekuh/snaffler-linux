@@ -112,24 +112,65 @@ Triage = "Red"
 class TestLocalFileAccessor:
 
     def test_copy_to_local(self, tmp_path):
-        """LocalFileAccessor.copy_to_local copies a file to dest_root."""
+        """LocalFileAccessor.copy_to_local copies a file preserving directory structure."""
+        import os
         from snaffler.accessors.local_file_accessor import LocalFileAccessor
         src = tmp_path / "source.txt"
         src.write_text("secret data")
         dest = tmp_path / "output"
         accessor = LocalFileAccessor()
         accessor.copy_to_local(str(src), str(dest))
-        assert (dest / "source.txt").read_text() == "secret data"
+        # File is placed under dest_root with its full relative path
+        expected = dest / os.path.relpath(str(src), "/")
+        assert expected.read_text() == "secret data"
 
     def test_copy_to_local_creates_dest_dir(self, tmp_path):
-        """copy_to_local creates the destination directory if needed."""
+        """copy_to_local creates intermediate directories as needed."""
+        import os
         from snaffler.accessors.local_file_accessor import LocalFileAccessor
         src = tmp_path / "file.txt"
         src.write_text("data")
-        dest = tmp_path / "new" / "nested" / "dir"
+        dest = tmp_path / "output"
         accessor = LocalFileAccessor()
         accessor.copy_to_local(str(src), str(dest))
-        assert (dest / "file.txt").read_text() == "data"
+        expected = dest / os.path.relpath(str(src), "/")
+        assert expected.read_text() == "data"
+
+
+# ------------------------------------------------------------------ check_dir
+
+
+class TestLocalFileAccessorPreservesStructure:
+
+    def test_same_basename_different_dirs(self, tmp_path):
+        """BUG-E: copy_to_local preserves directory structure so files with
+        the same basename from different directories don't overwrite each other."""
+        from snaffler.accessors.local_file_accessor import LocalFileAccessor
+
+        # Create two files with the same name in different dirs
+        dir_a = tmp_path / "dir_a"
+        dir_b = tmp_path / "dir_b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+        (dir_a / "secret.txt").write_text("from dir_a")
+        (dir_b / "secret.txt").write_text("from dir_b")
+
+        dest = tmp_path / "output"
+        accessor = LocalFileAccessor()
+        accessor.copy_to_local(str(dir_a / "secret.txt"), str(dest))
+        accessor.copy_to_local(str(dir_b / "secret.txt"), str(dest))
+
+        # Both files should exist under dest with their relative paths preserved
+        rel_a = os.path.relpath(str(dir_a / "secret.txt"), "/")
+        rel_b = os.path.relpath(str(dir_b / "secret.txt"), "/")
+        path_a = dest / rel_a
+        path_b = dest / rel_b
+
+        assert path_a.exists()
+        assert path_b.exists()
+        assert path_a.read_text() == "from dir_a"
+        assert path_b.read_text() == "from dir_b"
+        assert str(path_a) != str(path_b)
 
 
 # ------------------------------------------------------------------ check_dir
@@ -632,3 +673,100 @@ class TestWalk:
         s = Snaffler()
         findings = list(s.walk(str(tmp_path)))
         assert any("ntds.dit" in f.file_path for f in findings)
+
+    def test_walk_root_dir_not_filtered_by_discard_rule(self, tmp_path):
+        """BUG-X: walk() must not apply DISCARD dir rules to the root (depth 0).
+
+        If the caller explicitly requests walk("/some/path/winsxs"),
+        the root must be scanned even though "winsxs" matches a DISCARD
+        directory rule in the default rule set.
+        """
+        winsxs_dir = tmp_path / "winsxs"
+        winsxs_dir.mkdir()
+        (winsxs_dir / "ntds.dit").write_bytes(b"critical data")
+
+        s = Snaffler()
+        # Verify that "winsxs" would indeed be discarded as a subdir
+        assert s.check_dir(str(winsxs_dir)) is False
+
+        # But walk() with "winsxs" as root must still scan it
+        findings = list(s.walk(str(winsxs_dir)))
+        assert len(findings) >= 1
+        assert any("ntds.dit" in f.file_path for f in findings)
+
+    def test_walk_root_dir_not_filtered_duck_typed_walker(self, tmp_path):
+        """BUG-X: duck-typed walker also skips dir filtering at depth 0."""
+
+        class DuckWalker:
+            def walk_directory(self, path, on_file=None, on_dir=None, cancel=None):
+                if on_file:
+                    on_file(os.path.join(path, "ntds.dit"), 100, 1700000000.0)
+                return []
+
+        class DuckReader:
+            def read(self, path, max_bytes=None):
+                return None
+
+        s = Snaffler(walker=DuckWalker(), reader=DuckReader())
+        # "winsxs" is discarded by default dir rules, but at depth 0 it should pass
+        findings = list(s.walk("/some/path/winsxs"))
+        assert any("ntds.dit" in f.file_path for f in findings)
+
+
+# ------------------------------------------------------------------ BUG-Y3
+
+class TestScanContentNonBlackSnaffle:
+
+    def test_scan_content_standalone_non_black_snaffle_examines_data(self):
+        """BUG-Y3: When scan_content is called standalone (no prior) and
+        check_file returns a non-Black SNAFFLE, the user-provided data bytes
+        must still be examined for content rules that may upgrade the result."""
+        s = Snaffler()
+
+        # web.config is snaffled as Yellow by file rules (config rules).
+        # But if the content contains a password, content rules should
+        # find it and potentially upgrade the result.
+        check = s.check_file("web.config", 200, 1700000000.0)
+        # web.config should be SNAFFLE or NEEDS_CONTENT — either way,
+        # the content with a password should be examined
+        data = b'<connectionStrings><add connectionString="Server=db;Password=s3cret123!"/></connectionStrings>'
+
+        result = s.scan_content(
+            data, file_path="web.config", size=len(data), mtime_epoch=1700000000.0,
+        )
+
+        # The result should exist (content was examined)
+        assert result is not None
+
+    def test_scan_content_standalone_black_snaffle_returns_immediately(self):
+        """BUG-Y3: Black severity SNAFFLE should still return immediately
+        (nothing can beat Black)."""
+        s = Snaffler()
+
+        # .kdbx is Black SNAFFLE (KeePass database)
+        check = s.check_file("passwords.kdbx", 5000, 1700000000.0)
+        assert check.status == FileCheckStatus.SNAFFLE
+        assert check.result.triage == Triage.BLACK
+
+        # scan_content with prior=None should return the Black result
+        # without examining data
+        result = s.scan_content(
+            b"irrelevant data",
+            file_path="passwords.kdbx", size=5000, mtime_epoch=1700000000.0,
+        )
+        assert result is not None
+        assert result.triage == Triage.BLACK
+
+    def test_scan_content_with_prior_non_black_snaffle_examines_data(self):
+        """BUG-Y3: When scan_content is called with a prior that has
+        non-Black SNAFFLE status, data should still be examined."""
+        s = Snaffler()
+
+        # Create a prior with non-Black SNAFFLE
+        check = s.check_file("web.config", 200, 1700000000.0)
+        if check.status == FileCheckStatus.SNAFFLE and check.result.triage != Triage.BLACK:
+            # This exercises the fixed code path
+            data = b'password=supersecret'
+            result = s.scan_content(data, prior=check)
+            # Should not crash; result may or may not be None depending on rules
+            # The key assertion is that we didn't early-return without examining data

@@ -86,7 +86,7 @@ def _make_runner_with_state(cfg):
 # ---------- local mode ----------
 
 def test_runner_local_targets():
-    """--local paths are passed directly to file_pipeline.run()."""
+    """--local-fs paths are passed directly to file_pipeline.run()."""
     cfg = make_cfg()
     cfg.targets.local_targets = ["/tmp/data"]
 
@@ -115,7 +115,7 @@ def test_runner_local_injects_local_transport():
 
 
 def test_runner_local_warns_shares_only(caplog):
-    """--shares-only with --local emits a warning."""
+    """--shares-only with --local-fs emits a warning."""
     import logging
 
     cfg = make_cfg()
@@ -135,7 +135,7 @@ def test_runner_local_warns_shares_only(caplog):
 
 
 def test_runner_local_warns_exclusions(caplog):
-    """--exclusions with --local emits a warning."""
+    """--exclusions with --local-fs emits a warning."""
     import logging
 
     cfg = make_cfg()
@@ -1441,3 +1441,147 @@ def test_exclusions_empty_no_effect():
     runner.file_pipeline.run.assert_called_once()
     paths = runner.file_pipeline.run.call_args[0][0]
     assert paths == ["//HOST1/A", "//HOST2/B"]
+
+
+# ---------- BUG-M: DNS resolution must not leak global timeout ----------
+
+
+def test_dns_resolution_does_not_leak_global_timeout():
+    """BUG-M: _resolve_computers must not alter socket.getdefaulttimeout()."""
+    cfg = make_cfg()
+    cfg.targets.computer_targets = ["HOST1", "HOST2"]
+    cfg.auth.smb_timeout = 5
+
+    runner, state = _make_runner_with_state(cfg)
+    state.is_phase_done.return_value = False
+    state.load_unresolved_computers.return_value = ["HOST1", "HOST2"]
+    state.load_resolved_computers.return_value = []
+
+    original_timeout = socket.getdefaulttimeout()
+
+    with _resolve_all_hosts():
+        runner._resolve_computers(["HOST1", "HOST2"])
+
+    assert socket.getdefaulttimeout() == original_timeout
+
+
+# ---------- BUG-X1: DNS setdefaulttimeout race ----------
+
+def test_dns_resolve_does_not_call_setdefaulttimeout():
+    """BUG-X1: _resolve_computers must not call socket.setdefaulttimeout() —
+    it is process-global and races across 100 concurrent DNS threads."""
+    cfg = make_cfg()
+    cfg.targets.computer_targets = ["HOST1"]
+    cfg.auth.smb_timeout = 5
+
+    runner, state = _make_runner_with_state(cfg)
+    state.is_phase_done.return_value = False
+    state.load_unresolved_computers.return_value = ["HOST1"]
+    state.load_resolved_computers.return_value = []
+
+    with _resolve_all_hosts(), \
+         patch("snaffler.engine.runner.socket.setdefaulttimeout") as mock_sdt:
+        runner._resolve_computers(["HOST1"])
+
+    mock_sdt.assert_not_called()
+
+
+# ---------- BUG-X6: status thread exception resilience ----------
+
+def test_status_loop_survives_format_status_exception():
+    """BUG-X6: If format_status() raises, the status thread must not die."""
+    cfg = make_cfg()
+    with _patch_finding_store():
+        runner = SnafflerRunner(cfg)
+
+    # Make format_status raise on the first call
+    call_count = [0]
+    original_format = runner.progress.format_status
+
+    def exploding_format():
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("kaboom")
+        return original_format()
+
+    runner.progress.format_status = exploding_format
+
+    # Run the status loop briefly
+    import time
+    with patch("snaffler.engine.runner._STATUS_INTERVAL", 0.05):
+        runner._start_status_thread()
+        time.sleep(0.25)
+        runner._stop_status_thread()
+
+    # The loop should have survived the first exception and called again
+    assert call_count[0] >= 2, (
+        f"Status loop should have continued after exception, "
+        f"but format_status was only called {call_count[0]} time(s)"
+    )
+
+
+# ---------- BUG-X7: _sync_progress_from_state logs debug ----------
+
+def test_sync_progress_from_state_logs_on_error(caplog):
+    """BUG-X7: _sync_progress_from_state should log at DEBUG, not silently pass."""
+    import logging
+
+    cfg = make_cfg()
+    with _patch_finding_store():
+        runner = SnafflerRunner(cfg)
+
+    # Inject a state that raises on count_checked_computers
+    state = MagicMock()
+    state.count_checked_computers.side_effect = RuntimeError("DB corrupted")
+    runner.state = state
+
+    with caplog.at_level(logging.DEBUG, logger="snaffler"):
+        runner._sync_progress_from_state()
+
+    assert any("Failed to sync progress from state DB" in r.message for r in caplog.records)
+
+
+# ---------- BUG-Z4: PySocks exceptions crash DNS resolution loop ----------
+
+def test_dns_resolution_survives_non_oserror_exception():
+    """BUG-Z4: PySocks or other non-OSError exceptions in DNS futures must not
+    crash the entire as_completed loop — remaining futures should still be processed."""
+    from concurrent.futures import ThreadPoolExecutor as RealTPE
+
+    cfg = make_cfg()
+
+    runner, state = _make_runner_with_state(cfg)
+    state.is_phase_done.return_value = False
+    state.load_unresolved_computers.return_value = ["HOST1", "HOST2", "HOST3"]
+    state.load_resolved_computers.return_value = []
+
+    def resolve_one_with_pysocks_error(hostname):
+        """HOST2 raises a non-OSError exception (simulating PySocks)."""
+        if hostname == "HOST2":
+            raise RuntimeError("PySocks: General SOCKS server failure")
+        return "127.0.0.1"
+
+    class PatchedExecutor:
+        def __init__(self, **kwargs):
+            self._pool = RealTPE(**kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self._pool.__exit__(*args)
+
+        def submit(self, fn, hostname):
+            return self._pool.submit(resolve_one_with_pysocks_error, hostname)
+
+        def shutdown(self, *args, **kwargs):
+            return self._pool.shutdown(*args, **kwargs)
+
+    with patch("snaffler.engine.runner.ThreadPoolExecutor", PatchedExecutor):
+        resolved = runner._resolve_computers(["HOST1", "HOST2", "HOST3"])
+
+    # HOST1 and HOST3 should resolve, HOST2 should fail gracefully
+    assert "HOST1" in resolved
+    assert "HOST3" in resolved
+    assert "HOST2" not in resolved
+    assert len(resolved) == 2

@@ -82,16 +82,16 @@ class FileScanner:
         if result.triage.below(self.cfg.scanning.min_interest):
             return None
 
-        # --match is purely an output filter — DB persistence and downloads
-        # are not affected, only console/file log output is suppressed
-        suppress_log = False
+        # --match filters both log output and downloads — only findings
+        # matching the regex are shown and snaffled
+        suppress = False
         if self._match_re:
             haystack = "\n".join(filter(None, [
                 result.file_path, result.rule_name,
                 result.match, result.context,
             ]))
             if not self._match_re.search(haystack):
-                suppress_log = True
+                suppress = True
 
         log_file_result(
             logger,
@@ -104,11 +104,12 @@ class FileScanner:
             result.modified.strftime("%Y-%m-%d %H:%M:%S")
             if result.modified
             else None,
-            suppress_log=suppress_log,
+            suppress_log=suppress,
         )
 
         if (
-                self.cfg.scanning.snaffle
+                not suppress
+                and self.cfg.scanning.snaffle
                 and result.size <= self.cfg.scanning.max_file_bytes
                 and self.file_accessor is not None
         ):
@@ -117,6 +118,8 @@ class FileScanner:
                 self.cfg.scanning.snaffle_path,
             )
 
+        if suppress:
+            return None
         return result
 
     # -------------------------------------------------------------- Phase 1
@@ -206,16 +209,19 @@ class FileScanner:
                 _best_result=best_result,
             )
 
-        # Determine what Phase 2 needs (cert + archive can coexist)
+        # Determine what Phase 2 needs (cert + archive can coexist with content)
         if needs_cert_check or needs_archive_peek:
+            can_content = (relay_fired or bool(content_rule_names)) and size <= self._max_read_bytes
             status = (FileCheckStatus.CHECK_KEYS if needs_cert_check
                       else FileCheckStatus.PEEK_ARCHIVE)
             return FileCheckResult(
                 status=status,
+                content_rule_names=sorted(content_rule_names) if can_content else [],
                 _ctx=ctx,
                 _best_result=best_result,
                 _needs_cert_check=needs_cert_check,
                 _needs_archive_peek=needs_archive_peek,
+                _can_scan_content=can_content,
             )
 
         # Content scan needed: RELAY fired, targeted content rules exist,
@@ -341,13 +347,20 @@ class FileScanner:
 
         best_result: Optional[FileResult] = None
 
-        # Postmatch result is invariant within a file — evaluate once
-        if self.rule_evaluator.should_discard_postmatch(ctx):
-            return None
+        # Cache postmatch result — invariant within a file, evaluated lazily
+        postmatch_checked = False
+        postmatch_discard = False
 
         for rule in content_rules:
             match = rule.matches(text)
             if not match:
+                continue
+
+            # Evaluate postmatch once, after the first content match
+            if not postmatch_checked:
+                postmatch_checked = True
+                postmatch_discard = self.rule_evaluator.should_discard_postmatch(ctx)
+            if postmatch_discard:
                 continue
 
             # matches() returns re.Match for regex, str for EXACT
@@ -448,6 +461,8 @@ class FileScanner:
             )
             return None
 
+    _MAX_ARCHIVE_MEMBERS = 10_000
+
     @staticmethod
     def _list_archive_members(
             ext: str, bio: io.BytesIO
@@ -455,14 +470,19 @@ class FileScanner:
         """Return list of (name, size) tuples for archive members."""
         ext_lower = ext.lower()
 
+        cap = FileScanner._MAX_ARCHIVE_MEMBERS
+
         if ext_lower == ".zip":
             try:
                 with zipfile.ZipFile(bio) as zf:
-                    return [
-                        (info.filename, info.file_size)
-                        for info in zf.infolist()
-                        if not info.is_dir()
-                    ]
+                    members = []
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        members.append((info.filename, info.file_size))
+                        if len(members) >= cap:
+                            break
+                    return members
             except (zipfile.BadZipFile, Exception):
                 return None
 
@@ -477,11 +497,14 @@ class FileScanner:
                 return None
             try:
                 with py7zr.SevenZipFile(bio, mode="r") as sz:
-                    return [
-                        (entry.filename, entry.uncompressed or 0)
-                        for entry in sz.list()
-                        if not entry.is_directory
-                    ]
+                    members = []
+                    for entry in sz.list():
+                        if entry.is_directory:
+                            continue
+                        members.append((entry.filename, entry.uncompressed or 0))
+                        if len(members) >= cap:
+                            break
+                    return members
             except Exception:
                 return None
 
@@ -496,11 +519,14 @@ class FileScanner:
                 return None
             try:
                 with _rarfile.RarFile(bio) as rf:
-                    return [
-                        (info.filename, info.file_size)
-                        for info in rf.infolist()
-                        if not info.is_dir()
-                    ]
+                    members = []
+                    for info in rf.infolist():
+                        if info.is_dir():
+                            continue
+                        members.append((info.filename, info.file_size))
+                        if len(members) >= cap:
+                            break
+                    return members
             except Exception:
                 return None
 

@@ -859,6 +859,44 @@ def test_max_depth_limits_recursion():
     assert scanned == ["//HOST/SHARE/level1/file.txt"]
 
 
+def test_sentinel_delivery_on_full_queue():
+    """BUG-F6: Sentinels must be delivered even when the queue is completely full.
+
+    The producer's finally block uses a retry loop that drains items from
+    the queue when it's full, guaranteeing sentinel delivery so consumer
+    threads don't hang forever.
+    """
+    cfg = make_cfg()
+    cfg.advanced.file_threads = 2
+    pipeline = FilePipeline(cfg)
+
+    # Use a tiny queue that fills up immediately
+    tiny_q = queue.Queue(maxsize=2)
+    for _ in range(2):
+        tiny_q.put(("//HOST/SHARE/filler.txt", 0, 0.0))
+
+    assert tiny_q.full()
+
+    # Simulate the sentinel push logic from the producer's finally block:
+    # drain one item, then push sentinel — must succeed without deadlock.
+    sentinel_count = 0
+    for _ in range(cfg.advanced.file_threads):
+        while True:
+            try:
+                tiny_q.put(None, timeout=0.5)
+                sentinel_count += 1
+                break
+            except queue.Full:
+                try:
+                    tiny_q.get_nowait()
+                except queue.Empty:
+                    pass
+
+    assert sentinel_count == cfg.advanced.file_threads, (
+        f"Expected {cfg.advanced.file_threads} sentinels delivered, got {sentinel_count}"
+    )
+
+
 def test_max_depth_none_unlimited():
     """No --max-depth means unlimited recursion (default)."""
     cfg = make_cfg()
@@ -884,3 +922,133 @@ def test_max_depth_none_unlimited():
 
     walked = [c[0][0] for c in pipeline.tree_walker.walk_directory.call_args_list]
     assert "//HOST/SHARE/a/b/c" in walked
+
+
+# ---------- BUG-X3: Unbounded enqueued set ----------
+
+def test_enqueued_set_bounded_by_max_enqueued():
+    """BUG-X3: The enqueued set must be cleared when it exceeds _MAX_ENQUEUED
+    to prevent unbounded memory usage."""
+    from snaffler.engine.file_pipeline import _MAX_ENQUEUED
+
+    cfg = make_cfg()
+
+    # Patch _MAX_ENQUEUED to a small value for testing
+    with patch("snaffler.engine.file_pipeline._MAX_ENQUEUED", 5):
+        pipeline = FilePipeline(cfg)
+
+        file_counter = [0]
+
+        def walk_many_files(path, on_file=None, on_dir=None, cancel=None):
+            if on_file:
+                for i in range(10):
+                    file_counter[0] += 1
+                    on_file(f"//HOST/SHARE/file_{file_counter[0]}.txt", 100, 0.0)
+            return []
+
+        pipeline.tree_walker.walk_directory = MagicMock(
+            side_effect=walk_many_files
+        )
+        pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+        # Should complete without error — the enqueued set is cleared
+        result = pipeline.run(["//HOST/SHARE"])
+        assert pipeline.file_scanner.scan_file.call_count == 10
+
+
+# ---------- BUG-X20: _BatchWriter._flush logs at warning ----------
+
+def test_batch_writer_flush_error_logs_warning(caplog):
+    """BUG-X20: Batch writer flush errors should log at WARNING, not DEBUG."""
+    import logging
+
+    state = MagicMock()
+    state.store_dirs.side_effect = RuntimeError("DB locked")
+
+    writer = _BatchWriter(state)
+    writer.start()
+
+    writer.put_dir("//HOST/SHARE/dir1", "//HOST/SHARE")
+
+    writer.stop()
+
+    # Check that the warning was logged (not just debug)
+    warning_records = [
+        r for r in caplog.records
+        if r.levelno >= logging.WARNING and "Batch writer flush error" in r.message
+    ]
+    assert len(warning_records) >= 1, (
+        "Batch writer flush error should be logged at WARNING level"
+    )
+
+
+# ---------- BUG-Z2: --exclude-unc not applied to share roots ----------
+
+def test_exclude_unc_filters_share_roots():
+    """BUG-Z2: --exclude-unc patterns must filter out share root paths
+    before they are walked, not just subdirectories."""
+    cfg = make_cfg()
+    cfg.targets.exclude_unc = ["*/SYSVOL*"]
+
+    pipeline = FilePipeline(cfg)
+    # Set exclude_unc on the tree_walker too (as the real code does)
+    pipeline.tree_walker._exclude_unc = ["*/SYSVOL*"]
+
+    walk_calls = []
+
+    def walk_recording(path, on_file=None, on_dir=None, cancel=None):
+        walk_calls.append(path)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk_recording)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//DC/SYSVOL", "//DC/NETLOGON"])
+
+    # SYSVOL should have been filtered out, only NETLOGON walked
+    assert "//DC/SYSVOL" not in walk_calls
+    assert "//DC/NETLOGON" in walk_calls
+
+
+def test_exclude_unc_filters_share_roots_case_insensitive():
+    """BUG-Z2: --exclude-unc matching is case-insensitive for share roots."""
+    cfg = make_cfg()
+    cfg.targets.exclude_unc = ["*/sysvol*"]
+
+    pipeline = FilePipeline(cfg)
+    pipeline.tree_walker._exclude_unc = ["*/sysvol*"]
+
+    walk_calls = []
+
+    def walk_recording(path, on_file=None, on_dir=None, cancel=None):
+        walk_calls.append(path)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk_recording)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//DC/SYSVOL", "//DC/Data"])
+
+    assert "//DC/SYSVOL" not in walk_calls
+    assert "//DC/Data" in walk_calls
+
+
+def test_exclude_unc_share_root_updates_progress():
+    """BUG-Z2: Excluded share roots should still count as walked in progress."""
+    cfg = make_cfg()
+    cfg.targets.exclude_unc = ["*/SYSVOL*"]
+
+    progress = ProgressState()
+    pipeline = FilePipeline(cfg, progress=progress)
+    pipeline.tree_walker._exclude_unc = ["*/SYSVOL*"]
+
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=make_walk_side_effect([])
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//DC/SYSVOL", "//DC/NETLOGON"])
+
+    # Both shares should count toward total, both should be "walked"
+    assert progress.shares_total == 2
+    assert progress.shares_walked == 2

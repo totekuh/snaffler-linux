@@ -63,3 +63,34 @@ def test_png_is_discarded(evaluator):
         action in (MatchAction.SNAFFLE, MatchAction.RELAY)
         for _, action in decisions
     ), f"PNG should not be snaffled or relayed. Got: {decisions}"
+
+
+# ---------- BUG-Y1: Dead glob pattern in default_rules ----------
+
+def test_python_lib_discard_pattern_no_wildcard():
+    """BUG-Y1: The discard rule for Python/Lib must use a plain CONTAINS
+    pattern, not 'Python/d*/Lib' which gets re.escape()'d to a dead regex."""
+    from snaffler.classifiers.default_rules import get_default_rules
+    from snaffler.classifiers.rules import EnumerationScope, MatchAction
+
+    rules = get_default_rules()
+    dir_rules = [
+        r for r in rules
+        if r.enumeration_scope == EnumerationScope.DIRECTORY_ENUMERATION
+    ]
+
+    # Find the rule that should match Python/Lib directories
+    matched = False
+    for rule in dir_rules:
+        if rule.match_action != MatchAction.DISCARD:
+            continue
+        for word in (rule.wordlist or []):
+            if 'Python' in word and 'Lib' in word:
+                # Verify no glob wildcard that would be escaped
+                assert '*' not in word, (
+                    f"Word '{word}' contains a wildcard that will be "
+                    f"escaped by re.escape(), making it a dead pattern"
+                )
+                matched = True
+
+    assert matched, "Expected a discard rule matching Python/Lib directories"

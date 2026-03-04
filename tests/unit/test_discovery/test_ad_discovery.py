@@ -447,6 +447,64 @@ def test_pad_attrs_stealth_randomness():
     assert len(results) > 1
 
 
+# ---------- BUG-F13: LDAP connection cleanup on exception ----------
+
+def test_ldap_close_called_on_search_exception():
+    """BUG-F13: ldap.close() must be called even when search raises an exception."""
+    cfg = _make_cfg()
+    discovery = ADDiscovery(cfg)
+
+    ldap = MagicMock()
+    ldap.search.side_effect = RuntimeError("simulated LDAP failure")
+
+    with patch.object(
+        discovery.ldap_transport, "connect", return_value=ldap
+    ):
+        result = discovery.get_domain_computers()
+
+    # Connection must have been closed despite the search error
+    ldap.close.assert_called_once()
+    # Method should still return (empty list) rather than propagating
+    assert result == []
+
+
+def test_ldap_close_called_on_dfs_search_exception():
+    """BUG-F13: ldap.close() called for each DFS LDAP connection even on error."""
+    cfg = _make_cfg()
+    discovery = ADDiscovery(cfg)
+
+    ldap1 = MagicMock()
+    ldap1.search.side_effect = RuntimeError("v1 boom")
+    ldap2 = MagicMock()
+    ldap2.search.side_effect = RuntimeError("v2 boom")
+
+    with patch.object(
+        discovery.ldap_transport, "connect", side_effect=[ldap1, ldap2]
+    ):
+        result = discovery.get_dfs_targets()
+
+    ldap1.close.assert_called_once()
+    ldap2.close.assert_called_once()
+    assert result == []
+
+
+def test_ldap_close_called_on_user_search_exception():
+    """BUG-F13: ldap.close() called when user search raises."""
+    cfg = _make_cfg()
+    discovery = ADDiscovery(cfg)
+
+    ldap = MagicMock()
+    ldap.search.side_effect = RuntimeError("user query boom")
+
+    with patch.object(
+        discovery.ldap_transport, "connect", return_value=ldap
+    ):
+        result = discovery.get_domain_users()
+
+    ldap.close.assert_called_once()
+    assert result == []
+
+
 def test_stealth_pads_computer_query_attrs():
     """With --stealth, the LDAP search for computers gets padded attributes."""
     cfg = _make_cfg(stealth=True)

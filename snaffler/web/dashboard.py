@@ -157,6 +157,7 @@ def render_dashboard() -> str:
   var findingsData = [];  // stores {match, context} for modal
   var seenIds = {};       // finding_id → true (dedup on resume)
   var pollActive = true;
+  var stopScheduled = false;
   var serverElapsed = 0;
   var localSyncTime = Date.now();
 
@@ -390,10 +391,17 @@ def render_dashboard() -> str:
       if (d.phase === "complete") {
         dotEl.classList.remove("active");
         dotEl.style.background = "#888";
-        pollActive = false;
-        clearInterval(timerIval);
-        clearInterval(progressIval);
-        clearInterval(findingsIval);
+        if (!stopScheduled) {
+          stopScheduled = true;
+          // One final findings poll after BatchWriter flush window
+          setTimeout(function() {
+            fetchFindings();
+            pollActive = false;
+            clearInterval(timerIval);
+            clearInterval(progressIval);
+            clearInterval(findingsIval);
+          }, 2000);
+        }
       } else {
         dotEl.classList.add("active");
         dotEl.style.background = "#27ae60";
@@ -421,8 +429,7 @@ def render_dashboard() -> str:
   }
 
   // ── Polling: findings ─────────────────────────────────────────
-  function pollFindings() {
-    if (!pollActive) return;
+  function fetchFindings() {
     var url = "/api/findings?since_rowid=" + lastRowid;
     fetch(url).then(function(r) { return r.json(); }).then(function(data) {
       if (data.findings && data.findings.length > 0) {
@@ -439,9 +446,14 @@ def render_dashboard() -> str:
     }).catch(function() {});
   }
 
+  function pollFindings() {
+    if (!pollActive) return;
+    fetchFindings();
+  }
+
   // ── Start polling ─────────────────────────────────────────────
   pollProgress();
-  pollFindings();
+  fetchFindings();
 
   var progressIval = setInterval(pollProgress, 2500);
   var findingsIval = setInterval(pollFindings, 2500);

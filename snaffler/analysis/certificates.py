@@ -36,11 +36,13 @@ class CertificateChecker:
         Initialize certificate checker
 
         Args:
-            custom_passwords: Optional list of custom passwords to try
+            custom_passwords: Optional list of passwords to try.
+                              If provided, replaces the built-in defaults.
         """
-        self.passwords = self.DEFAULT_PASSWORDS.copy()
-        if custom_passwords:
-            self.passwords.extend(custom_passwords)
+        if custom_passwords is not None:
+            self.passwords = list(custom_passwords)
+        else:
+            self.passwords = self.DEFAULT_PASSWORDS.copy()
 
     def check_certificate(self, cert_data: bytes, filename: str) -> List[str]:
         """
@@ -96,9 +98,9 @@ class CertificateChecker:
         Returns:
             Tuple of (certificate, private_key, password_used)
         """
-        # Try PEM format first (most common)
+        # Try PEM format first (most common — includes standalone key files)
         cert, private_key, password_used = self._try_parse_pem(cert_data, passwords)
-        if cert is not None:
+        if cert is not None or private_key is not None:
             return cert, private_key, password_used
 
         # Try PKCS#12/PFX format (.pfx, .p12, .pkcs12)
@@ -115,38 +117,40 @@ class CertificateChecker:
         return None, None, None
 
     def _try_parse_pem(self, cert_data: bytes, passwords: List[str]):
-        """Try to parse as PEM format"""
+        """Try to parse as PEM format (certificate and/or private key)."""
+        cert = None
+        private_key = None
+        password_used = None
+
+        # Try to load certificate (may not be present in standalone key files)
         try:
-            # Try to load certificate
             cert = x509.load_pem_x509_certificate(cert_data, default_backend())
+        except Exception:
+            pass
 
-            # Try to load private key (may be in same file)
-            private_key = None
+        # Try to load private key independently of certificate
+        try:
+            private_key = serialization.load_pem_private_key(
+                cert_data, password=None, backend=default_backend()
+            )
             password_used = None
+        except (ValueError, TypeError):
+            # Try with passwords
+            for pwd in passwords:
+                try:
+                    private_key = serialization.load_pem_private_key(
+                        cert_data, password=pwd.encode('utf-8'), backend=default_backend()
+                    )
+                    password_used = pwd
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
-            # Try without password first
-            try:
-                private_key = serialization.load_pem_private_key(
-                    cert_data, password=None, backend=default_backend()
-                )
-                password_used = None
-            except (ValueError, TypeError):
-                # Try with passwords
-                for pwd in passwords:
-                    try:
-                        private_key = serialization.load_pem_private_key(
-                            cert_data, password=pwd.encode('utf-8'), backend=default_backend()
-                        )
-                        password_used = pwd
-                        break
-                    except Exception:
-                        continue
-
+        if cert is not None or private_key is not None:
             return cert, private_key, password_used
-
-        except Exception as e:
-            logger.debug(f"PEM parsing failed: {e}")
-            return None, None, None
+        return None, None, None
 
     def _try_parse_pkcs12(self, cert_data: bytes, passwords: List[str]):
         """Try to parse as PKCS#12/PFX format"""

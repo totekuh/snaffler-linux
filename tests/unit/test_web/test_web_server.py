@@ -402,11 +402,13 @@ def test_snapshot_returns_all_counters():
     p = ProgressState()
     p.dns_total = 100
     p.files_scanned = 50
+    p.files_matched = 7
     p.severity_black = 3
     p.scan_complete = True
     snap = p.snapshot()
     assert snap["dns_total"] == 100
     assert snap["files_scanned"] == 50
+    assert snap["files_matched"] == 7
     assert snap["severity_black"] == 3
     assert snap["scan_complete"] is True
 
@@ -478,8 +480,66 @@ def test_dashboard_unknown_triage_sort(client):
 
 # ── Werkzeug logging suppression ─────────────────────────────────
 
+# ── BUG-G11: Dashboard final poll on completion ───────────────────
+
+def test_dashboard_final_poll_on_complete(client):
+    """BUG-G11: When phase becomes 'complete', the dashboard must schedule
+    one final fetchFindings() call via setTimeout before stopping polls.
+
+    This ensures any findings flushed by BatchWriter's final drain are
+    picked up by the dashboard.
+    """
+    import re
+
+    resp = client.get("/")
+    html = resp.data.decode()
+
+    # The complete handler must contain a setTimeout that calls fetchFindings
+    assert "setTimeout" in html, "Dashboard JS must use setTimeout for final poll"
+    assert "fetchFindings()" in html, "Dashboard JS must call fetchFindings() in the final poll"
+
+    # Verify the setTimeout is inside the complete-phase handler and calls fetchFindings
+    # Pattern: setTimeout(function() { ... fetchFindings() ... }, <delay>)
+    pattern = r"setTimeout\s*\(\s*function\s*\(\)\s*\{[^}]*fetchFindings\(\)"
+    match = re.search(pattern, html)
+    assert match is not None, (
+        "Dashboard must schedule fetchFindings() inside a setTimeout callback "
+        "when phase is complete"
+    )
+
+
 def test_werkzeug_logging_suppressed(progress, db_path, start_time):
     import logging
     create_app(progress, db_path, start_time)
     werkzeug_logger = logging.getLogger("werkzeug")
     assert werkzeug_logger.level >= logging.ERROR
+
+
+# ── BUG-Y2: API does not leak exception details ─────────────────
+
+def test_stats_error_does_not_leak_exception(progress, start_time, tmp_path):
+    """BUG-Y2: /api/stats must return generic error, not str(exc)."""
+    # Use a non-existent DB path to trigger an error
+    bad_db = str(tmp_path / "nonexistent" / "test.db")
+    app = create_app(progress, bad_db, start_time)
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        resp = client.get("/api/stats")
+        assert resp.status_code == 500
+        data = json.loads(resp.data)
+        assert data["error"] == "Internal server error"
+        # Must NOT contain internal path or exception details
+        assert "nonexistent" not in data["error"]
+
+
+def test_findings_error_does_not_leak_exception(progress, start_time, tmp_path):
+    """BUG-Y2: /api/findings must return generic error, not str(exc)."""
+    bad_db = str(tmp_path / "nonexistent" / "test.db")
+    app = create_app(progress, bad_db, start_time)
+    app.config["TESTING"] = True
+    with app.test_client() as client:
+        resp = client.get("/api/findings")
+        assert resp.status_code == 500
+        data = json.loads(resp.data)
+        assert data["error"] == "Internal server error"
+        assert "nonexistent" not in data["error"]

@@ -5,7 +5,7 @@ No mocking — real rules, real local tree walker, real local file reader,
 real test data directory.  Validates that the library API produces correct
 findings when pointed at a local directory tree.
 
-Also tests the CLI ``--local`` pipeline (FilePipeline with local transport).
+Also tests the CLI ``--local-fs`` pipeline (FilePipeline with local transport).
 """
 
 import shutil
@@ -373,11 +373,11 @@ class TestEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# CLI --local pipeline (FilePipeline with local transport)
+# CLI --local-fs pipeline (FilePipeline with local transport)
 # ---------------------------------------------------------------------------
 
 class TestLocalPipeline:
-    """Run the full CLI pipeline (SnafflerRunner) with --local against the
+    """Run the full CLI pipeline (SnafflerRunner) with --local-fs against the
     real local filesystem.  No mocking — validates that the runner correctly
     injects LocalTreeWalker + LocalFileAccessor and produces findings."""
 

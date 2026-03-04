@@ -279,16 +279,12 @@ def test_match_filter_blocks_non_matching_finding():
     with patch("snaffler.analysis.file_scanner.log_file_result") as mock_log:
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
-    # Result is still returned (--match is purely an output filter)
-    assert result is not None
-    # log_file_result was called with suppress_log=True (console/file output suppressed)
-    mock_log.assert_called_once()
-    assert mock_log.call_args.kwargs.get("suppress_log") is True or \
-           mock_log.call_args[1].get("suppress_log") is True
+    # --match fully suppresses non-matching findings (returns None)
+    assert result is None
 
 
-def test_match_filter_still_downloads_non_matching():
-    """--match filter does not suppress snaffle downloads."""
+def test_match_filter_suppresses_download_for_non_matching():
+    """--match filter suppresses both log output and snaffle downloads."""
     accessor = MagicMock()
 
     rule = make_rule(
@@ -314,12 +310,10 @@ def test_match_filter_still_downloads_non_matching():
     with patch("snaffler.analysis.file_scanner.log_file_result"):
         result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
-    # Result is still returned (--match is purely an output filter)
-    assert result is not None
-    # File was still downloaded
-    accessor.copy_to_local.assert_called_once_with(
-        "//srv/share/f.txt", "/tmp/loot"
-    )
+    # --match fully suppresses non-matching findings
+    assert result is None
+    # File was NOT downloaded
+    accessor.copy_to_local.assert_not_called()
 
 
 def test_match_filter_case_insensitive():
@@ -347,6 +341,121 @@ def test_match_filter_case_insensitive():
 
     assert isinstance(result, FileResult)
     assert result.rule_name == "PasswordRule"
+
+
+def test_check_file_cert_plus_relay_sets_can_scan_content():
+    """BUG-A: cert/archive branch sets _can_scan_content=True when RELAY rules pending."""
+    from snaffler.analysis.file_scanner import FileCheckResult, FileCheckStatus
+
+    accessor = MagicMock()
+
+    cert_rule = make_rule(action=MatchAction.CHECK_FOR_KEYS, name="CertRule")
+    relay_rule = make_rule(action=MatchAction.RELAY, name="RelayRule")
+
+    evaluator = MagicMock()
+    evaluator.file_rules = [relay_rule, cert_rule]
+    evaluator.should_discard_postmatch.return_value = False
+
+    # RELAY fires first, then CHECK_FOR_KEYS
+    def side_effect(rule, ctx):
+        if rule is relay_rule:
+            return RuleDecision(
+                action=MatchAction.RELAY,
+                content_rule_names=["SomeContentRule"],
+            )
+        if rule is cert_rule:
+            return RuleDecision(action=MatchAction.CHECK_FOR_KEYS)
+        return None
+
+    evaluator.evaluate_file_rule.side_effect = side_effect
+
+    scanner = FileScanner(make_cfg(), accessor, evaluator)
+    result = scanner.check_file("//srv/share/cert.pfx", 100, 1700000000.0)
+
+    assert isinstance(result, FileCheckResult)
+    assert result.status == FileCheckStatus.CHECK_KEYS
+    assert result._can_scan_content is True
+
+
+def test_postmatch_lazy_no_content_match():
+    """BUG-B: Postmatch is lazy — only evaluated after first content match.
+
+    A content rule that does NOT match should not be blocked by postmatch.
+    When no content rule matches at all, the result should be None (no finding),
+    and postmatch should never have been consulted.
+    """
+    accessor = MagicMock()
+    accessor.read.return_value = b"innocent content with nothing sensitive"
+
+    content_rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        location=MatchLocation.FILE_CONTENT_AS_STRING,
+        triage=Triage.YELLOW,
+        name="ContentRule",
+    )
+    # The rule does NOT match the content
+    content_rule.matches.return_value = None
+
+    evaluator = RuleEvaluator(
+        file_rules=[],
+        content_rules=[content_rule],
+        postmatch_rules=[],
+    )
+
+    scanner = FileScanner(make_cfg(), accessor, evaluator)
+
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+
+    # No content match → None result, postmatch did not block anything
+    assert result is None
+
+
+def test_archive_member_cap():
+    """BUG-G: _list_archive_members caps at 10,000 entries."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i in range(10_050):
+            zf.writestr(f"file_{i:06d}.txt", "x")
+    buf.seek(0)
+
+    members = FileScanner._list_archive_members(".zip", buf)
+    assert members is not None
+    assert len(members) == 10_000
+
+
+def test_match_filter_allows_download_for_matching():
+    """BUG-R: When --match filter matches, copy_to_local IS called for downloads."""
+    accessor = MagicMock()
+
+    rule = make_rule(
+        action=MatchAction.SNAFFLE,
+        triage=Triage.RED,
+        name="SecretRule",
+    )
+
+    evaluator = MagicMock()
+    evaluator.file_rules = [rule]
+    evaluator.should_discard_postmatch.return_value = False
+    evaluator.evaluate_file_rule.return_value = RuleDecision(
+        action=MatchAction.SNAFFLE,
+        match="secret",
+    )
+
+    cfg = make_cfg(match_filter="SecretRule")
+    cfg.scanning.snaffle = True
+    cfg.scanning.snaffle_path = "/tmp/loot"
+
+    scanner = FileScanner(cfg, accessor, evaluator)
+
+    with patch("snaffler.analysis.file_scanner.log_file_result"):
+        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+
+    # Finding matches the filter — download should proceed
+    assert result is not None
+    accessor.copy_to_local.assert_called_once()
 
 
 def test_match_filter_none_passes_all():

@@ -169,8 +169,8 @@ def _render_plain(stats: dict, findings: list, use_color: bool):
 
         ctx = finding.get("context")
         if ctx:
-            preview = ctx[:200]
-            lines.append(f"  Context: {preview}...")
+            preview = ctx[:200] + ("..." if len(ctx) > 200 else "")
+            lines.append(f"  Context: {preview}")
 
     typer.echo("\n".join(lines))
 

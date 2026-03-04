@@ -340,6 +340,16 @@ def test_format_status_memory():
     assert "MB" in status
 
 
+def test_snapshot_includes_files_matched():
+    """BUG-2: files_matched is included in snapshot()."""
+    ps = ProgressState()
+    ps.files_matched = 42
+
+    snap = ps.snapshot()
+    assert "files_matched" in snap
+    assert snap["files_matched"] == 42
+
+
 def test_concurrent_increments():
     """Concurrent increments should not crash."""
     ps = ProgressState()

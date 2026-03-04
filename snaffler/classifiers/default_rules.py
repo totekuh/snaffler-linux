@@ -108,7 +108,7 @@ def get_discard_directory_rules() -> List[ClassifierRule]:
             wordlist_type=MatchListType.CONTAINS,
             wordlist=['/puppet/share/doc', '/lib/ruby', '/lib/site-packages', '/usr/share/doc',
                       'node_modules', 'vendor/bundle', 'vendor/cache', '/doc/openssl',
-                      'Anaconda3/Lib/test', 'WindowsPowerShell/Modules', 'Python/d*/Lib',
+                      'Anaconda3/Lib/test', 'WindowsPowerShell/Modules', 'Python/Lib',
                       'Reference Assemblies/Microsoft/Framework/.NETFramework', 'dotnet/sdk',
                       'dotnet/shared', 'Modules/Microsoft.PowerShell.Security',
                       'Windows/assembly'],
@@ -1121,8 +1121,8 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
             wordlist=[
-                r'validationkey\s*=\s*[\'"][^\'"]....',
-                r'decryptionkey\s*=\s*[\'"][^\'"]....'
+                r'validationkey\s*=\s*[\'"][^\'"]{4,}',
+                r'decryptionkey\s*=\s*[\'"][^\'"]{4,}'
             ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
@@ -1156,7 +1156,7 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             wordlist_type=MatchListType.REGEX,
             wordlist=[
                 r'\.getConnection\(\"jdbc\:',
-                r'passwo?r?d\s*=\s*[\'"][^\'"]....'
+                r'passwo?r?d\s*=\s*[\'"][^\'"]{4,}'
             ],
             triage=Triage.RED,
             description="Files with contents matching these regexen are very interesting."
@@ -1213,13 +1213,13 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             match_location=MatchLocation.FILE_CONTENT_AS_STRING,
             wordlist_type=MatchListType.REGEX,
             wordlist=[
-                r'passw?o?r?d\s*=\s*[\'"][^\'"]....',
-                r'api[Kk]ey\s*=\s*[\'"][^\'"]....',
+                r'passw?o?r?d\s*=\s*[\'"][^\'"]{4,}',
+                r'api[Kk]ey\s*=\s*[\'"][^\'"]{4,}',
                 r'passw?o?r?d?>\s*[^\s<]+\s*<',
                 r'passw?o?r?d?>.{3,2000}</pass',
                 r'[\s]+-passw?o?r?d?',
                 r'api[kK]ey>\s*[^\s<]+\s*<',
-                r'[_\-\.]oauth\s*=\s*[\'"][^\'"]....',
+                r'[_\-\.]oauth\s*=\s*[\'"][^\'"]{4,}',
                 r'client_secret\s*=\s*[\'"][^\'"]{4,}',
                 r'<ExtendedMatchKey>ClientAuth',
                 r'GIUserPassword'
@@ -1372,7 +1372,7 @@ def get_content_grep_rules() -> List[ClassifierRule]:
             wordlist_type=MatchListType.REGEX,
             wordlist=[
                 r'NVRAM config last updated',
-                r'enable password \.',
+                r'enable password \S+',
                 r'simple-bind authenticated encrypt',
                 r'pac key [0-7] ',
                 r'snmp-server community\s.+\sRW'

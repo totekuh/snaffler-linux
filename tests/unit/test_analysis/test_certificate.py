@@ -100,6 +100,26 @@ def test_pem_with_private_key_password():
     assert "PasswordCracked:secret123" in res
 
 
+def test_standalone_pem_private_key_no_cert():
+    """BUG-C: Bare PEM private key (no cert block) returns HasPrivateKey."""
+    key = gen_key()
+
+    # Private key only — no certificate block
+    data = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    )
+
+    checker = CertificateChecker()
+    res = checker.check_certificate(data, "key.pem")
+
+    assert "HasPrivateKey" in res
+    assert "NoPasswordRequired" in res
+    # No Subject since there's no certificate
+    assert not any(r.startswith("Subject:") for r in res)
+
+
 def test_pkcs12_no_password():
     key = gen_key()
     cert = gen_cert(key)
@@ -138,3 +158,24 @@ def test_pkcs12_with_password():
 
     assert "HasPrivateKey" in res
     assert "PasswordCracked:pfxpass" in res
+
+
+# ---------- BUG-K: custom_passwords replaces defaults ----------
+
+
+def test_custom_passwords_replace_defaults():
+    """BUG-K: custom_passwords replaces defaults, not appended to them."""
+    checker = CertificateChecker(custom_passwords=["foo", "bar"])
+    assert checker.passwords == ["foo", "bar"]
+
+
+def test_no_custom_passwords_uses_defaults():
+    """BUG-K: omitting custom_passwords uses DEFAULT_PASSWORDS."""
+    checker = CertificateChecker()
+    assert checker.passwords == CertificateChecker.DEFAULT_PASSWORDS
+
+
+def test_empty_custom_passwords_uses_empty():
+    """BUG-K: empty list is a valid custom list, not treated as None."""
+    checker = CertificateChecker(custom_passwords=[])
+    assert checker.passwords == []

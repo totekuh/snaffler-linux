@@ -61,7 +61,7 @@ class SnafflerRunner:
             cfg=cfg, state=self.state, progress=self.progress,
         )
 
-        # Inject local transport when --local is used
+        # Inject local transport when --local-fs is used
         if cfg.targets.local_targets:
             from snaffler.accessors.local_file_accessor import LocalFileAccessor
             from snaffler.discovery.local_tree_walker import LocalTreeWalker
@@ -92,8 +92,11 @@ class SnafflerRunner:
 
     def _status_loop(self):
         while not self._stop_event.wait(timeout=_STATUS_INTERVAL):
-            self._sync_progress_from_state()
-            logger.info(f"Progress: {self.progress.format_status()}")
+            try:
+                self._sync_progress_from_state()
+                logger.info(f"Progress: {self.progress.format_status()}")
+            except Exception:
+                pass
 
     def _sync_progress_from_state(self):
         """Refresh progress counters from resume database."""
@@ -115,8 +118,8 @@ class SnafflerRunner:
             # Ensure totals are never less than done counts
             p.files_total = max(p.files_total, p.files_scanned)
             p.shares_total = max(p.shares_total, p.shares_walked)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to sync progress from state DB: {e}")
 
     # ---------- thread rebalancing ----------
 
@@ -244,6 +247,8 @@ class SnafflerRunner:
         self.progress.dns_resolved = len(already_resolved)
         self.progress.dns_start = time.monotonic()
 
+        dns_timeout = self.cfg.auth.smb_timeout
+
         def resolve_one(hostname: str):
             try:
                 result = socket.getaddrinfo(
@@ -272,31 +277,30 @@ class SnafflerRunner:
         interrupted = False
         t0 = time.monotonic()
 
-        prev_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(self.cfg.auth.smb_timeout)
-        try:
-            with ThreadPoolExecutor(
-                max_workers=self.cfg.advanced.dns_threads,
-            ) as pool:
-                futures = {
-                    pool.submit(resolve_one, h): h for h in to_resolve
-                }
-                try:
-                    for future in as_completed(futures):
-                        hostname = futures[future]
+        with ThreadPoolExecutor(
+            max_workers=self.cfg.advanced.dns_threads,
+        ) as pool:
+            futures = {
+                pool.submit(resolve_one, h): h for h in to_resolve
+            }
+            try:
+                for future in as_completed(futures):
+                    hostname = futures[future]
+                    try:
                         ip = future.result()
-                        if ip is not None:
-                            resolved.append(hostname)
-                            self.progress.dns_resolved += 1
-                            if self.state:
-                                self.state.set_computer_ip(hostname, ip)
-                        else:
-                            self.progress.dns_filtered += 1
-                except KeyboardInterrupt:
-                    pool.shutdown(wait=False, cancel_futures=True)
-                    interrupted = True
-        finally:
-            socket.setdefaulttimeout(prev_timeout)
+                    except Exception:
+                        ip = None
+                        logger.debug(f"DNS: probe failed for {hostname}")
+                    if ip is not None:
+                        resolved.append(hostname)
+                        self.progress.dns_resolved += 1
+                        if self.state:
+                            self.state.set_computer_ip(hostname, ip)
+                    else:
+                        self.progress.dns_filtered += 1
+            except KeyboardInterrupt:
+                pool.shutdown(wait=False, cancel_futures=True)
+                interrupted = True
 
         elapsed = time.monotonic() - t0
         filtered = len(computers) - len(resolved)
@@ -401,9 +405,9 @@ class SnafflerRunner:
             # ---------- Local filesystem paths ----------
             if self.cfg.targets.local_targets:
                 if self.cfg.targets.shares_only:
-                    logger.warning("--shares-only has no effect in --local mode")
+                    logger.warning("--shares-only has no effect in --local-fs mode")
                 if self.cfg.targets.exclusions:
-                    logger.warning("--exclusions has no effect in --local mode")
+                    logger.warning("--exclusions has no effect in --local-fs mode")
                 paths = self.cfg.targets.local_targets
                 self.progress.shares_found = len(paths)
                 self._rebalance_file_threads()

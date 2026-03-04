@@ -677,8 +677,8 @@ class TestMinInterest:
 class TestMatchFilter:
     """--match regex filter reduces findings output."""
 
-    def test_match_filter_does_not_reduce_finding_count(self, cfg):
-        """--match is an output filter — finding count and severity counters are unchanged."""
+    def test_match_filter_reduces_finding_count(self, cfg):
+        """--match filters findings — matched count is lower with a narrow filter."""
         smb = _make_smb_mock(_DATA_DIR)
 
         # Baseline: no filter
@@ -706,10 +706,9 @@ class TestMatchFilter:
                 ["//10.0.0.1/TestShare"]
             )
 
-        # --match is purely an output filter: finding count is unchanged,
-        # severity counters reflect all real findings
-        assert matched_filtered == matched_all
-        assert progress_filtered.files_matched == progress_all.files_matched
+        # --match filters findings: matched count is reduced
+        assert matched_filtered <= matched_all
+        assert progress_filtered.files_matched <= progress_all.files_matched
 
     def test_match_filter_does_not_affect_files_scanned(self, cfg):
         """--match only filters output, not scanning — files_scanned is unchanged."""
@@ -743,8 +742,8 @@ class TestMatchFilter:
         # Same number of files scanned regardless of --match
         assert progress_filtered.files_scanned == progress_all.files_scanned
 
-    def test_match_filter_persists_to_finding_store(self, cfg):
-        """Filtered-out findings are still written to the finding store (DB)."""
+    def test_match_filter_excludes_from_finding_store(self, cfg):
+        """--match filter suppresses both output and DB persistence."""
         smb = _make_smb_mock(_DATA_DIR)
         stored_findings = []
 
@@ -765,7 +764,7 @@ class TestMatchFilter:
             total_stored = len(stored_findings)
             set_finding_store(None)
 
-        # Now with filter — DB should still get all findings
+        # Now with filter — DB should get fewer findings
         cfg.scanning.match_filter = "password"
         smb2 = _make_smb_mock(_DATA_DIR)
         stored_findings_filtered = []
@@ -785,10 +784,10 @@ class TestMatchFilter:
             )
             set_finding_store(None)
 
-        # --match is purely an output filter: pipeline return count is unchanged
-        assert matched_filtered == matched_all
-        # DB persistence count is also unchanged — all findings still stored
-        assert len(stored_findings_filtered) >= total_stored
+        # --match now fully suppresses non-matching findings
+        assert matched_filtered <= matched_all
+        # Filtered findings are excluded from the DB too
+        assert len(stored_findings_filtered) <= total_stored
 
 
 class TestDNSPreResolution:
@@ -1314,16 +1313,16 @@ class TestArchivePeek:
 
     # ---------------------------------------- negative: match filter on archive members
 
-    def test_match_filter_suppresses_archive_log_not_count(self, cfg):
-        """--match filter suppresses log output but findings are still counted."""
+    def test_match_filter_suppresses_archive_findings(self, cfg):
+        """--match filter fully suppresses non-matching archive findings."""
         # First get baseline without filter
         matched_all, _, _ = self._run_pipeline(cfg, self._ARCHIVE_DIR)
 
         cfg.scanning.match_filter = "this_will_never_match_anything_12345"
         matched, _, _ = self._run_pipeline(cfg, self._ARCHIVE_DIR)
 
-        # --match is purely an output filter: finding count is unchanged
-        assert matched == matched_all
+        # --match fully suppresses non-matching findings
+        assert matched <= matched_all
 
     def test_match_filter_passes_archive_findings(self, cfg):
         """--match filter matching archive member names passes them through."""

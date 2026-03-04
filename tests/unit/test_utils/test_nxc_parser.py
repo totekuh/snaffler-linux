@@ -95,3 +95,49 @@ def test_share_no_permissions():
     text = "SMB  10.0.0.1  445  HOST  ADMIN$                          Remote Admin\n"
     result = parse_nxc_shares(text)
     assert result == ["//10.0.0.1/ADMIN$"]
+
+
+# ---------- BUG-Z3: NXC parser includes NO ACCESS shares ----------
+
+def test_no_access_shares_excluded():
+    """BUG-Z3: Shares with NO ACCESS permission should be excluded."""
+    text = (
+        "SMB  10.0.0.1  445  HOST  ADMIN$          NO ACCESS       Remote Admin\n"
+        "SMB  10.0.0.1  445  HOST  Data            READ            Company data\n"
+        "SMB  10.0.0.1  445  HOST  C$              NO ACCESS       Default share\n"
+    )
+    result = parse_nxc_shares(text)
+    assert result == ["//10.0.0.1/Data"]
+    assert "//10.0.0.1/ADMIN$" not in result
+    assert "//10.0.0.1/C$" not in result
+
+
+def test_write_only_shares_excluded():
+    """BUG-Z3: Shares with WRITE-only permission (no READ) should be excluded."""
+    text = (
+        "SMB  10.0.0.1  445  HOST  Upload          WRITE\n"
+        "SMB  10.0.0.1  445  HOST  Data            READ\n"
+    )
+    result = parse_nxc_shares(text)
+    assert result == ["//10.0.0.1/Data"]
+    assert "//10.0.0.1/Upload" not in result
+
+
+def test_read_write_shares_included():
+    """BUG-Z3: Shares with READ,WRITE are included (they have READ)."""
+    text = "SMB  10.0.0.1  445  HOST  Backup  READ,WRITE\n"
+    result = parse_nxc_shares(text)
+    assert result == ["//10.0.0.1/Backup"]
+
+
+def test_no_access_mixed_with_readable():
+    """BUG-Z3: Only readable shares survive in mixed output."""
+    text = (
+        "SMB  10.0.0.1  445  HOST  IPC$            READ            Remote IPC\n"
+        "SMB  10.0.0.1  445  HOST  ADMIN$          NO ACCESS       Remote Admin\n"
+        "SMB  10.0.0.1  445  HOST  Data            READ,WRITE      Company data\n"
+        "SMB  10.0.0.1  445  HOST  C$              NO ACCESS       Default share\n"
+        "SMB  10.0.0.1  445  HOST  Upload          WRITE           Drop box\n"
+    )
+    result = parse_nxc_shares(text)
+    assert sorted(result) == sorted(["//10.0.0.1/IPC$", "//10.0.0.1/Data"])

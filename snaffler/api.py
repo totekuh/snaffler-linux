@@ -45,6 +45,7 @@ from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.classifiers.rules import (
     ClassifierRule,
     EnumerationScope,
+    Triage,
     load_rules_from_directory,
 )
 from snaffler.config.configuration import DEFAULT_CERT_PASSWORDS
@@ -204,9 +205,10 @@ class Snaffler:
             dir_path, depth = stack.pop()
 
             # Dir filtering: TreeWalker subclasses already pre-filter
-            # subdirs inside walk_directory(), so only check the root
-            # (depth 0, never pre-filtered) and duck-typed walker results.
-            if not _is_tree_walker or depth == 0:
+            # subdirs inside walk_directory().  For duck-typed walkers,
+            # check every dir.  Never filter depth 0 — the root was
+            # explicitly requested by the caller.
+            if not _is_tree_walker and depth > 0:
                 if not self._check_dir(dir_path):
                     continue
 
@@ -339,12 +341,18 @@ class Snaffler:
             if prior.status == FileCheckStatus.DISCARD:
                 return None
             if prior.status == FileCheckStatus.SNAFFLE:
-                return self._apply_filters(prior.result)
+                if prior.result and prior.result.triage == Triage.BLACK:
+                    return self._apply_filters(prior.result)
+                # Fall through to content scan — caller explicitly provided data
+                prior._can_scan_content = True
 
         if prior.status == FileCheckStatus.DISCARD:
             return None
         if prior.status == FileCheckStatus.SNAFFLE:
-            return self._apply_filters(prior.result)
+            if prior.result and prior.result.triage == Triage.BLACK:
+                return self._apply_filters(prior.result)
+            # Fall through to content scan — caller explicitly provided data
+            prior._can_scan_content = True
 
         result = self._scanner.scan_with_data(data, prior)
         return self._apply_filters(result)

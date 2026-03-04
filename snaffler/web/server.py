@@ -108,7 +108,8 @@ def create_app(progress, db_path, start_time):
                 conn.close()
             return flask.jsonify(stats)
         except Exception as exc:
-            return flask.jsonify({"error": str(exc)}), 500
+            logger.debug(f"/api/stats error: {exc}")
+            return flask.jsonify({"error": "Internal server error"}), 500
 
     @app.route("/api/findings")
     def api_findings():
@@ -151,7 +152,8 @@ def create_app(progress, db_path, start_time):
 
             return flask.jsonify({"findings": findings, "max_rowid": max_rowid})
         except Exception as exc:
-            return flask.jsonify({"error": str(exc), "findings": [], "max_rowid": since_rowid}), 500
+            logger.debug(f"/api/findings error: {exc}")
+            return flask.jsonify({"error": "Internal server error", "findings": [], "max_rowid": since_rowid}), 500
 
     return app
 

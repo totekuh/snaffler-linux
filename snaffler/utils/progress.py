@@ -96,6 +96,7 @@ class ProgressState:
                 "files_total": self.files_total,
                 "files_scanned": self.files_scanned,
                 "files_in_progress": self.files_in_progress,
+                "files_matched": self.files_matched,
                 "severity_black": self.severity_black,
                 "severity_red": self.severity_red,
                 "severity_yellow": self.severity_yellow,

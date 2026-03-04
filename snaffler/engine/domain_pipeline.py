@@ -62,8 +62,9 @@ class DomainPipeline:
         """Query AD for DFS namespace targets, applying exclusion filters."""
         dfs_paths = self.ad.get_dfs_targets()
         if self.exclusions:
+            exc_set = {e.upper() for e in self.exclusions}
             dfs_paths = [
                 p for p in dfs_paths
-                if not any(exc.lower() in p.lower() for exc in self.exclusions)
+                if p.lstrip("/").split("/")[0].upper() not in exc_set
             ]
         return dfs_paths

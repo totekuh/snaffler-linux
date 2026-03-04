@@ -145,19 +145,22 @@ class ADDiscovery:
 
         try:
             ldap = self.ldap_transport.connect()
+            try:
+                paged = SimplePagedResultsControl(size=1000)
 
-            paged = SimplePagedResultsControl(size=1000)
-
-            ldap.search(
-                searchBase=self.base_dn,
-                searchFilter=ldap_filter,
-                attributes=attrs,
-                sizeLimit=0,
-                searchControls=[paged],
-                perRecordCallback=self._computer_callback,
-            )
-
-            ldap.close()
+                ldap.search(
+                    searchBase=self.base_dn,
+                    searchFilter=ldap_filter,
+                    attributes=attrs,
+                    sizeLimit=0,
+                    searchControls=[paged],
+                    perRecordCallback=self._computer_callback,
+                )
+            finally:
+                try:
+                    ldap.close()
+                except Exception:
+                    pass
 
         except LDAPSessionError as e:
             logger.error(f"LDAP error while querying computers: {e}")
@@ -219,21 +222,24 @@ class ADDiscovery:
 
         try:
             ldap = self.ldap_transport.connect()
+            try:
+                paged = SimplePagedResultsControl(size=1000)
 
-            paged = SimplePagedResultsControl(size=1000)
-
-            ldap.search(
-                searchBase=self.base_dn,
-                searchFilter="(&(objectClass=user)(objectCategory=person))",
-                attributes=self._pad_attrs(["sAMAccountName"]),
-                sizeLimit=0,
-                searchControls=[paged],
-                perRecordCallback=lambda item: self._user_callback(
-                    item, match_strings, min_len
-                ),
-            )
-
-            ldap.close()
+                ldap.search(
+                    searchBase=self.base_dn,
+                    searchFilter="(&(objectClass=user)(objectCategory=person))",
+                    attributes=self._pad_attrs(["sAMAccountName"]),
+                    sizeLimit=0,
+                    searchControls=[paged],
+                    perRecordCallback=lambda item: self._user_callback(
+                        item, match_strings, min_len
+                    ),
+                )
+            finally:
+                try:
+                    ldap.close()
+                except Exception:
+                    pass
 
         except LDAPSessionError as e:
             logger.error(f"LDAP error while querying users: {e}")
@@ -305,16 +311,21 @@ class ADDiscovery:
         # --- DFS v1: fTDfs ---
         try:
             ldap = self.ldap_transport.connect()
-            paged = SimplePagedResultsControl(size=1000)
-            ldap.search(
-                searchBase=self.base_dn,
-                searchFilter="(objectClass=fTDfs)",
-                attributes=self._pad_attrs(["remoteServerName"]),
-                sizeLimit=0,
-                searchControls=[paged],
-                perRecordCallback=self._dfs_v1_callback,
-            )
-            ldap.close()
+            try:
+                paged = SimplePagedResultsControl(size=1000)
+                ldap.search(
+                    searchBase=self.base_dn,
+                    searchFilter="(objectClass=fTDfs)",
+                    attributes=self._pad_attrs(["remoteServerName"]),
+                    sizeLimit=0,
+                    searchControls=[paged],
+                    perRecordCallback=self._dfs_v1_callback,
+                )
+            finally:
+                try:
+                    ldap.close()
+                except Exception:
+                    pass
         except LDAPSessionError as e:
             logger.error(f"LDAP error during DFS v1 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}")
         except Exception as e:
@@ -323,16 +334,21 @@ class ADDiscovery:
         # --- DFS v2: msDFS-Namespacev2 / msDFS-Linkv2 ---
         try:
             ldap = self.ldap_transport.connect()
-            paged = SimplePagedResultsControl(size=1000)
-            ldap.search(
-                searchBase=self.base_dn,
-                searchFilter="(|(objectClass=msDFS-Namespacev2)(objectClass=msDFS-Linkv2))",
-                attributes=self._pad_attrs(["msDFS-TargetListv2"]),
-                sizeLimit=0,
-                searchControls=[paged],
-                perRecordCallback=self._dfs_v2_callback,
-            )
-            ldap.close()
+            try:
+                paged = SimplePagedResultsControl(size=1000)
+                ldap.search(
+                    searchBase=self.base_dn,
+                    searchFilter="(|(objectClass=msDFS-Namespacev2)(objectClass=msDFS-Linkv2))",
+                    attributes=self._pad_attrs(["msDFS-TargetListv2"]),
+                    sizeLimit=0,
+                    searchControls=[paged],
+                    perRecordCallback=self._dfs_v2_callback,
+                )
+            finally:
+                try:
+                    ldap.close()
+                except Exception:
+                    pass
         except LDAPSessionError as e:
             logger.error(f"LDAP error during DFS v2 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}")
         except Exception as e:

@@ -92,7 +92,7 @@ def test_get_dfs_shares_delegates():
 
 def test_get_dfs_shares_applies_exclusions():
     cfg = make_cfg()
-    cfg.targets.exclusions = ["nas01"]
+    cfg.targets.exclusions = ["NAS01.CORP.LOCAL"]
 
     with patch(
         "snaffler.engine.domain_pipeline.ADDiscovery"
@@ -100,6 +100,48 @@ def test_get_dfs_shares_applies_exclusions():
         ad = ad_cls.return_value
         ad.get_dfs_targets.return_value = [
             "//nas01.corp.local/data",
+            "//fileserver.domain.com/docs",
+        ]
+
+        pipeline = DomainPipeline(cfg)
+        result = pipeline.get_dfs_shares()
+
+    assert result == ["//fileserver.domain.com/docs"]
+
+
+def test_dfs_exclusion_exact_hostname_no_false_positive():
+    """BUG-N: excluding 'NAS01' must NOT filter '//nas01server/share' (substring)."""
+    cfg = make_cfg()
+    cfg.targets.exclusions = ["NAS01"]
+
+    with patch(
+        "snaffler.engine.domain_pipeline.ADDiscovery"
+    ) as ad_cls:
+        ad = ad_cls.return_value
+        ad.get_dfs_targets.return_value = [
+            "//nas01server/share",
+            "//other/docs",
+        ]
+
+        pipeline = DomainPipeline(cfg)
+        result = pipeline.get_dfs_shares()
+
+    # "nas01server" != "NAS01", so the path must NOT be excluded
+    assert "//nas01server/share" in result
+    assert "//other/docs" in result
+
+
+def test_dfs_exclusion_exact_hostname_case_insensitive():
+    """BUG-N: excluding 'NAS01.CORP.LOCAL' DOES filter '//nas01.corp.local/share'."""
+    cfg = make_cfg()
+    cfg.targets.exclusions = ["NAS01.CORP.LOCAL"]
+
+    with patch(
+        "snaffler.engine.domain_pipeline.ADDiscovery"
+    ) as ad_cls:
+        ad = ad_cls.return_value
+        ad.get_dfs_targets.return_value = [
+            "//nas01.corp.local/share",
             "//fileserver.domain.com/docs",
         ]
 

@@ -23,6 +23,7 @@ _SENTINEL = None  # poison pill to signal consumer threads to exit
 
 _BATCH_SIZE = 500
 _BATCH_INTERVAL = 1.0  # seconds
+_MAX_ENQUEUED = 500_000  # clear enqueued set to bound memory usage
 
 
 def _extract_share_unc(unc_path: str) -> str:
@@ -122,7 +123,7 @@ class _BatchWriter:
             if file_buf:
                 self._state.store_files(file_buf)
         except Exception as e:
-            logger.debug(f"Batch writer flush error: {e}")
+            logger.warning(f"Batch writer flush error ({len(dir_buf)} dirs, {len(file_buf)} files): {e}")
 
 
 class FilePipeline:
@@ -200,6 +201,8 @@ class FilePipeline:
                     if normalized in enqueued:
                         return
                     enqueued.add(normalized)
+                    if len(enqueued) > _MAX_ENQUEUED:
+                        enqueued.clear()
                 if self.state and self.state.should_skip_file(unc_path):
                     if self.progress:
                         self.progress.files_total += 1
@@ -240,6 +243,15 @@ class FilePipeline:
 
                     # --- Seed initial share roots ---
                     for path in paths:
+                        # Check seed paths against --exclude-unc patterns
+                        exclude_patterns = getattr(self.tree_walker, '_exclude_unc', None) or self.cfg.targets.exclude_unc
+                        if exclude_patterns:
+                            path_lower = path.lower()
+                            if any(fnmatch.fnmatch(path_lower, p.lower()) for p in exclude_patterns):
+                                logger.debug(f"Skipped share root {path} due to --exclude-unc filter")
+                                if self.progress:
+                                    self.progress.shares_walked += 1
+                                continue
                         cancel = threading.Event()
                         cancel_events[path.lower()] = cancel
                         submitted_dirs.add(path.lower())
@@ -379,13 +391,19 @@ class FilePipeline:
                     # On interrupt, use a short timeout to avoid blocking shutdown
                     timeout = 5 if producer_error else 30
                     batch_writer.stop(timeout=timeout)
-                # Push sentinels so consumers exit (non-blocking — the
-                # outer KeyboardInterrupt handler drains the queue if needed)
+                # Push sentinels so consumers exit — drain queue first if
+                # full, then push with timeout to guarantee delivery.
                 for _ in range(self.file_threads):
-                    try:
-                        file_queue.put(_SENTINEL, timeout=2)
-                    except queue.Full:
-                        pass
+                    while True:
+                        try:
+                            file_queue.put(_SENTINEL, timeout=5)
+                            break
+                        except queue.Full:
+                            # Drain one item and retry
+                            try:
+                                file_queue.get_nowait()
+                            except queue.Empty:
+                                pass
 
         # ---------- Consumer: queue → scan ----------
         consumer_results = [0]  # mutable container for thread access

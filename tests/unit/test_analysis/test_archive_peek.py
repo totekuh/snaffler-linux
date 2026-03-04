@@ -340,8 +340,8 @@ class TestArchivePeek:
         with patch("snaffler.analysis.file_scanner.log_file_result"):
             result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
-        # Result is still returned (--match is purely an output filter)
-        assert result is not None
+        # --match fully suppresses non-matching findings
+        assert result is None
 
     def test_subdirectory_member_uses_filename_only(self):
         """Members in subdirs: name is the filename part, not the full path."""

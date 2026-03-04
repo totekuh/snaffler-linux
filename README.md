@@ -8,7 +8,7 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 
 - SMB share discovery via SRVSVC (NetShareEnum)
 - DFS namespace discovery via LDAP (v1 + v2), merged and deduplicated with share enumeration
-- **Local filesystem scanning** (`--local`) — same classification engine, no SMB required
+- **Local filesystem scanning** (`--local-fs`) — same classification engine, no SMB required
 - **Python library API** — two-phase classification for C2 integration, duck-typed transport
 - Parallel directory tree walking with intra-share fan-out
 - 103 built-in regex-based file and content classification rules
@@ -138,8 +138,8 @@ snaffler \
 Scan local directories without any SMB or network configuration:
 
 ```bash
-snaffler --local /mnt/share
-snaffler --local /tmp/extracted --local /home/user/Documents
+snaffler --local-fs /mnt/share
+snaffler --local-fs /tmp/extracted --local-fs /home/user/Documents
 ```
 
 Uses the same classification engine, rules, and multithreaded pipeline as SMB mode — just reads from the local filesystem instead. Useful for:
@@ -149,7 +149,7 @@ Uses the same classification engine, rules, and multithreaded pipeline as SMB mo
 - Offline analysis of forensic images
 - Testing rules against local data
 
-`--local` is mutually exclusive with `--unc`, `--computer`, `--domain`, and `--stdin`.
+`--local-fs` is mutually exclusive with `--unc`, `--computer`, `--domain`, and `--stdin`.
 
 ---
 
@@ -175,8 +175,8 @@ snaffler -u USER -p PASS -d DOMAIN.LOCAL \
   --exclude-share "IPC$" --exclude-share "print$" \
   --exclude-unc "*/Windows/*" --exclude-unc "*/.snapshot/*"
 
-# --exclude-unc works with --local too
-snaffler --local /mnt/share --exclude-unc "*/node_modules/*" --exclude-unc "*/.git/*"
+# --exclude-unc works with --local-fs too
+snaffler --local-fs /mnt/share --exclude-unc "*/node_modules/*" --exclude-unc "*/.git/*"
 ```
 
 ### Depth Limiting and Post-Filtering
