@@ -184,9 +184,9 @@ snaffler --ftp ftp://10.0.0.5 --ftp-tls
 snaffler --ftp ftp://10.0.0.5 --max-depth 3 --match "password" --min-interest 2
 ```
 
-Bare hostnames are accepted — `snaffler --ftp 10.0.0.5` is equivalent to `snaffler --ftp ftp://10.0.0.5`. Without `-u`/`-p`, anonymous login is attempted.
+Bare hostnames are accepted — `snaffler --ftp 10.0.0.5` is equivalent to `snaffler --ftp ftp://10.0.0.5`. Without `-u`/`-p`, anonymous login is attempted. `--ftp-file` accepts one target per line (same format), with `#` comments and blank lines skipped.
 
-`--ftp` is mutually exclusive with `--unc`, `--local-fs`, `--computer`, `--domain`, and `--stdin`.
+`--ftp` / `--ftp-file` is mutually exclusive with `--unc`, `--local-fs`, `--computer`, `--domain`, and `--stdin`.
 
 ---
 
