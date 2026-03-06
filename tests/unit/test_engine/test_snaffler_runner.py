@@ -33,6 +33,7 @@ def make_cfg():
     cfg.targets.unc_targets = []
     cfg.targets.computer_targets = []
     cfg.targets.local_targets = []
+    cfg.targets.ftp_targets = []
     cfg.targets.shares_only = False
     cfg.targets.share_filter = []
     cfg.targets.exclude_share = []
@@ -77,6 +78,7 @@ def _make_runner_with_state(cfg):
     state.count_checked_computers.return_value = 0
     state.count_checked_shares.return_value = 0
     state.count_checked_files.return_value = 0
+    state.count_findings_by_triage.return_value = {}
     runner.state = state
     runner.share_pipeline.state = state
     runner.file_pipeline.state = state
@@ -1585,3 +1587,65 @@ def test_dns_resolution_survives_non_oserror_exception():
     assert "HOST3" in resolved
     assert "HOST2" not in resolved
     assert len(resolved) == 2
+
+
+# ---------- finding count restore on resume ----------
+
+def test_sync_progress_restores_finding_counts():
+    """_sync_progress_from_state restores files_matched and severity counters from DB."""
+    cfg = make_cfg()
+    cfg.auth.domain = "CORP.LOCAL"
+    runner, state = _make_runner_with_state(cfg)
+
+    state.count_findings_by_triage.return_value = {
+        "Black": 2,
+        "Red": 10,
+        "Yellow": 5,
+        "Green": 3,
+    }
+
+    runner._sync_progress_from_state()
+
+    assert runner.progress.files_matched == 20
+    assert runner.progress.severity_black == 2
+    assert runner.progress.severity_red == 10
+    assert runner.progress.severity_yellow == 5
+    assert runner.progress.severity_green == 3
+
+
+def test_sync_progress_uses_max_for_finding_counts():
+    """Finding counts use max() so live scan counts are not overwritten by stale DB values."""
+    cfg = make_cfg()
+    cfg.auth.domain = "CORP.LOCAL"
+    runner, state = _make_runner_with_state(cfg)
+
+    # Simulate live scan already found more than DB has
+    runner.progress.severity_red = 50
+    runner.progress.files_matched = 100
+
+    state.count_findings_by_triage.return_value = {
+        "Red": 10,
+        "Yellow": 5,
+    }
+
+    runner._sync_progress_from_state()
+
+    # Live counts should NOT be reduced
+    assert runner.progress.severity_red == 50
+    assert runner.progress.files_matched == 100
+    # But new categories from DB should be picked up
+    assert runner.progress.severity_yellow == 5
+
+
+def test_sync_progress_empty_findings():
+    """No findings in DB → counters stay at zero."""
+    cfg = make_cfg()
+    cfg.auth.domain = "CORP.LOCAL"
+    runner, state = _make_runner_with_state(cfg)
+
+    state.count_findings_by_triage.return_value = {}
+
+    runner._sync_progress_from_state()
+
+    assert runner.progress.files_matched == 0
+    assert runner.progress.severity_black == 0

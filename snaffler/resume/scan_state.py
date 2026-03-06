@@ -116,6 +116,9 @@ class ScanState:
     def count_findings(self) -> int:
         return self.store.count_findings()
 
+    def count_findings_by_triage(self) -> dict:
+        return self.store.count_findings_by_triage()
+
     # ---------- counts (for progress) ----------
 
     def count_checked_computers(self) -> int:
@@ -494,6 +497,14 @@ class SQLiteStateStore:
             return self.conn.execute(
                 "SELECT COUNT(*) FROM finding"
             ).fetchone()[0]
+
+    def count_findings_by_triage(self) -> dict:
+        """Return {triage_label: count} for all findings."""
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT triage, COUNT(*) FROM finding GROUP BY triage"
+            ).fetchall()
+            return {row[0]: row[1] for row in rows}
 
     # ---------- counts (for progress) ----------
 

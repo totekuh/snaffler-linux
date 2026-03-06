@@ -950,3 +950,42 @@ def test_sqlite_store_migration_adds_done_column():
         store.close()
     finally:
         os.unlink(path)
+
+
+# ---------- count_findings_by_triage ----------
+
+
+def test_count_findings_by_triage():
+    """count_findings_by_triage returns {triage: count} dict."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        # Empty DB
+        assert store.count_findings_by_triage() == {}
+
+        store.store_finding(
+            finding_id="f1", file_path="//H/S/a.txt",
+            triage="Red", rule_name="R1",
+        )
+        store.store_finding(
+            finding_id="f2", file_path="//H/S/b.txt",
+            triage="Red", rule_name="R2",
+        )
+        store.store_finding(
+            finding_id="f3", file_path="//H/S/c.txt",
+            triage="Black", rule_name="R3",
+        )
+        store.store_finding(
+            finding_id="f4", file_path="//H/S/d.txt",
+            triage="Yellow", rule_name="R4",
+        )
+
+        result = store.count_findings_by_triage()
+        assert result == {"Red": 2, "Black": 1, "Yellow": 1}
+
+        store.close()
+    finally:
+        os.unlink(path)

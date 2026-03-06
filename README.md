@@ -2,12 +2,13 @@
 
 Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 
-**snaffler-ng** is a post-exploitation / red teaming tool designed to **discover readable SMB shares**, **walk directory trees**, and **identify credentials and sensitive data** on Windows systems. Also works as a **local filesystem scanner** and a **Python library** for integration into C2 frameworks and custom tooling.
+**snaffler-ng** is a post-exploitation / red teaming tool designed to **discover readable SMB shares**, **walk directory trees**, and **identify credentials and sensitive data** on Windows systems. Also works as an **FTP scanner**, a **local filesystem scanner**, and a **Python library** for integration into C2 frameworks and custom tooling.
 
 ## Features
 
 - SMB share discovery via SRVSVC (NetShareEnum)
 - DFS namespace discovery via LDAP (v1 + v2), merged and deduplicated with share enumeration
+- **FTP server scanning** (`--ftp`) — scan FTP/FTPS servers with the same classification engine
 - **Local filesystem scanning** (`--local-fs`) — same classification engine, no SMB required
 - **Python library API** — two-phase classification for C2 integration, duck-typed transport
 - Parallel directory tree walking with intra-share fan-out
@@ -149,7 +150,40 @@ Uses the same classification engine, rules, and multithreaded pipeline as SMB mo
 - Offline analysis of forensic images
 - Testing rules against local data
 
-`--local-fs` is mutually exclusive with `--unc`, `--computer`, `--domain`, and `--stdin`.
+`--local-fs` is mutually exclusive with `--unc`, `--ftp`, `--computer`, `--domain`, and `--stdin`.
+
+---
+
+### FTP Server Scanning
+
+Scan FTP servers with the same classification engine — all 106 rules, content scanning, archive peeking, resume, and download work identically:
+
+```bash
+# Anonymous FTP
+snaffler --ftp ftp://10.0.0.5
+
+# With credentials
+snaffler --ftp ftp://10.0.0.5 -u ftpuser -p ftppass
+
+# Scan a specific directory on the server
+snaffler --ftp ftp://10.0.0.5/Data/Shared
+
+# Custom port
+snaffler --ftp ftp://10.0.0.5:2121/backup
+
+# Multiple FTP targets
+snaffler --ftp ftp://10.0.0.5 --ftp ftp://10.0.0.6/docs
+
+# FTPS (FTP over TLS)
+snaffler --ftp ftp://10.0.0.5 --ftp-tls
+
+# Combine with scanning flags
+snaffler --ftp ftp://10.0.0.5 --max-depth 3 --match "password" --min-interest 2
+```
+
+Bare hostnames are accepted — `snaffler --ftp 10.0.0.5` is equivalent to `snaffler --ftp ftp://10.0.0.5`. Without `-u`/`-p`, anonymous login is attempted.
+
+`--ftp` is mutually exclusive with `--unc`, `--local-fs`, `--computer`, `--domain`, and `--stdin`.
 
 ---
 

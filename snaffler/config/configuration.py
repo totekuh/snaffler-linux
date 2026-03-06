@@ -65,6 +65,9 @@ class TargetingConfig:
     exclude_share: List[str] = field(default_factory=list)
     exclude_unc: List[str] = field(default_factory=list)
 
+    ftp_targets: List[str] = field(default_factory=list)
+    ftp_tls: bool = False
+
 
 # ---------------- SCANNING ----------------
 
@@ -153,8 +156,14 @@ class SnafflerConfiguration:
 
         if self.targets.local_targets and (
             self.targets.unc_targets or self.targets.computer_targets
+            or self.targets.ftp_targets
         ):
-            raise ValueError("Cannot mix local targets with UNC or computer targets")
+            raise ValueError("Cannot mix local targets with UNC, computer, or FTP targets")
+
+        if self.targets.ftp_targets and (
+            self.targets.unc_targets or self.targets.computer_targets
+        ):
+            raise ValueError("Cannot mix FTP targets with UNC or computer targets")
 
         if self.rules.rule_dir:
             p = Path(self.rules.rule_dir)
@@ -164,7 +173,8 @@ class SnafflerConfiguration:
                 raise ValueError(f"rule_dir is not a directory: {p}")
 
         # Auth validation is irrelevant in local mode (no network connections)
-        if self.targets.local_targets:
+        # FTP uses its own auth (username/password), skip Kerberos/NTLM checks
+        if self.targets.local_targets or self.targets.ftp_targets:
             return
 
         # ---------- AUTH VALIDATION ----------

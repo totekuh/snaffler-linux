@@ -17,7 +17,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.4.2"  # fallback for PyInstaller builds
+        return "1.5.0"  # fallback for PyInstaller builds
 
 
 def _version_callback(value: bool):
@@ -118,6 +118,17 @@ def main(
             help="Local directory path(s) to scan (no SMB, scans local filesystem)",
             rich_help_panel="Targeting",
         ),
+        ftp: Optional[List[str]] = typer.Option(
+            None, "--ftp",
+            help="FTP target URL(s) to scan (e.g. ftp://10.0.0.5/data or bare 10.0.0.5)",
+            rich_help_panel="Targeting",
+        ),
+        ftp_tls: bool = typer.Option(
+            False, "--ftp-tls",
+            help="Use FTPS (FTP over TLS) for --ftp targets",
+            rich_help_panel="Targeting",
+        ),
+
         computer: Optional[List[str]] = typer.Option(
             None, "-c", "--computer",
             help="Target computer(s) by hostname, IP, CIDR (10.0.0.0/24), or range (10.0.0.1-50)",
@@ -402,6 +413,26 @@ def main(
             if not p.is_dir():
                 raise typer.BadParameter(f"--local-fs path is not a directory: {lp}")
 
+    # ---------- FTP TARGETS ----------
+    if ftp:
+        from urllib.parse import urlparse as _urlparse
+        parsed_ftp = []
+        for raw in ftp:
+            if raw.startswith("ftp://"):
+                parsed_ftp.append(raw.rstrip("/") or raw)
+            else:
+                # Bare host or host:port — wrap as ftp:// URL
+                parsed_ftp.append(f"ftp://{raw}")
+        cfg.targets.ftp_targets = parsed_ftp
+    if _explicit("ftp_tls"):
+        cfg.targets.ftp_tls = ftp_tls
+
+    if cfg.targets.ftp_targets:
+        if cfg.targets.unc_targets or cfg.targets.computer_targets or cfg.targets.local_targets or cfg.auth.domain or stdin_mode:
+            raise typer.BadParameter(
+                "--ftp is mutually exclusive with --unc, --computer, --computer-file, --local-fs, --domain, and --stdin"
+            )
+
     # ---------- STDIN (NXC) ----------
     if stdin_mode:
         if cfg.targets.unc_targets or cfg.targets.computer_targets or cfg.targets.local_targets or cfg.auth.domain:
@@ -424,12 +455,13 @@ def main(
     has_local = bool(cfg.targets.local_targets)
     has_computers = bool(cfg.targets.computer_targets)
     has_domain = bool(cfg.auth.domain)
+    has_ftp = bool(cfg.targets.ftp_targets)
 
     # At least one targeting mode must be selected
-    if not (has_unc or has_local or has_computers or has_domain):
+    if not (has_unc or has_local or has_computers or has_domain or has_ftp):
         raise typer.BadParameter(
             "No targets specified. Use one of: "
-            "--unc, --local-fs, --computer/--computer-file, --stdin, or --domain"
+            "--unc, --local-fs, --ftp, --computer/--computer-file, --stdin, or --domain"
         )
     # ---------- SCANNING ----------
     if _explicit("min_interest"):   cfg.scanning.min_interest = min_interest

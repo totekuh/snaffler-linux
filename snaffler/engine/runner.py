@@ -61,8 +61,19 @@ class SnafflerRunner:
             cfg=cfg, state=self.state, progress=self.progress,
         )
 
+        # Inject FTP transport when --ftp is used
+        if cfg.targets.ftp_targets:
+            from snaffler.accessors.ftp_file_accessor import FTPFileAccessor
+            from snaffler.discovery.ftp_tree_walker import FTPTreeWalker
+
+            tree_walker = FTPTreeWalker(cfg)
+            file_accessor = FTPFileAccessor(cfg)
+            self.file_pipeline = FilePipeline(
+                cfg=cfg, state=self.state, progress=self.progress,
+                tree_walker=tree_walker, file_accessor=file_accessor,
+            )
         # Inject local transport when --local-fs is used
-        if cfg.targets.local_targets:
+        elif cfg.targets.local_targets:
             from snaffler.accessors.local_file_accessor import LocalFileAccessor
             from snaffler.discovery.local_tree_walker import LocalTreeWalker
 
@@ -118,6 +129,22 @@ class SnafflerRunner:
             # Ensure totals are never less than done counts
             p.files_total = max(p.files_total, p.files_scanned)
             p.shares_total = max(p.shares_total, p.shares_walked)
+
+            # Restore finding counts from DB (critical for resume)
+            by_triage = self.state.count_findings_by_triage()
+            total = 0
+            for label, count in by_triage.items():
+                total += count
+                low = label.lower()
+                if low == "black":
+                    p.severity_black = max(p.severity_black, count)
+                elif low == "red":
+                    p.severity_red = max(p.severity_red, count)
+                elif low == "yellow":
+                    p.severity_yellow = max(p.severity_yellow, count)
+                elif low == "green":
+                    p.severity_green = max(p.severity_green, count)
+            p.files_matched = max(p.files_matched, total)
         except Exception as e:
             logger.debug(f"Failed to sync progress from state DB: {e}")
 
@@ -402,8 +429,19 @@ class SnafflerRunner:
                 except ImportError as exc:
                     logger.warning(f"Web dashboard unavailable: {exc}")
 
+            # ---------- FTP targets ----------
+            if self.cfg.targets.ftp_targets:
+                if self.cfg.targets.shares_only:
+                    logger.warning("--shares-only has no effect in --ftp mode")
+                if self.cfg.targets.exclusions:
+                    logger.warning("--exclusions has no effect in --ftp mode")
+                paths = self.cfg.targets.ftp_targets
+                self.progress.shares_found = len(paths)
+                self._rebalance_file_threads()
+                self.file_pipeline.run(paths)
+
             # ---------- Local filesystem paths ----------
-            if self.cfg.targets.local_targets:
+            elif self.cfg.targets.local_targets:
                 if self.cfg.targets.shares_only:
                     logger.warning("--shares-only has no effect in --local-fs mode")
                 if self.cfg.targets.exclusions:

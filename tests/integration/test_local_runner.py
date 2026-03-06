@@ -422,6 +422,8 @@ class TestResumeLocal:
 
     def test_resume_skips_already_checked_files(self, cfg):
         """Run twice with same DB — second run should produce no new findings."""
+        from snaffler.resume.scan_state import SQLiteStateStore
+
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
 
@@ -431,10 +433,19 @@ class TestResumeLocal:
             # First run
             _run(cfg)
 
+            # Count findings after first run
+            store = SQLiteStateStore(db_path)
+            findings_after_first = store.count_findings()
+            store.close()
+
             # Second run with same DB — files already checked
-            _, p2 = _run(cfg)
-            # No new findings — all files were already checked
-            assert p2.files_matched == 0
+            _run(cfg)
+
+            # Verify no new findings were added to the DB
+            store = SQLiteStateStore(db_path)
+            findings_after_second = store.count_findings()
+            store.close()
+            assert findings_after_second == findings_after_first
         finally:
             Path(db_path).unlink(missing_ok=True)
 

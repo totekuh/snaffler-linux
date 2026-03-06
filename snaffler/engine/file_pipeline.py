@@ -29,9 +29,15 @@ _MAX_ENQUEUED = 500_000  # clear enqueued set to bound memory usage
 def _extract_share_unc(unc_path: str) -> str:
     """Extract //server/share from a full UNC path.
 
+    For FTP URLs (``ftp://host:port/...``), returns ``ftp://host:port`` as
+    the share key so files are grouped by FTP server in the resume database.
+
     For local paths (not starting with ``//``), returns the path unchanged
     so it can be used as-is as a share key in the resume database.
     """
+    if unc_path.startswith("ftp://"):
+        from snaffler.discovery.ftp_tree_walker import extract_ftp_root
+        return extract_ftp_root(unc_path)
     normalized = unc_path.replace("\\", "/")
     if not normalized.startswith("//"):
         return unc_path
