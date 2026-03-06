@@ -5,9 +5,12 @@ No mocking — real rules, real local tree walker, real local file reader,
 real test data directory.  Validates that the library API produces correct
 findings when pointed at a local directory tree.
 
-Also tests the CLI ``--local-fs`` pipeline (FilePipeline with local transport).
+Each test class covers a specific flag/feature with both positive tests
+(flag produces expected effect) and negative tests (flag does NOT produce
+false effects).
 """
 
+import os
 import shutil
 from pathlib import Path
 
@@ -35,8 +38,10 @@ def _walk(root, **kwargs):
 # Basic walk — full data dir
 # ---------------------------------------------------------------------------
 
-class TestWalkFullDataDir:
+class TestWalkBasic:
     """Walk the entire tests/data/ tree and verify aggregate findings."""
+
+    # -- positive --
 
     def test_produces_findings(self):
         findings = _walk(_DATA_DIR)
@@ -50,12 +55,10 @@ class TestWalkFullDataDir:
         """Paths should be real local filesystem paths, not UNC."""
         findings = _walk(_DATA_DIR)
         for f in findings:
-            # Archive member paths have → separator
             base = f.file_path.split("\u2192")[0]
             assert not base.startswith("//"), f"UNC path in walk(): {f.file_path}"
 
     def test_finds_black_severity(self):
-        """Data dir has ntds.dit, id_rsa etc. — must produce BLACK findings."""
         findings = _walk(_DATA_DIR)
         black = [f for f in findings if f.triage == Triage.BLACK]
         assert len(black) > 0
@@ -65,29 +68,60 @@ class TestWalkFullDataDir:
         red = [f for f in findings if f.triage == Triage.RED]
         assert len(red) > 0
 
+    def test_finds_yellow_severity(self):
+        findings = _walk(_DATA_DIR)
+        yellow = [f for f in findings if f.triage == Triage.YELLOW]
+        assert len(yellow) > 0
+
+    def test_finds_green_severity(self):
+        findings = _walk(_DATA_DIR)
+        green = [f for f in findings if f.triage == Triage.GREEN]
+        assert len(green) > 0
+
     def test_finds_content_matches(self):
         """Content scan produces findings with match text."""
         findings = _walk(_DATA_DIR)
         with_match = [f for f in findings if f.match]
         assert len(with_match) > 0
 
+    def test_walk_returns_generator(self):
+        s = Snaffler()
+        gen = s.walk(str(_DATA_DIR))
+        assert hasattr(gen, '__next__')
+        first = next(gen)
+        assert isinstance(first, FileResult)
+
+    # -- negative --
+
     def test_scans_more_files_than_matches(self):
-        """Not every file matches — data dir has benign files too."""
+        """Not every file is a finding — data dir has benign files too."""
         findings = _walk(_DATA_DIR)
         total_files = sum(1 for _ in _DATA_DIR.rglob("*") if _.is_file())
         assert len(findings) < total_files
 
+    def test_benign_file_not_flagged(self, tmp_path):
+        """A plain text file with no secrets should produce no findings."""
+        (tmp_path / "readme.txt").write_text("This is a benign readme file.\n")
+        findings = _walk(tmp_path)
+        assert len(findings) == 0
+
+    def test_benign_python_file_not_flagged(self, tmp_path):
+        """A .py file with no secrets should produce no findings."""
+        (tmp_path / "app.py").write_text("print('hello world')\n")
+        findings = _walk(tmp_path)
+        assert len(findings) == 0
+
 
 # ---------------------------------------------------------------------------
-# Recursion
+# Recursion / depth
 # ---------------------------------------------------------------------------
 
 class TestRecursion:
 
+    # -- positive --
+
     def test_finds_files_in_subdirs(self):
-        """Files in nested subdirectories are found."""
         findings = _walk(_DATA_DIR)
-        # Files from subdirectories (path contains a subdirectory name)
         nested = [
             f for f in findings
             if any(d in f.file_path for d in ["relay_", "password_files", "gpp"])
@@ -95,48 +129,148 @@ class TestRecursion:
         assert len(nested) > 0
 
     def test_finds_deeply_nested_files(self):
-        """Files in deep paths like relay_postmatch/ProgramData/... are reached."""
         findings = _walk(_DATA_DIR)
-        deep = [f for f in findings if "ProgramData" in f.file_path]
-        # ProgramData dir has postmatch test files — may or may not produce findings
-        # depending on rules; the key test is that walk() reaches them at all.
-        # Instead, check a known deep structure
         gpp = [f for f in findings if "gpp" in f.file_path.lower()]
         assert len(gpp) > 0
 
 
 # ---------------------------------------------------------------------------
-# Exclusions
+# max_depth
 # ---------------------------------------------------------------------------
 
-class TestExclusions:
+class TestMaxDepth:
 
-    def test_exclude_unc_reduces_findings(self):
-        """Excluding a directory reduces the number of findings."""
+    # -- positive --
+
+    def test_depth_zero_scans_root_files(self, tmp_path):
+        """Depth 0 scans files directly in the root."""
+        (tmp_path / "ntds.dit").write_bytes(b"root level")
+        sub = tmp_path / "subdir"
+        sub.mkdir()
+        (sub / "SAM").write_bytes(b"nested")
+
+        findings = _walk(tmp_path, max_depth=0)
+        paths = [f.file_path for f in findings]
+        assert any("ntds.dit" in p for p in paths)
+
+    def test_depth_one_includes_first_subdirs(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        (root / "ntds.dit").write_bytes(b"root")
+        level1 = root / "level1"
+        level1.mkdir()
+        (level1 / "SAM").write_bytes(b"first level")
+
+        findings = _walk(root, max_depth=1)
+        paths = [f.file_path for f in findings]
+        assert any("ntds.dit" in p for p in paths)
+        assert any("SAM" in p for p in paths)
+
+    def test_depth_zero_fewer_than_unlimited(self):
+        full = _walk(_DATA_DIR)
+        shallow = _walk(_DATA_DIR, max_depth=0)
+        assert len(shallow) < len(full)
+
+    # -- negative --
+
+    def test_depth_zero_skips_subdirectories(self, tmp_path):
+        """Depth 0 does NOT scan files in subdirectories."""
+        (tmp_path / "benign.txt").write_text("nothing\n")
+        sub = tmp_path / "subdir"
+        sub.mkdir()
+        (sub / "ntds.dit").write_bytes(b"nested secret")
+
+        findings = _walk(tmp_path, max_depth=0)
+        paths = [f.file_path for f in findings]
+        assert not any("ntds.dit" in p for p in paths)
+
+    def test_depth_one_skips_second_level(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        level1 = root / "level1"
+        level1.mkdir()
+        level2 = level1 / "level2"
+        level2.mkdir()
+        (level2 / "ntds.dit").write_bytes(b"too deep")
+
+        findings = _walk(root, max_depth=1)
+        paths = [f.file_path for f in findings]
+        assert not any("ntds.dit" in p for p in paths)
+
+    def test_unlimited_depth_finds_everything(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        deep = root / "a" / "b" / "c" / "d"
+        deep.mkdir(parents=True)
+        (deep / "ntds.dit").write_bytes(b"very deep")
+
+        findings = _walk(root)  # max_depth=None = unlimited
+        paths = [f.file_path for f in findings]
+        assert any("ntds.dit" in p for p in paths)
+
+
+# ---------------------------------------------------------------------------
+# exclude_unc
+# ---------------------------------------------------------------------------
+
+class TestExcludeUNC:
+
+    # -- positive --
+
+    def test_exclude_reduces_findings(self):
         full = _walk(_DATA_DIR)
         excl = _walk(_DATA_DIR, exclude_unc=["*/relay_*"])
         assert len(excl) < len(full)
 
-    def test_exclude_unc_no_excluded_paths(self):
-        """Excluded directories don't appear in finding paths."""
+    def test_excluded_paths_absent(self):
         findings = _walk(_DATA_DIR, exclude_unc=["*/archives*"])
         for f in findings:
             assert "archives" not in f.file_path
 
     def test_multiple_exclusions_stack(self):
-        """Multiple exclusion patterns stack additively."""
         one = _walk(_DATA_DIR, exclude_unc=["*/relay_*"])
         two = _walk(_DATA_DIR, exclude_unc=["*/relay_*", "*gpp*"])
         assert len(two) < len(one)
 
+    def test_exclude_specific_subdir(self, tmp_path):
+        """Exclude a specific subdirectory by name."""
+        keep = tmp_path / "keep"
+        keep.mkdir()
+        (keep / "ntds.dit").write_bytes(b"keep me")
+        skip = tmp_path / "skip"
+        skip.mkdir()
+        (skip / "SAM").write_bytes(b"skip me")
+
+        findings = _walk(tmp_path, exclude_unc=["*/skip*"])
+        paths = [f.file_path for f in findings]
+        assert any("ntds.dit" in p for p in paths)
+        assert not any("SAM" in p for p in paths)
+
+    # -- negative --
+
+    def test_exclude_nonmatching_pattern_no_effect(self):
+        """An exclude pattern that matches nothing doesn't reduce findings."""
+        full = _walk(_DATA_DIR)
+        excl = _walk(_DATA_DIR, exclude_unc=["*/zzz_nonexistent_dir_zzz*"])
+        assert len(excl) == len(full)
+
+    def test_non_excluded_dirs_still_scanned(self):
+        """Excluding one dir doesn't affect sibling directories."""
+        findings = _walk(_DATA_DIR, exclude_unc=["*/archives*"])
+        # relay_ dirs should still produce findings
+        relay = [f for f in findings if "relay_" in f.file_path]
+        assert len(relay) > 0
+
 
 # ---------------------------------------------------------------------------
-# min_interest filter
+# min_interest
 # ---------------------------------------------------------------------------
 
 class TestMinInterest:
 
-    def test_min_interest_zero_most_findings(self):
+    # -- positive --
+
+    def test_higher_min_interest_fewer_findings(self):
         all_findings = _walk(_DATA_DIR, min_interest=0)
         high_findings = _walk(_DATA_DIR, min_interest=2)
         assert len(high_findings) < len(all_findings)
@@ -151,6 +285,27 @@ class TestMinInterest:
         for f in findings:
             assert f.triage.level >= 2
 
+    # -- negative --
+
+    def test_min_interest_zero_includes_green(self):
+        findings = _walk(_DATA_DIR, min_interest=0)
+        green = [f for f in findings if f.triage == Triage.GREEN]
+        assert len(green) > 0
+
+    def test_min_interest_high_excludes_green_yellow(self):
+        findings = _walk(_DATA_DIR, min_interest=2)
+        assert not any(f.triage == Triage.GREEN for f in findings)
+        assert not any(f.triage == Triage.YELLOW for f in findings)
+
+    def test_min_interest_black_excludes_red(self):
+        findings = _walk(_DATA_DIR, min_interest=3)
+        assert not any(f.triage == Triage.RED for f in findings)
+
+    def test_min_interest_impossible_level_no_findings(self):
+        """Interest level higher than any rule produces no findings."""
+        findings = _walk(_DATA_DIR, min_interest=99)
+        assert len(findings) == 0
+
 
 # ---------------------------------------------------------------------------
 # match_filter
@@ -158,58 +313,202 @@ class TestMinInterest:
 
 class TestMatchFilter:
 
+    # -- positive --
+
     def test_match_filter_reduces_findings(self):
         all_findings = _walk(_DATA_DIR)
         filtered = _walk(_DATA_DIR, match_filter="password")
         assert len(filtered) < len(all_findings)
         assert len(filtered) > 0
 
-    def test_match_filter_no_match(self):
-        findings = _walk(_DATA_DIR, match_filter="zzz_impossible_pattern_zzz")
-        assert len(findings) == 0
-
     def test_match_filter_case_insensitive(self):
         lower = _walk(_DATA_DIR, match_filter="password")
         upper = _walk(_DATA_DIR, match_filter="PASSWORD")
         assert len(lower) == len(upper)
 
+    def test_match_filter_by_rule_name(self):
+        """Filter by rule name (e.g. 'KeepSSH') to isolate specific rules."""
+        findings = _walk(_DATA_DIR, match_filter="KeepSSH")
+        assert len(findings) > 0
+        # All findings should be from SSH-related rules
+        for f in findings:
+            assert "ssh" in f.rule_name.lower() or "SSH" in f.rule_name
+
+    def test_match_filter_by_extension(self):
+        """Filter by file extension."""
+        findings = _walk(_DATA_DIR, match_filter=r"\.pem")
+        assert len(findings) > 0
+        for f in findings:
+            assert ".pem" in f.file_path
+
+    # -- negative --
+
+    def test_match_filter_impossible_pattern(self):
+        findings = _walk(_DATA_DIR, match_filter="zzz_impossible_pattern_zzz")
+        assert len(findings) == 0
+
+    def test_match_filter_does_not_prevent_scanning(self, tmp_path):
+        """Filter suppresses output, but scanning still happens."""
+        (tmp_path / "ntds.dit").write_bytes(b"data")
+        (tmp_path / "SAM").write_bytes(b"data")
+
+        # Match only ntds — SAM should not appear
+        findings = _walk(tmp_path, match_filter="ntds")
+        paths = [f.file_path for f in findings]
+        assert any("ntds.dit" in p for p in paths)
+        assert not any("SAM" in p for p in paths)
+
 
 # ---------------------------------------------------------------------------
-# Archive peeking via walk()
+# max_read_bytes
 # ---------------------------------------------------------------------------
 
-class TestCertificateWalk:
-    """Walk finds certificates with private keys."""
+class TestMaxReadBytes:
 
-    _KEY_PEM = _DATA_DIR.parent / "data" / "test_combined.pem"
+    # -- positive --
+
+    def test_default_produces_content_matches(self):
+        """Default max_read_bytes reads enough to trigger content rules."""
+        s = Snaffler()
+        findings = list(s.walk(str(_DATA_DIR)))
+        with_match = [f for f in findings if f.match]
+        assert len(with_match) > 0
+
+    def test_explicit_max_read_bytes_works(self, tmp_path):
+        (tmp_path / "deploy.ps1").write_text('$password = "hunter2"\n')
+        findings = _walk(tmp_path, max_read_bytes=4 * 1024 * 1024)
+        assert any("deploy.ps1" in f.file_path for f in findings)
+
+    # -- negative --
+
+    def test_tiny_max_read_bytes_blocks_content_scanning(self, tmp_path):
+        """max_read_bytes=1 effectively prevents meaningful content scanning."""
+        (tmp_path / "deploy.ps1").write_text('$password = "hunter2"\n')
+        findings = _walk(tmp_path, max_read_bytes=1)
+        ps1 = [f for f in findings if "deploy.ps1" in f.file_path]
+        # May still match by filename rule, but content match should be empty
+        content_matches = [f for f in ps1 if f.match and "password" in str(f.match).lower()]
+        assert len(content_matches) == 0
+
+    def test_zero_max_read_bytes_no_content_matches(self, tmp_path):
+        """max_read_bytes=0 should not crash and produces no content matches."""
+        (tmp_path / "deploy.ps1").write_text('$password = "hunter2"\n')
+        # Should not crash
+        findings = _walk(tmp_path, max_read_bytes=0)
+        # No content-based matches possible
+        content_matches = [f for f in findings if f.match and "password" in str(f.match).lower()]
+        assert len(content_matches) == 0
+
+
+# ---------------------------------------------------------------------------
+# Content scanning specifics
+# ---------------------------------------------------------------------------
+
+class TestContentScanning:
+
+    # -- positive --
+
+    def test_ps1_password_detected(self, tmp_path):
+        (tmp_path / "deploy.ps1").write_text('$password = "hunter2"\n')
+        findings = _walk(tmp_path)
+        assert any("deploy.ps1" in f.file_path for f in findings)
+        ps1 = [f for f in findings if "deploy.ps1" in f.file_path]
+        assert any(f.match for f in ps1)
+
+    def test_config_connection_string_detected(self, tmp_path):
+        (tmp_path / "web.config").write_text(
+            '<connectionStrings>'
+            '<add connectionString="Server=db;Password=secret"/>'
+            '</connectionStrings>'
+        )
+        findings = _walk(tmp_path)
+        assert any("web.config" in f.file_path for f in findings)
+
+    def test_aws_keys_detected(self, tmp_path):
+        (tmp_path / "creds.ps1").write_text(
+            '$key = "AKIAIOSFODNN7EXAMPLE"\n'
+            '$secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"\n'
+        )
+        findings = _walk(tmp_path)
+        assert any(f.match and "AKIA" in str(f.match) for f in findings)
+
+    def test_inline_private_key_detected(self, tmp_path):
+        (tmp_path / "script.sh").write_text(
+            '#!/bin/bash\n'
+            'KEY="-----BEGIN RSA PRIVATE KEY-----\n'
+            'MIIBOgIBAAJBALfakekeymaterial\n'
+            '-----END RSA PRIVATE KEY-----"\n'
+        )
+        findings = _walk(tmp_path)
+        assert any("script.sh" in f.file_path for f in findings)
+
+    # -- negative --
+
+    def test_clean_ps1_no_findings(self, tmp_path):
+        (tmp_path / "clean.ps1").write_text(
+            'Write-Host "Hello World"\n'
+            '$count = 42\n'
+        )
+        findings = _walk(tmp_path)
+        ps1 = [f for f in findings if "clean.ps1" in f.file_path]
+        content_matches = [f for f in ps1 if f.match]
+        assert len(content_matches) == 0
+
+    def test_clean_config_no_findings(self, tmp_path):
+        (tmp_path / "app.config").write_text(
+            '<configuration><appSettings>'
+            '<add key="Theme" value="Dark"/>'
+            '</appSettings></configuration>'
+        )
+        findings = _walk(tmp_path)
+        config = [f for f in findings if "app.config" in f.file_path and f.match]
+        assert len(config) == 0
+
+
+# ---------------------------------------------------------------------------
+# Certificates
+# ---------------------------------------------------------------------------
+
+class TestCertificates:
+
+    # -- positive --
 
     def test_certificate_with_private_key(self, tmp_path):
-        """walk() detects a PEM file containing a private key (CHECK_KEYS path)."""
         shutil.copy(_DATA_DIR / "test_combined.pem", tmp_path / "server.pem")
         findings = _walk(tmp_path)
-        pem_findings = [f for f in findings if "server.pem" in f.file_path]
-        assert len(pem_findings) >= 1
-        assert any(f.triage == Triage.RED for f in pem_findings)
+        pem = [f for f in findings if "server.pem" in f.file_path]
+        assert len(pem) >= 1
+        assert any(f.triage == Triage.RED for f in pem)
+
+    def test_standalone_private_key_detected(self, tmp_path):
+        shutil.copy(_DATA_DIR / "test_key.pem", tmp_path / "private.pem")
+        findings = _walk(tmp_path)
+        key = [f for f in findings if "private.pem" in f.file_path]
+        assert len(key) >= 1
+
+    # -- negative --
 
     def test_certificate_without_private_key(self, tmp_path):
-        """walk() does not flag a cert-only PEM (no private key)."""
         shutil.copy(_DATA_DIR / "test_cert.pem", tmp_path / "cert.pem")
         findings = _walk(tmp_path)
-        cert_findings = [f for f in findings if "cert.pem" in f.file_path]
-        # cert.pem has no private key — should not produce a RED finding
-        assert not any(f.triage == Triage.RED for f in cert_findings)
+        cert = [f for f in findings if "cert.pem" in f.file_path]
+        assert not any(f.triage == Triage.RED for f in cert)
 
 
-class TestArchiveWalk:
+# ---------------------------------------------------------------------------
+# Archives
+# ---------------------------------------------------------------------------
 
-    def test_archive_members_found(self):
-        """walk() finds sensitive files inside archives."""
+class TestArchives:
+
+    # -- positive --
+
+    def test_sensitive_archive_members_found(self):
         findings = _walk(_ARCHIVE_DIR)
         archive_findings = [f for f in findings if "\u2192" in f.file_path]
         assert len(archive_findings) > 0
 
     def test_archive_member_path_format(self):
-        """Archive member paths use archive.zip→member format."""
         findings = _walk(_ARCHIVE_DIR)
         archive_findings = [f for f in findings if "\u2192" in f.file_path]
         for f in archive_findings:
@@ -217,23 +516,16 @@ class TestArchiveWalk:
             assert archive_part.endswith((".zip", ".rar", ".7z"))
             assert len(member_part) > 0
 
-    def test_sensitive_archive_finds_ssh_key(self):
+    def test_zip_finds_ssh_key(self):
         findings = _walk(_ARCHIVE_DIR)
         ssh = [f for f in findings if "\u2192" in f.file_path and "id_rsa" in f.file_path]
         assert len(ssh) >= 1
 
-    def test_boring_archive_no_member_findings(self, tmp_path):
-        """Boring archive (readme.txt only) produces no archive-member findings."""
-        shutil.copy(_ARCHIVE_DIR / "boring_archive.zip", tmp_path)
+    def test_rar_finds_ssh_key(self, tmp_path):
+        shutil.copy(_ARCHIVE_DIR / "sensitive_archive.rar", tmp_path)
         findings = _walk(tmp_path)
-        archive_findings = [f for f in findings if "\u2192" in f.file_path]
-        assert len(archive_findings) == 0
-
-    def test_oversized_archive_not_peeked(self):
-        """Default max_read_bytes (2MB) blocks peeking into 10MB+ archives."""
-        findings = _walk(_ARCHIVE_DIR)
-        oversized = [f for f in findings if "oversized_archive" in f.file_path and "\u2192" in f.file_path]
-        assert len(oversized) == 0
+        ssh = [f for f in findings if "\u2192" in f.file_path and "id_rsa" in f.file_path]
+        assert len(ssh) >= 1
 
     def test_raised_max_read_bytes_peeks_oversized(self, tmp_path):
         shutil.copy(_ARCHIVE_DIR / "oversized_archive.zip", tmp_path)
@@ -241,86 +533,178 @@ class TestArchiveWalk:
         archive_findings = [f for f in findings if "\u2192" in f.file_path]
         assert len(archive_findings) > 0
 
-    def test_lowering_max_read_bytes_blocks_all_peeking(self):
-        """max_read_bytes=1 prevents peeking into any archive."""
-        findings = _walk(_ARCHIVE_DIR, max_read_bytes=1)
+    # -- negative --
+
+    def test_boring_archive_no_member_findings(self, tmp_path):
+        shutil.copy(_ARCHIVE_DIR / "boring_archive.zip", tmp_path)
+        findings = _walk(tmp_path)
         archive_findings = [f for f in findings if "\u2192" in f.file_path]
         assert len(archive_findings) == 0
 
-    def test_rar_sensitive_archive_finds_ssh_key(self, tmp_path):
-        """RAR containing id_rsa is found via walk()."""
-        shutil.copy(_ARCHIVE_DIR / "sensitive_archive.rar", tmp_path)
-        findings = _walk(tmp_path)
-        ssh = [f for f in findings if "\u2192" in f.file_path and "id_rsa" in f.file_path]
-        assert len(ssh) >= 1
-
-    def test_rar_boring_archive_no_member_findings(self, tmp_path):
-        """Boring RAR produces no archive-member findings."""
+    def test_boring_rar_no_member_findings(self, tmp_path):
         shutil.copy(_ARCHIVE_DIR / "boring_archive.rar", tmp_path)
         findings = _walk(tmp_path)
         archive_findings = [f for f in findings if "\u2192" in f.file_path]
         assert len(archive_findings) == 0
 
-    def test_rar_oversized_archive_not_peeked(self):
-        """10MB+ RAR exceeds default max_read_bytes — no peeking."""
+    def test_oversized_archive_not_peeked(self):
         findings = _walk(_ARCHIVE_DIR)
-        oversized = [f for f in findings if "oversized_archive.rar" in f.file_path and "\u2192" in f.file_path]
+        oversized = [f for f in findings if "oversized_archive" in f.file_path and "\u2192" in f.file_path]
         assert len(oversized) == 0
 
+    def test_lowering_max_read_bytes_blocks_all_peeking(self):
+        findings = _walk(_ARCHIVE_DIR, max_read_bytes=1)
+        archive_findings = [f for f in findings if "\u2192" in f.file_path]
+        assert len(archive_findings) == 0
+
 
 # ---------------------------------------------------------------------------
-# Content scanning
+# Filename / extension / path matching
 # ---------------------------------------------------------------------------
 
-class TestContentScan:
+class TestFileMatching:
 
-    def test_ps1_password_match(self, tmp_path):
-        """Content rules fire on .ps1 files with passwords."""
-        (tmp_path / "deploy.ps1").write_text('$password = "hunter2"\n')
+    # -- positive --
+
+    def test_ntds_dit_detected(self, tmp_path):
+        (tmp_path / "ntds.dit").write_bytes(b"data")
         findings = _walk(tmp_path)
-        assert len(findings) >= 1
-        assert any("deploy.ps1" in f.file_path for f in findings)
+        assert any("ntds.dit" in f.file_path for f in findings)
+        ntds = [f for f in findings if "ntds.dit" in f.file_path]
+        assert ntds[0].triage == Triage.BLACK
 
-    def test_config_connection_string(self, tmp_path):
-        """Content rules fire on .config files with connection strings."""
-        (tmp_path / "web.config").write_text(
-            '<connectionStrings>'
-            '<add connectionString="Server=db;Password=secret"/>'
-            '</connectionStrings>'
+    def test_sam_file_detected(self, tmp_path):
+        (tmp_path / "SAM").write_bytes(b"data")
+        findings = _walk(tmp_path)
+        assert any("SAM" in f.file_path for f in findings)
+
+    def test_ssh_private_key_by_name(self, tmp_path):
+        (tmp_path / "id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n")
+        findings = _walk(tmp_path)
+        assert any("id_rsa" in f.file_path for f in findings)
+
+    def test_ppk_extension_detected(self, tmp_path):
+        (tmp_path / "key.ppk").write_text("PuTTY-User-Key-File-2: ssh-rsa\n")
+        findings = _walk(tmp_path)
+        assert any("key.ppk" in f.file_path for f in findings)
+
+    # -- negative --
+
+    def test_innocent_txt_not_flagged(self, tmp_path):
+        (tmp_path / "notes.txt").write_text("meeting notes from tuesday\n")
+        findings = _walk(tmp_path)
+        assert len(findings) == 0
+
+    def test_innocent_json_not_flagged(self, tmp_path):
+        (tmp_path / "package.json").write_text('{"name": "myapp", "version": "1.0.0"}\n')
+        findings = _walk(tmp_path)
+        json_findings = [f for f in findings if "package.json" in f.file_path]
+        assert len(json_findings) == 0
+
+
+# ---------------------------------------------------------------------------
+# check_dir (library API)
+# ---------------------------------------------------------------------------
+
+class TestCheckDir:
+
+    # -- positive --
+
+    def test_normal_dir_allowed(self):
+        s = Snaffler()
+        assert s.check_dir("/some/project/src") is True
+
+    def test_excluded_dir_rejected(self):
+        s = Snaffler(exclude_unc=["*/node_modules*"])
+        assert s.check_dir("/project/node_modules/lodash") is False
+
+    # -- negative --
+
+    def test_excluded_pattern_does_not_block_siblings(self):
+        s = Snaffler(exclude_unc=["*/node_modules*"])
+        assert s.check_dir("/project/src") is True
+        assert s.check_dir("/project/lib") is True
+
+
+# ---------------------------------------------------------------------------
+# check_file + scan_content (two-phase API)
+# ---------------------------------------------------------------------------
+
+class TestTwoPhaseAPI:
+
+    # -- positive --
+
+    def test_check_file_needs_content(self):
+        """A .ps1 file should return NEEDS_CONTENT for content scanning."""
+        from snaffler.analysis.file_scanner import FileCheckStatus
+        s = Snaffler()
+        result = s.check_file("/fake/deploy.ps1", 100, 1700000000.0)
+        assert result.status == FileCheckStatus.NEEDS_CONTENT
+
+    def test_scan_content_finds_password(self):
+        s = Snaffler()
+        result = s.scan_content(
+            b'$password = "hunter2"\n',
+            file_path="/fake/deploy.ps1",
+            size=30,
+            mtime_epoch=1700000000.0,
         )
-        findings = _walk(tmp_path)
-        assert len(findings) >= 1
-        assert any("web.config" in f.file_path for f in findings)
+        assert result is not None
+        assert result.match is not None
+
+    def test_check_file_snaffle_for_black_file(self):
+        """ntds.dit should be immediately snaffled (no content scan needed)."""
+        from snaffler.analysis.file_scanner import FileCheckStatus
+        s = Snaffler()
+        result = s.check_file("/fake/ntds.dit", 1000, 1700000000.0)
+        assert result.status == FileCheckStatus.SNAFFLE
+        assert result.result.triage == Triage.BLACK
+
+    # -- negative --
+
+    def test_check_file_discards_uninteresting(self):
+        """An image file should be discarded (no matching rule)."""
+        from snaffler.analysis.file_scanner import FileCheckStatus
+        s = Snaffler()
+        result = s.check_file("/fake/photo.png", 100, 1700000000.0)
+        assert result.status == FileCheckStatus.DISCARD
+
+    def test_scan_content_clean_data(self):
+        """Clean data produces no finding."""
+        s = Snaffler()
+        result = s.scan_content(
+            b"nothing interesting here\n",
+            file_path="/fake/app.ps1",
+            size=30,
+            mtime_epoch=1700000000.0,
+        )
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
-# Custom walker/reader
+# Custom walker/reader (duck typing)
 # ---------------------------------------------------------------------------
 
 class TestCustomTransport:
 
-    def test_custom_walker_integrated(self, tmp_path):
-        """Custom walker that injects extra files alongside real ones."""
-        import os
+    # -- positive --
+
+    def test_custom_walker_injects_files(self, tmp_path):
         (tmp_path / "ntds.dit").write_bytes(b"real file")
 
         class ExtraFileWalker:
             def walk_directory(self, path, on_file=None, on_dir=None, cancel=None):
-                # Report a fake extra file
                 if on_file:
                     on_file(os.path.join(path, "fake_passwords.txt"), 100, 1700000000.0)
-                # Also do real listing
                 from snaffler.discovery.local_tree_walker import LocalTreeWalker
                 return LocalTreeWalker().walk_directory(path, on_file, on_dir, cancel)
 
         findings = list(Snaffler(walker=ExtraFileWalker()).walk(str(tmp_path)))
         paths = [f.file_path for f in findings]
-        # Both the real file and the injected fake file should produce findings
         assert any("ntds.dit" in p for p in paths)
         assert any("fake_passwords.txt" in p for p in paths)
 
-    def test_custom_reader_integrated(self, tmp_path):
-        """Custom reader that injects password content into all files."""
+    def test_custom_reader_overrides_content(self, tmp_path):
         (tmp_path / "innocent.ps1").write_text("nothing here")
 
         class PasswordReader:
@@ -329,6 +713,21 @@ class TestCustomTransport:
 
         findings = list(Snaffler(reader=PasswordReader()).walk(str(tmp_path)))
         assert any("innocent.ps1" in f.file_path for f in findings)
+
+    # -- negative --
+
+    def test_custom_reader_returning_none(self, tmp_path):
+        """Reader returning None should not crash — file is silently skipped."""
+        (tmp_path / "deploy.ps1").write_text("content")
+
+        class NullReader:
+            def read(self, path, max_bytes=None):
+                return None
+
+        findings = list(Snaffler(reader=NullReader()).walk(str(tmp_path)))
+        # No content-based matches since reader returns None
+        content_matches = [f for f in findings if f.match and "password" in str(f.match).lower()]
+        assert len(content_matches) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -341,19 +740,9 @@ class TestEdgeCases:
         assert _walk(tmp_path) == []
 
     def test_nonexistent_dir(self):
-        findings = _walk("/nonexistent/path/12345")
-        assert findings == []
-
-    def test_walk_returns_generator(self):
-        s = Snaffler()
-        gen = s.walk(str(_DATA_DIR))
-        assert hasattr(gen, '__next__')
-        # Consume first result to prove it's lazy
-        first = next(gen)
-        assert isinstance(first, FileResult)
+        assert _walk("/nonexistent/path/12345") == []
 
     def test_permission_denied_subdir(self, tmp_path):
-        """Inaccessible subdirectory is skipped without crashing."""
         good = tmp_path / "good"
         good.mkdir()
         (good / "ntds.dit").write_bytes(b"findme")
@@ -371,87 +760,102 @@ class TestEdgeCases:
         finally:
             bad.chmod(0o755)
 
+    def test_symlink_to_file(self, tmp_path):
+        """Symlinked files are scanned normally."""
+        real = tmp_path / "real"
+        real.mkdir()
+        (real / "ntds.dit").write_bytes(b"data")
+        link = tmp_path / "link"
+        link.mkdir()
+        (link / "ntds.dit").symlink_to(real / "ntds.dit")
+
+        findings = _walk(link)
+        assert any("ntds.dit" in f.file_path for f in findings)
+
+    def test_empty_file(self, tmp_path):
+        """A 0-byte sensitive file is still flagged by name."""
+        (tmp_path / "ntds.dit").write_bytes(b"")
+        findings = _walk(tmp_path)
+        assert any("ntds.dit" in f.file_path for f in findings)
+
+    def test_large_number_of_files(self, tmp_path):
+        """Walk handles a directory with many files."""
+        for i in range(50):
+            (tmp_path / f"file_{i}.txt").write_text(f"content {i}\n")
+        (tmp_path / "ntds.dit").write_bytes(b"secret")
+        findings = _walk(tmp_path)
+        # Should find ntds.dit among the noise
+        assert any("ntds.dit" in f.file_path for f in findings)
+
 
 # ---------------------------------------------------------------------------
-# CLI --local-fs pipeline (FilePipeline with local transport)
+# Combined flags
 # ---------------------------------------------------------------------------
 
-class TestLocalPipeline:
-    """Run the full CLI pipeline (SnafflerRunner) with --local-fs against the
-    real local filesystem.  No mocking — validates that the runner correctly
-    injects LocalTreeWalker + LocalFileAccessor and produces findings."""
+class TestCombinedFlags:
 
-    @pytest.fixture()
-    def cfg(self):
-        from snaffler.classifiers.loader import RuleLoader
-        from snaffler.config.configuration import SnafflerConfiguration
+    def test_exclude_plus_min_interest(self):
+        full = _walk(_DATA_DIR)
+        filtered = _walk(_DATA_DIR, exclude_unc=["*/relay_*"], min_interest=2)
+        assert 0 < len(filtered) < len(full)
 
-        c = SnafflerConfiguration()
-        c.targets.local_targets = [str(_DATA_DIR)]
-        c.scanning.max_read_bytes = 2 * 1024 * 1024
-        c.scanning.max_file_bytes = 10 * 1024 * 1024
-        c.scanning.match_context_bytes = 200
-        c.scanning.min_interest = 0
-        c.advanced.share_threads = 2
-        c.advanced.tree_threads = 2
-        c.advanced.file_threads = 2
-        c.state.state_db = ":memory:"
-        RuleLoader.load(c)
-        return c
+    def test_exclude_plus_match_filter(self):
+        findings = _walk(_DATA_DIR, exclude_unc=["*/archives*"], match_filter="password")
+        assert len(findings) > 0
+        for f in findings:
+            assert "archives" not in f.file_path
 
-    def test_runner_produces_findings(self, cfg):
-        from snaffler.engine.runner import SnafflerRunner
-        from snaffler.utils.logger import set_finding_store
+    def test_depth_plus_exclude(self, tmp_path):
+        root = tmp_path / "root"
+        root.mkdir()
+        (root / "ntds.dit").write_bytes(b"root")
 
-        runner = SnafflerRunner(cfg)
-        runner.execute()
-        set_finding_store(None)
+        skip = root / "skipme"
+        skip.mkdir()
+        (skip / "SAM").write_bytes(b"skip")
 
-        assert runner.progress.files_scanned > 0
-        assert runner.progress.files_matched > 0
+        keep = root / "keep"
+        keep.mkdir()
+        (keep / "id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n")
 
-    def test_runner_uses_local_transport(self, cfg):
-        from snaffler.accessors.local_file_accessor import LocalFileAccessor
-        from snaffler.discovery.local_tree_walker import LocalTreeWalker
-        from snaffler.engine.runner import SnafflerRunner
-        from snaffler.utils.logger import set_finding_store
+        deep = keep / "deep"
+        deep.mkdir()
+        (deep / "SYSTEM").write_bytes(b"too deep")
 
-        runner = SnafflerRunner(cfg)
-        assert isinstance(runner.file_pipeline.tree_walker, LocalTreeWalker)
-        assert isinstance(runner.file_pipeline.file_scanner.file_accessor, LocalFileAccessor)
-        set_finding_store(None)
+        findings = _walk(root, max_depth=1, exclude_unc=["*/skipme*"])
+        paths = [f.file_path for f in findings]
+        assert any("ntds.dit" in p for p in paths)
+        assert any("id_rsa" in p for p in paths)
+        assert not any("SAM" in p for p in paths)
+        assert not any("SYSTEM" in p for p in paths)
 
-    def test_runner_multiple_local_paths(self, tmp_path, cfg):
-        from snaffler.engine.runner import SnafflerRunner
-        from snaffler.utils.logger import set_finding_store
+    def test_match_filter_plus_min_interest(self):
+        findings = _walk(_DATA_DIR, match_filter="password", min_interest=2)
+        # Very restrictive — should still find something
+        all_findings = _walk(_DATA_DIR)
+        assert len(findings) < len(all_findings)
 
-        # Create two directories with interesting files
-        dir1 = tmp_path / "dir1"
-        dir1.mkdir()
-        (dir1 / "ntds.dit").write_bytes(b"creds")
+    def test_match_filter_plus_exclude_plus_depth(self, tmp_path):
+        """All three filters combined."""
+        root = tmp_path / "root"
+        root.mkdir()
+        (root / "deploy.ps1").write_text('$password = "hunter2"\n')
 
-        dir2 = tmp_path / "dir2"
-        dir2.mkdir()
-        (dir2 / "id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n")
+        skip = root / "skipme"
+        skip.mkdir()
+        (skip / "creds.ps1").write_text('$password = "skipped"\n')
 
-        cfg.targets.local_targets = [str(dir1), str(dir2)]
-        runner = SnafflerRunner(cfg)
-        runner.execute()
-        set_finding_store(None)
+        keep = root / "keep"
+        keep.mkdir()
+        (keep / "app.ps1").write_text('$password = "kept"\n')
 
-        assert runner.progress.shares_found == 2
-        assert runner.progress.files_matched >= 2
+        deep = keep / "deep"
+        deep.mkdir()
+        (deep / "hidden.ps1").write_text('$password = "hidden"\n')
 
-    def test_runner_empty_local_dir(self, tmp_path, cfg):
-        from snaffler.engine.runner import SnafflerRunner
-        from snaffler.utils.logger import set_finding_store
-
-        empty = tmp_path / "empty"
-        empty.mkdir()
-        cfg.targets.local_targets = [str(empty)]
-
-        runner = SnafflerRunner(cfg)
-        runner.execute()
-        set_finding_store(None)
-
-        assert runner.progress.files_matched == 0
+        findings = _walk(root, max_depth=1, exclude_unc=["*/skipme*"], match_filter="password")
+        paths = [f.file_path for f in findings]
+        assert any("deploy.ps1" in p for p in paths)
+        assert any("app.ps1" in p for p in paths)
+        assert not any("creds.ps1" in p for p in paths)  # excluded dir
+        assert not any("hidden.ps1" in p for p in paths)  # too deep

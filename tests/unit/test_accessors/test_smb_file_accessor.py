@@ -22,8 +22,9 @@ def make_smb_mock(data=b"testdata"):
     return smb
 
 
-def make_accessor(smb_mock):
+def make_accessor(smb_mock, max_file_bytes=10485760):
     cfg = MagicMock()
+    cfg.scanning.max_file_bytes = max_file_bytes
 
     with patch(
         "snaffler.accessors.smb_file_accessor.SMBTransport"
@@ -83,7 +84,7 @@ def test_copy_to_local_success(tmp_path):
         dest_root=tmp_path,
     )
 
-    expected = tmp_path / "srv" / "share" / "dir\\file.txt"
+    expected = tmp_path / "srv" / "share" / "dir" / "file.txt"
 
     assert expected.exists()
     assert expected.read_bytes() == b"PAYLOAD"
@@ -140,6 +141,7 @@ def test_smb_reconnect_on_dead_connection():
     smb_new = make_smb_mock(b"NEW")
 
     cfg = MagicMock()
+    cfg.scanning.max_file_bytes = 10485760
 
     with patch(
         "snaffler.accessors.smb_file_accessor.SMBTransport"
@@ -163,3 +165,62 @@ def test_read_invalid_path():
     accessor = make_accessor(smb)
 
     assert accessor.read("INVALID") is None
+
+
+def test_copy_to_local_backslash_directory_structure(tmp_path):
+    """B2: Backslash-separated SMB paths must create proper directory hierarchy on Linux."""
+    accessor = make_accessor(make_smb_mock())
+    accessor.read = MagicMock(return_value=b"PAYLOAD")
+
+    # smb_path will contain backslashes from impacket
+    accessor.copy_to_local(
+        file_path="//srv/share/deep/nested/dir/file.txt",
+        dest_root=tmp_path,
+    )
+
+    expected = tmp_path / "srv" / "share" / "deep" / "nested" / "dir" / "file.txt"
+    assert expected.exists()
+    assert expected.read_bytes() == b"PAYLOAD"
+
+
+def test_copy_to_local_single_level_backslash(tmp_path):
+    """B2: Single backslash level also works."""
+    accessor = make_accessor(make_smb_mock())
+    accessor.read = MagicMock(return_value=b"DATA")
+
+    accessor.copy_to_local(
+        file_path="//srv/share/file.txt",
+        dest_root=tmp_path,
+    )
+
+    expected = tmp_path / "srv" / "share" / "file.txt"
+    assert expected.exists()
+    assert expected.read_bytes() == b"DATA"
+
+
+def test_read_with_max_bytes_none():
+    """B4: read() with max_bytes=None should use configured max_file_bytes, not 0."""
+    data_content = b"ABCDEFGHIJ"
+    smb = MagicMock()
+    smb.getServerName.return_value = "TESTSERVER"
+    smb.connectTree.return_value = 1
+    smb.openFile.return_value = 1
+    smb.closeFile.return_value = None
+    smb.readFile.return_value = data_content
+
+    cfg = MagicMock()
+    cfg.scanning.max_file_bytes = 10485760  # 10MB
+
+    with patch(
+        "snaffler.accessors.smb_file_accessor.SMBTransport"
+    ) as transport:
+        transport.return_value.connect.return_value = smb
+        accessor = SMBFileAccessor(cfg)
+
+    result = accessor.read("//srv/share/file.bin")
+
+    assert result == data_content
+    # Should have called readFile with the configured max, not 0
+    smb.readFile.assert_called_once()
+    _, kwargs = smb.readFile.call_args
+    assert kwargs["bytesToRead"] == 10485760

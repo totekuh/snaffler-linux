@@ -17,7 +17,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.4.1"  # fallback for PyInstaller builds
+        return "1.4.2"  # fallback for PyInstaller builds
 
 
 def _version_callback(value: bool):
@@ -29,70 +29,6 @@ def _version_callback(value: bool):
 app = typer.Typer(
     add_completion=False,
     help="Snaffler Linux – Find credentials and sensitive data on Windows SMB shares",
-    epilog="""
-\b
-Examples:
-  Domain discovery (auto-find all computers + shares):
-    snaffler -d CORP.LOCAL -u jsmith -p 'P@ssw0rd'
-    snaffler -d CORP.LOCAL -u admin -p 'P@ssw0rd' --dc-host dc01.corp.local
-
-  Domain-joined with Kerberos (ccache from kinit/Rubeus):
-    export KRB5CCNAME=/tmp/krb5cc_jsmith
-    snaffler -d CORP.LOCAL -k --use-kcache --dc-host dc01.corp.local
-
-  Pass-the-Hash:
-    snaffler -d CORP.LOCAL -u admin --hash aad3b435b51404eeaad3b435b51404ee -c DC01
-
-  Local account auth (omit -d to authenticate against the target's local SAM):
-    snaffler -u Administrator --hash aad3b435b51404eeaad3b435b51404ee -c 10.0.0.5
-    snaffler -u Administrator -p 'P@ssw0rd' --unc //10.0.0.5/C$
-
-  Target specific computers:
-    snaffler -u admin -p 'P@ssw0rd' -c FILESERVER01
-    snaffler -u admin -p 'P@ssw0rd' -c 10.0.0.0/24
-    snaffler -u admin -p 'P@ssw0rd' --computer-file targets.txt
-
-  Direct UNC paths:
-    snaffler -u admin -p 'P@ssw0rd' --unc //fileserver/share
-    snaffler -u admin -p 'P@ssw0rd' --unc //fs1/data --unc //fs2/backup
-
-  Local filesystem scan (no auth required):
-    snaffler --local-fs /mnt/share
-    snaffler --local-fs /home --local-fs /var --exclude-unc '*/node_modules/*'
-
-  Pipe NXC share output:
-    nxc smb targets.txt -u admin -p pass --shares | snaffler -u admin -p pass --stdin
-
-  Through a SOCKS proxy (e.g. Chisel):
-    snaffler -d CORP.LOCAL -u admin -p pass --socks socks5://127.0.0.1:1080 --ns 10.10.10.1
-
-  Custom DNS (resolve via DC):
-    snaffler -d CORP.LOCAL -u admin -p pass --ns 10.10.10.1
-
-  Host exclusions:
-    snaffler -d CORP.LOCAL -u admin -p pass --exclusions skip_hosts.txt
-
-  Path exclusions:
-    snaffler -d CORP.LOCAL -u admin -p pass --exclude-unc '*/Windows/*' --exclude-unc '*/Temp/*'
-
-  Filter shares:
-    snaffler -u admin -p pass -c FILESERVER --share 'IT*' --exclude-share 'IPC$'
-
-  Output & filtering:
-    snaffler -d CORP.LOCAL -u admin -p pass -o results.json
-    snaffler -d CORP.LOCAL -u admin -p pass -o findings.tsv -b 2
-    snaffler -d CORP.LOCAL -u admin -p pass --match 'password|secret'
-
-  Download matched files:
-    snaffler -d CORP.LOCAL -u admin -p pass -m ./loot
-
-  Resume interrupted scan:
-    snaffler -d CORP.LOCAL -u admin -p pass --state scan.db
-    snaffler -d CORP.LOCAL -u admin -p pass --state scan.db --fresh  # restart clean
-
-  Web dashboard:
-    snaffler -d CORP.LOCAL -u admin -p pass --web --web-port 9090
-""",
 )
 app.add_typer(results_app, name="results")
 
@@ -224,8 +160,8 @@ def main(
         ),
         exclude_unc: Optional[List[str]] = typer.Option(
             None,
-            "--exclude-unc",
-            help="Skip paths matching glob pattern against full UNC path (case-insensitive, repeatable)",
+            "--exclude-unc", "--exclude-path",
+            help="Skip paths matching glob pattern (case-insensitive, repeatable). Works with both UNC and local paths.",
             rich_help_panel="Targeting",
         ),
         exclusions_file: Optional[Path] = typer.Option(

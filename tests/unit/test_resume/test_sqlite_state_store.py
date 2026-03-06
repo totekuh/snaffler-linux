@@ -861,6 +861,58 @@ def test_sqlite_store_drops_legacy_tables():
 # ---------- migration: done column added to existing tables ----------
 
 
+def test_load_unchecked_files_returns_same_data():
+    """B3: load_unchecked_files with cursor-based iteration returns same results as fetchall."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        # Insert many files
+        files = [
+            (f"//HOST/SHARE/file_{i}.txt", "//HOST/SHARE", i * 10, float(i))
+            for i in range(200)
+        ]
+        store.store_files(files)
+
+        unchecked = store.load_unchecked_files()
+        assert len(unchecked) == 200
+
+        # Verify structure: list of (unc_path, size, mtime) tuples
+        paths = {u[0] for u in unchecked}
+        assert "//HOST/SHARE/file_0.txt" in paths
+        assert "//HOST/SHARE/file_199.txt" in paths
+
+        # Each tuple has 3 elements
+        for item in unchecked:
+            assert len(item) == 3
+
+        # Mark some checked, verify count decreases
+        for i in range(50):
+            store.mark_file_checked(f"//HOST/SHARE/file_{i}.txt")
+
+        unchecked = store.load_unchecked_files()
+        assert len(unchecked) == 150
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_load_unchecked_files_empty():
+    """B3: load_unchecked_files returns empty list on fresh DB."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+        assert store.load_unchecked_files() == []
+        store.close()
+    finally:
+        os.unlink(path)
+
+
 def test_sqlite_store_migration_adds_done_column():
     """Opening a DB with old target_computer/target_share (no done col) adds it."""
     with tempfile.NamedTemporaryFile(delete=False) as f:

@@ -369,3 +369,109 @@ def test_setup_logging_called_before_rule_loader():
     assert "rule_load" in call_order
     assert call_order.index("setup_logging") < call_order.index("rule_load"), \
         f"setup_logging must be called before RuleLoader.load, got: {call_order}"
+
+
+# ---------- --exclude-path / --exclude-unc alias ----------
+
+def test_cli_exclude_unc_sets_config():
+    """--exclude-unc populates cfg.targets.exclude_unc."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--local-fs", "/tmp",
+                "--exclude-unc", "*/Windows/*",
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert "*/Windows/*" in cfg.targets.exclude_unc
+
+
+def test_cli_exclude_path_alias_sets_config():
+    """--exclude-path is an alias for --exclude-unc."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--local-fs", "/tmp",
+                "--exclude-path", "*/node_modules/*",
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert "*/node_modules/*" in cfg.targets.exclude_unc
+
+
+def test_cli_exclude_path_multiple():
+    """Multiple --exclude-path flags accumulate."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--local-fs", "/tmp",
+                "--exclude-path", "*/Windows/*",
+                "--exclude-path", "*/Temp/*",
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert "*/Windows/*" in cfg.targets.exclude_unc
+    assert "*/Temp/*" in cfg.targets.exclude_unc
+
+
+def test_cli_exclude_path_mixed_with_exclude_unc():
+    """--exclude-path and --exclude-unc can be mixed (they're the same option)."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--local-fs", "/tmp",
+                "--exclude-unc", "*/Windows/*",
+                "--exclude-path", "*/Temp/*",
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert "*/Windows/*" in cfg.targets.exclude_unc
+    assert "*/Temp/*" in cfg.targets.exclude_unc
+
+
+def test_cli_exclude_path_with_unc_targets():
+    """--exclude-path also works with UNC targets, not just --local-fs."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--unc", "//HOST/SHARE",
+                "--exclude-path", "*/Windows/*",
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert "*/Windows/*" in cfg.targets.exclude_unc

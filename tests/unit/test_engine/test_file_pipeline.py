@@ -1052,3 +1052,179 @@ def test_exclude_unc_share_root_updates_progress():
     # Both shares should count toward total, both should be "walked"
     assert progress.shares_total == 2
     assert progress.shares_walked == 2
+
+
+# ---------- share error vs progress ----------
+
+def test_share_with_error_still_counted_as_walked_in_progress():
+    """A share where some dirs fail should still increment shares_walked
+    in progress (the share IS walked, just not fully clean)."""
+    cfg = make_cfg()
+    progress = ProgressState()
+
+    pipeline = FilePipeline(cfg, progress=progress)
+
+    def walk_partial_fail(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            if on_dir:
+                on_dir("//HOST/SHARE/subdir")
+            return ["//HOST/SHARE/subdir"]
+        raise ConnectionError("access denied")
+
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=walk_partial_fail
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # Progress should show the share as walked even though a subdir errored
+    assert progress.shares_walked == 1
+
+
+def test_share_with_error_not_marked_done_in_resume():
+    """A share where some dirs fail should NOT be marked done in the resume DB
+    (so failed dirs retry on next run)."""
+    cfg = make_cfg()
+    progress = ProgressState()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state, progress=progress)
+
+    def walk_partial_fail(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            if on_dir:
+                on_dir("//HOST/SHARE/subdir")
+            return ["//HOST/SHARE/subdir"]
+        raise ConnectionError("access denied")
+
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=walk_partial_fail
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # Progress shows walked, but resume DB does NOT mark done
+    assert progress.shares_walked == 1
+    state.mark_share_done.assert_not_called()
+
+
+def test_clean_share_both_walked_and_marked_done():
+    """A share with zero errors should be counted in progress AND marked done."""
+    cfg = make_cfg()
+    progress = ProgressState()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state, progress=progress)
+
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=make_walk_side_effect([("//HOST/SHARE/a.txt", 100, 0.0)])
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    assert progress.shares_walked == 1
+    state.mark_share_done.assert_called_once_with("//HOST/SHARE")
+
+
+def test_mixed_clean_and_errored_shares_progress():
+    """With 3 shares (1 clean, 1 errored, 1 clean), progress shows all 3 walked
+    but only 2 marked done in resume DB."""
+    cfg = make_cfg()
+    progress = ProgressState()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state, progress=progress)
+
+    def walk_mixed(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE2":
+            # This share's root walk returns a subdir that fails
+            if on_dir:
+                on_dir("//HOST/SHARE2/bad")
+            return ["//HOST/SHARE2/bad"]
+        if path == "//HOST/SHARE2/bad":
+            raise PermissionError("access denied")
+        # SHARE1 and SHARE3 are clean
+        if on_file:
+            on_file(f"{path}/file.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk_mixed)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE1", "//HOST/SHARE2", "//HOST/SHARE3"])
+
+    # All 3 shares should show as walked in progress
+    assert progress.shares_walked == 3
+
+    # Only SHARE1 and SHARE3 should be marked done in resume DB
+    done_calls = sorted(c[0][0] for c in state.mark_share_done.call_args_list)
+    assert done_calls == ["//HOST/SHARE1", "//HOST/SHARE3"]
+
+
+def test_all_shares_errored_progress_still_complete():
+    """Even if every share has errors, progress shows them all as walked."""
+    cfg = make_cfg()
+    progress = ProgressState()
+
+    pipeline = FilePipeline(cfg, progress=progress)
+
+    def walk_all_fail(path, on_file=None, on_dir=None, cancel=None):
+        raise ConnectionError("host unreachable")
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk_all_fail)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE1", "//HOST/SHARE2"])
+
+    assert progress.shares_walked == 2
+
+
+def test_shares_with_errors_case_insensitive():
+    """Error tracking uses lowercased share roots consistently."""
+    cfg = make_cfg()
+    progress = ProgressState()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state, progress=progress)
+
+    def walk_case_error(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//Host/Share":
+            if on_dir:
+                on_dir("//Host/Share/SubDir")
+            return ["//Host/Share/SubDir"]
+        if path == "//Host/Share/SubDir":
+            raise PermissionError("denied")
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk_case_error)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//Host/Share"])
+
+    # Progress should count it as walked
+    assert progress.shares_walked == 1
+    # But NOT marked done in resume DB (had error)
+    state.mark_share_done.assert_not_called()

@@ -131,15 +131,15 @@ class ShareFinder:
             logger.debug(f"[{target}] Share enumeration failed: {e}")
         return shares
 
-    def _classify_share(self, unc_path: str) -> bool:
+    def _classify_share(self, unc_path: str):
         """
-        Apply share classifiers to determine if share should be discarded
-
-        Args:
-            unc_path: UNC path of the share (e.g., //computer/share)
+        Apply share classifiers to determine if share should be discarded.
 
         Returns:
-            True if share should be discarded, False otherwise
+            ``"discard"`` — share should be skipped entirely.
+            A ``ClassifierRule`` — share matched a SNAFFLE rule (log after
+            confirming readability).
+            ``None`` — no rule matched.
         """
         from snaffler.classifiers.rules import MatchLocation, MatchAction
 
@@ -156,13 +156,11 @@ class ShareFinder:
             if classifier.matches(share_name):
                 if classifier.match_action == MatchAction.DISCARD:
                     logger.debug(f"Share {unc_path} matched DISCARD rule: {classifier.rule_name}")
-                    return True
+                    return "discard"
                 elif classifier.match_action == MatchAction.SNAFFLE:
-                    # Log the finding — readability is checked later in get_computer_shares()
-                    logger.info(f"[{classifier.triage.label}] [{classifier.rule_name}] Share: {unc_path}")
-                    return False
+                    return classifier
 
-        return False
+        return None
 
     def get_computer_shares(self, computer: str) -> List[Tuple[str, ShareInfo]]:
         """
@@ -226,15 +224,22 @@ class ShareFinder:
                 logger.debug(f"Scanning first {share_name} replica at {unc_path}")
 
             # --- Share classifiers ---
-            if apply_classifiers and self._classify_share(unc_path):
-                logger.debug(f"Share {unc_path} discarded by classifier")
-                continue
+            snaffle_rule = None
+            if apply_classifiers:
+                classification = self._classify_share(unc_path)
+                if classification == "discard":
+                    logger.debug(f"Share {unc_path} discarded by classifier")
+                    continue
+                if classification is not None:
+                    snaffle_rule = classification
 
             # --- Readability check ---
             share.readable = self.is_share_readable(computer, share.name)
 
             if share.readable:
                 logger.debug(f"Readable share: {unc_path}")
+                if snaffle_rule:
+                    logger.info(f"[{snaffle_rule.triage.label}] [{snaffle_rule.rule_name}] Share: {unc_path}")
                 results.append((unc_path, share))
             else:
                 logger.debug(f"Unreadable share (access denied): {unc_path}")

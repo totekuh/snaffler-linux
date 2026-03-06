@@ -1468,3 +1468,200 @@ class TestArchivePeek:
         # Some findings come from regular files
         regular_findings = [f for f in findings if "\u2192" not in f]
         assert len(regular_findings) > 0
+
+
+class TestDashedHostname:
+    """B1: Hostnames with dashes (e.g. dc-01) must not crash expand_targets."""
+
+    def _make_dns_mock(self, resolvable: dict):
+        def fake(host, port, family=0, type_=0, proto=0, flags=0):
+            if host in resolvable:
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (resolvable[host], port))]
+            raise socket.gaierror(8, "not found")
+        return fake
+
+    def test_dashed_hostname_processed_by_share_pipeline(self, cfg):
+        """A hostname like dc-01 passes through expand_targets and share pipeline."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.shares.SMBTransport") as t:
+            t.return_value.connect.return_value = smb
+            paths = SharePipeline(cfg=cfg).run(["dc-01"])
+
+        assert paths == ["//dc-01/TestShare"]
+
+    def test_dashed_hostname_end_to_end_via_runner(self, cfg):
+        """Runner with --computer dc-01 completes without crashing."""
+        cfg.targets.computer_targets = ["DC-01"]
+
+        smb = _make_smb_mock(_DATA_DIR)
+        resolvable = {"DC-01": "10.0.0.99"}
+
+        with patch("snaffler.engine.runner.socket.getaddrinfo",
+                    side_effect=self._make_dns_mock(resolvable)), \
+             patch("snaffler.engine.runner.socket.create_connection",
+                   return_value=MagicMock()), \
+             patch("snaffler.discovery.shares.SMBTransport") as st, \
+             patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
+             patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
+             patch("snaffler.engine.runner.print_completion_stats"):
+
+            st.return_value.connect.return_value = smb
+            tt.return_value.connect.return_value = smb
+            at.return_value.connect.return_value = smb
+
+            runner = SnafflerRunner(cfg)
+            runner.execute()
+
+        p = runner.progress
+        assert p.dns_resolved == 1
+        assert p.computers_done == 1
+        assert p.shares_found >= 1
+        assert p.files_scanned > 0
+        assert p.files_matched > 0
+
+    def test_multiple_dashed_hostnames(self, cfg):
+        """Multiple dashed hostnames all resolve and produce shares."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with patch("snaffler.discovery.shares.SMBTransport") as t:
+            t.return_value.connect.return_value = smb
+            progress = ProgressState()
+            paths = SharePipeline(cfg=cfg, progress=progress).run(
+                ["dc-01", "file-srv-02", "app-node-3"]
+            )
+
+        assert len(paths) == 3
+        assert "//dc-01/TestShare" in paths
+        assert "//file-srv-02/TestShare" in paths
+        assert "//app-node-3/TestShare" in paths
+        assert progress.computers_done == 3
+
+
+class TestDownloadBackslashPaths:
+    """B2: copy_to_local must produce forward-slash directory structure on Linux."""
+
+    def test_download_creates_correct_directory_structure(self, cfg):
+        """Downloaded files use forward-slash path components, not flat backslash names."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with tempfile.TemporaryDirectory() as download_dir:
+            cfg.scanning.snaffle = True
+            cfg.scanning.snaffle_path = download_dir
+
+            with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
+                    patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+                tt.return_value.connect.return_value = smb
+                at.return_value.connect.return_value = smb
+
+                progress = ProgressState()
+                matched = FilePipeline(cfg=cfg, progress=progress).run(
+                    ["//10.0.0.1/TestShare"]
+                )
+
+            assert matched > 0
+
+            # Walk the download directory and verify structure
+            download_root = Path(download_dir)
+            downloaded_files = list(download_root.rglob("*"))
+            downloaded_files = [f for f in downloaded_files if f.is_file()]
+
+            # Should have downloaded at least one file
+            assert len(downloaded_files) > 0
+
+            # Verify no path component contains backslashes
+            for f in downloaded_files:
+                rel = f.relative_to(download_root)
+                for part in rel.parts:
+                    assert "\\" not in part, (
+                        f"Backslash in path component: {part} (full: {rel})"
+                    )
+
+            # Verify directory structure: server/share/relative_path
+            for f in downloaded_files:
+                rel = f.relative_to(download_root)
+                # Should be at least server/share/filename (3 levels)
+                assert len(rel.parts) >= 3, (
+                    f"Downloaded file too shallow: {rel} (expected server/share/file)"
+                )
+                assert rel.parts[0] == "FAKEHOST" or rel.parts[0] == "10.0.0.1"
+
+
+class TestResumeUncheckedFilesBatch:
+    """B3: load_unchecked_files uses fetchmany — verify batch processing works."""
+
+    def test_resume_processes_all_unchecked_files(self, cfg):
+        """Insert unchecked files into resume DB, then resume and verify all processed."""
+        smb = _make_smb_mock(_DATA_DIR)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as f:
+            db_path = f.name
+
+        try:
+            cfg.state.state_db = db_path
+
+            # Run 1: full scan to populate the DB with files
+            with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
+                    patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+                tt.return_value.connect.return_value = smb
+                at.return_value.connect.return_value = smb
+
+                progress1 = ProgressState()
+                state1 = ScanState(SQLiteStateStore(db_path))
+                FilePipeline(cfg=cfg, progress=progress1, state=state1).run(
+                    ["//10.0.0.1/TestShare"]
+                )
+                state1.close()
+
+            scanned_run1 = progress1.files_scanned
+            assert scanned_run1 > 0
+
+            # Now manually reset files/dirs/shares to simulate an interrupted scan
+            store = SQLiteStateStore(db_path)
+            with store.lock:
+                store.conn.execute("UPDATE target_file SET checked = 0")
+                store.conn.execute("UPDATE target_dir SET walked = 0")
+                store.conn.execute("UPDATE target_share SET done = 0")
+                store.conn.commit()
+
+                # Verify there are unchecked files
+                count = store.conn.execute(
+                    "SELECT COUNT(*) FROM target_file WHERE checked = 0"
+                ).fetchone()[0]
+            assert count > 0
+
+            # Verify load_unchecked_files returns them all (exercises fetchmany)
+            unchecked = store.load_unchecked_files()
+            assert len(unchecked) == count
+            store.close()
+
+            # Run 2: resume — dirs are unwalked so they will be re-walked,
+            # re-discovering files and scanning the unchecked ones
+            smb2 = _make_smb_mock(_DATA_DIR)
+
+            with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
+                    patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at:
+                tt.return_value.connect.return_value = smb2
+                at.return_value.connect.return_value = smb2
+
+                progress2 = ProgressState()
+                state2 = ScanState(SQLiteStateStore(db_path))
+                FilePipeline(cfg=cfg, progress=progress2, state=state2).run(
+                    ["//10.0.0.1/TestShare"]
+                )
+                state2.close()
+
+            # All files should have been re-scanned
+            assert progress2.files_scanned == scanned_run1
+
+            # Verify all files are now checked in the DB
+            store3 = SQLiteStateStore(db_path)
+            remaining = store3.load_unchecked_files()
+            assert len(remaining) == 0
+            store3.close()
+        finally:
+            import os
+            for suffix in ("", "-wal", "-shm"):
+                p = db_path + suffix
+                if os.path.exists(p):
+                    os.unlink(p)

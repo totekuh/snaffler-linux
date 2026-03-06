@@ -343,7 +343,7 @@ class FilePipeline:
                                     logger.debug(f"Error walking {dir_unc}: {e}")
                                     subdirs = []
                                     if share_root:
-                                        shares_with_errors.add(share_root)
+                                        shares_with_errors.add(share_root.lower())
 
                                 # Only mark walked on success — failed dirs retry on resume
                                 if self.state and dir_unc and walk_ok:
@@ -374,11 +374,13 @@ class FilePipeline:
                                 if share_root:
                                     share_pending[share_root.lower()] -= 1
                                     if share_pending[share_root.lower()] == 0:
-                                        # Don't mark shares with errors as done — retry on resume
-                                        if share_root not in shares_with_errors:
+                                        # Always count as walked for progress display
+                                        if self.progress:
+                                            self.progress.shares_walked += 1
+                                        # Only mark done in resume DB if no errors
+                                        # (shares with errors retry failed dirs on resume)
+                                        if share_root.lower() not in shares_with_errors:
                                             walked_shares.append(share_root)
-                                            if self.progress:
-                                                self.progress.shares_walked += 1
 
                     except KeyboardInterrupt:
                         shutdown.set()

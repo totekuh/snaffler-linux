@@ -22,7 +22,7 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler).
 - Host exclusion file (`--exclusions`)
 - Optional file download ("snaffling")
 - Resume support via SQLite state database (auto-resume on existing DB)
-- Share and path filtering by glob pattern (`--share`, `--exclude-share`, `--exclude-unc`)
+- Share and path filtering by glob pattern (`--share`, `--exclude-share`, `--exclude-unc` / `--exclude-path`)
 - Compatible with original and custom TOML rule sets
 - Deterministic, ingestion-friendly logging (plain / JSON / TSV)
 - Custom DNS resolution (`--nameserver`) for internal AD hostname resolution through SOCKS tunnels
@@ -173,10 +173,10 @@ Exclude shares and paths by glob:
 ```bash
 snaffler -u USER -p PASS -d DOMAIN.LOCAL \
   --exclude-share "IPC$" --exclude-share "print$" \
-  --exclude-unc "*/Windows/*" --exclude-unc "*/.snapshot/*"
+  --exclude-path "*/Windows/*" --exclude-path "*/.snapshot/*"
 
-# --exclude-unc works with --local-fs too
-snaffler --local-fs /mnt/share --exclude-unc "*/node_modules/*" --exclude-unc "*/.git/*"
+# --exclude-path (alias: --exclude-unc) works with --local-fs too
+snaffler --local-fs /mnt/share --exclude-path "*/node_modules/*" --exclude-path "*/.git/*"
 ```
 
 ### Depth Limiting and Post-Filtering
@@ -342,7 +342,7 @@ for finding in s.walk("C:\\Users"):
 | `max_read_bytes` | `2MB` | Content scan byte limit |
 | `match_context_bytes` | `200` | Context bytes around regex matches |
 | `cert_passwords` | built-in list | Passwords to try on PKCS12 certs |
-| `exclude_unc` | `None` | Glob patterns to skip directories (works on any path format despite the name) |
+| `exclude_unc` | `None` | Glob patterns to skip directories (works on any path format) |
 | `match_filter` | `None` | Regex post-filter on findings |
 | `max_depth` | `None` | Maximum directory recursion depth |
 

@@ -62,7 +62,8 @@ class SMBFileAccessor(FileAccessor):
                     shareMode=FILE_SHARE_READ,
                 )
                 try:
-                    data = smb.readFile(tid, fid, offset=0, bytesToRead=max_bytes or 0)
+                    read_size = max_bytes if max_bytes is not None else self._max_file_bytes
+                    data = smb.readFile(tid, fid, offset=0, bytesToRead=read_size)
                     return data if data else b""
                 finally:
                     smb.closeFile(tid, fid)
@@ -80,7 +81,7 @@ class SMBFileAccessor(FileAccessor):
             return
         server, share, smb_path = parsed
         try:
-            clean = smb_path.lstrip("\\/")
+            clean = smb_path.lstrip("\\/").replace("\\", "/")
             local = (Path(dest_root) / server / share / clean).resolve()
             root = Path(dest_root).resolve()
             if not local.is_relative_to(root):

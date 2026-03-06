@@ -28,8 +28,24 @@ def _expand_single(target: str) -> List[str]:
     if "/" in target:
         return _expand_cidr(target)
 
-    # Dash range
+    # Dash range — but only if both sides look like valid IPs
     if "-" in target:
+        parts = target.split("-", 1)
+        left, right = parts[0].strip(), parts[1].strip()
+        # Full IP range: both sides must be valid IPs
+        if "." in right:
+            try:
+                ipaddress.ip_address(left)
+                ipaddress.ip_address(right)
+            except ValueError:
+                return [target]
+            return _expand_range(target)
+        # Last-octet range: left must be valid IP, right must be numeric
+        try:
+            ipaddress.ip_address(left)
+            int(right)
+        except ValueError:
+            return [target]
         return _expand_range(target)
 
     # Plain hostname or IP — pass through

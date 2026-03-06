@@ -1,6 +1,8 @@
 import logging
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from impacket.smbconnection import SessionError
 
 from snaffler.classifiers.default_rules import get_share_rules
@@ -345,22 +347,22 @@ def test_classify_share_prnproc_dollar_not_flagged():
     finder = ShareFinder(cfg)
 
     with patch.object(finder, "is_share_readable", return_value=True):
-        # _classify_share returns True for DISCARD, False otherwise
-        assert finder._classify_share("//DC01/prnproc$") is False
+        # _classify_share returns None when no rule matched
+        assert finder._classify_share("//DC01/prnproc$") is None
 
 
-def test_classify_share_c_dollar_logged(caplog):
-    """C$ must trigger KeepDollarShares and log the finding."""
+def test_classify_share_c_dollar_returns_rule(caplog):
+    """C$ must trigger KeepDollarShares and return the rule (not log yet)."""
     cfg = make_cfg()
     cfg.rules.share = get_share_rules()
     finder = ShareFinder(cfg)
 
-    with caplog.at_level(logging.INFO, logger="snaffler"):
-        result = finder._classify_share("//DC01/C$")
+    result = finder._classify_share("//DC01/C$")
 
-    assert result is False  # SNAFFLE keeps the share for scanning
-    assert "KeepDollarShares" in caplog.text
-    assert "//DC01/C$" in caplog.text
+    # Returns the classifier rule — logging is deferred until readability is confirmed
+    assert result is not None
+    assert result != "discard"
+    assert result.rule_name == "KeepDollarShares"
 
 
 def test_classify_share_ipc_dollar_discarded():
@@ -369,4 +371,71 @@ def test_classify_share_ipc_dollar_discarded():
     cfg.rules.share = get_share_rules()
     finder = ShareFinder(cfg)
 
-    assert finder._classify_share("//DC01/IPC$") is True
+    assert finder._classify_share("//DC01/IPC$") == "discard"
+
+
+@pytest.mark.parametrize("share_name", ["C$", "ADMIN$"])
+def test_dollar_share_not_logged_when_unreadable(caplog, share_name):
+    """C$/ADMIN$ must NOT produce a Black finding when the share is unreadable."""
+    cfg = make_cfg()
+    cfg.rules.share = get_share_rules()
+    finder = ShareFinder(cfg)
+
+    with patch.object(finder, "enumerate_shares") as mock_enum, \
+         patch.object(finder, "is_share_readable", return_value=False), \
+         caplog.at_level(logging.INFO, logger="snaffler"):
+        mock_enum.return_value = [ShareInfo(share_name, 0x00000000, "")]
+        results = finder.get_computer_shares("DC01")
+
+    assert results == []
+    assert "KeepDollarShares" not in caplog.text
+    assert "[Black]" not in caplog.text
+
+
+@pytest.mark.parametrize("share_name", ["C$", "ADMIN$"])
+def test_dollar_share_logged_when_readable(caplog, share_name):
+    """C$/ADMIN$ must produce a Black finding only when the share IS readable."""
+    cfg = make_cfg()
+    cfg.rules.share = get_share_rules()
+    finder = ShareFinder(cfg)
+
+    with patch.object(finder, "enumerate_shares") as mock_enum, \
+         patch.object(finder, "is_share_readable", return_value=True), \
+         caplog.at_level(logging.INFO, logger="snaffler"):
+        mock_enum.return_value = [ShareInfo(share_name, 0x00000000, "")]
+        results = finder.get_computer_shares("DC01")
+
+    assert len(results) == 1
+    assert "KeepDollarShares" in caplog.text
+    assert f"//DC01/{share_name}" in caplog.text
+
+
+def test_mixed_shares_only_readable_logged(caplog):
+    """When a host has both readable and unreadable dollar shares, only readable ones get logged."""
+    cfg = make_cfg()
+    cfg.rules.share = get_share_rules()
+    finder = ShareFinder(cfg)
+
+    def selective_readable(_computer, share_name):
+        return share_name != "ADMIN$"  # C$ and Users readable, ADMIN$ not
+
+    with patch.object(finder, "enumerate_shares") as mock_enum, \
+         patch.object(finder, "is_share_readable", side_effect=selective_readable), \
+         caplog.at_level(logging.INFO, logger="snaffler"):
+        mock_enum.return_value = [
+            ShareInfo("C$", 0x00000000, "Default share"),
+            ShareInfo("ADMIN$", 0x00000000, "Remote Admin"),
+            ShareInfo("Users", 0x00000000, ""),
+        ]
+        results = finder.get_computer_shares("DC01")
+
+    # C$ and Users are readable, ADMIN$ is not
+    result_names = [info.name for _, info in results]
+    assert "C$" in result_names
+    assert "Users" in result_names
+    assert "ADMIN$" not in result_names
+
+    # Only C$ should have a Black finding logged, not ADMIN$
+    assert caplog.text.count("KeepDollarShares") == 1
+    assert "//DC01/C$" in caplog.text
+    assert "//DC01/ADMIN$" not in caplog.text

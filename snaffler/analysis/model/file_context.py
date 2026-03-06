@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -8,4 +9,4 @@ class FileContext:
     name: str
     ext: str
     size: int
-    modified: datetime
+    modified: Optional[datetime]

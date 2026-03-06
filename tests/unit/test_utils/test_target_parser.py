@@ -63,13 +63,56 @@ class TestDashRange:
         with pytest.raises(ValueError, match="before start"):
             expand_targets(["10.0.0.50-10"])
 
-    def test_invalid_base_ip_raises(self):
-        with pytest.raises(ValueError, match="Invalid IP range"):
-            expand_targets(["999.0.0.1-5"])
+    def test_invalid_base_ip_treated_as_hostname(self):
+        """Invalid IP with dash is treated as a plain hostname, not an error."""
+        result = expand_targets(["999.0.0.1-5"])
+        assert result == ["999.0.0.1-5"]
 
-    def test_non_numeric_end_raises(self):
-        with pytest.raises(ValueError, match="not a number"):
-            expand_targets(["10.0.0.1-abc"])
+    def test_non_numeric_end_treated_as_hostname(self):
+        """IP-like string with non-numeric end is treated as hostname."""
+        result = expand_targets(["10.0.0.1-abc"])
+        assert result == ["10.0.0.1-abc"]
+
+
+class TestHostnamesWithDashes:
+    """B1: Hostnames with dashes must not crash expand_targets."""
+
+    def test_simple_dash_hostname(self):
+        result = expand_targets(["dc-01"])
+        assert result == ["dc-01"]
+
+    def test_fqdn_with_dashes(self):
+        result = expand_targets(["file-server.corp.local"])
+        assert result == ["file-server.corp.local"]
+
+    def test_multiple_dashes(self):
+        result = expand_targets(["my-big-file-server"])
+        assert result == ["my-big-file-server"]
+
+    def test_double_dash(self):
+        result = expand_targets(["host--name"])
+        assert result == ["host--name"]
+
+    def test_trailing_dash(self):
+        result = expand_targets(["host-"])
+        assert result == ["host-"]
+
+    def test_leading_dash(self):
+        result = expand_targets(["-host"])
+        assert result == ["-host"]
+
+    def test_ip_ranges_still_work(self):
+        """IP ranges must still expand correctly after the fix."""
+        result = expand_targets(["10.0.0.1-3"])
+        assert result == ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
+
+    def test_full_ip_ranges_still_work(self):
+        result = expand_targets(["10.0.0.1-10.0.0.2"])
+        assert result == ["10.0.0.1", "10.0.0.2"]
+
+    def test_mixed_hostnames_and_ranges(self):
+        result = expand_targets(["dc-01", "10.0.0.1-2", "file-srv"])
+        assert result == ["dc-01", "10.0.0.1", "10.0.0.2", "file-srv"]
 
 
 class TestPassthrough:

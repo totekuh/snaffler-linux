@@ -382,10 +382,16 @@ class SQLiteStateStore:
 
     def load_unchecked_files(self) -> list:
         with self.lock:
-            rows = self.conn.execute(
+            result = []
+            cursor = self.conn.execute(
                 "SELECT unc_path, size, mtime FROM target_file WHERE checked = 0"
-            ).fetchall()
-            return [(r[0], r[1], r[2]) for r in rows]
+            )
+            while True:
+                batch = cursor.fetchmany(5000)
+                if not batch:
+                    break
+                result.extend((r[0], r[1], r[2]) for r in batch)
+            return result
 
     def count_target_files(self) -> int:
         with self.lock:
