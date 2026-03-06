@@ -123,6 +123,11 @@ def main(
             help="FTP target URL(s) to scan (e.g. ftp://10.0.0.5/data or bare 10.0.0.5)",
             rich_help_panel="Targeting",
         ),
+        ftp_file: Optional[Path] = typer.Option(
+            None, "--ftp-file",
+            help="File containing FTP targets (one per line, same format as --ftp)",
+            rich_help_panel="Targeting",
+        ),
         ftp_tls: bool = typer.Option(
             False, "--ftp-tls",
             help="Use FTPS (FTP over TLS) for --ftp targets",
@@ -414,16 +419,20 @@ def main(
                 raise typer.BadParameter(f"--local-fs path is not a directory: {lp}")
 
     # ---------- FTP TARGETS ----------
+    if ftp and ftp_file:
+        raise typer.BadParameter("Use either --ftp or --ftp-file, not both")
+
+    def _normalize_ftp(raw_url: str) -> str:
+        raw_url = raw_url.strip()
+        if raw_url.startswith("ftp://"):
+            return raw_url.rstrip("/") or raw_url
+        return f"ftp://{raw_url}"
+
     if ftp:
-        from urllib.parse import urlparse as _urlparse
-        parsed_ftp = []
-        for raw in ftp:
-            if raw.startswith("ftp://"):
-                parsed_ftp.append(raw.rstrip("/") or raw)
-            else:
-                # Bare host or host:port — wrap as ftp:// URL
-                parsed_ftp.append(f"ftp://{raw}")
-        cfg.targets.ftp_targets = parsed_ftp
+        cfg.targets.ftp_targets = [_normalize_ftp(r) for r in ftp]
+    if ftp_file:
+        lines = [l.strip() for l in ftp_file.read_text().splitlines() if l.strip() and not l.strip().startswith("#")]
+        cfg.targets.ftp_targets = [_normalize_ftp(r) for r in lines]
     if _explicit("ftp_tls"):
         cfg.targets.ftp_tls = ftp_tls
 

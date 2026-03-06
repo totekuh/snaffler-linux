@@ -174,6 +174,9 @@ snaffler --ftp ftp://10.0.0.5:2121/backup
 # Multiple FTP targets
 snaffler --ftp ftp://10.0.0.5 --ftp ftp://10.0.0.6/docs
 
+# Load targets from file (one per line, same format as --ftp)
+snaffler --ftp-file ftp_targets.txt -u ftpuser -p ftppass
+
 # FTPS (FTP over TLS)
 snaffler --ftp ftp://10.0.0.5 --ftp-tls
 

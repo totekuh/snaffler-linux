@@ -475,3 +475,71 @@ def test_cli_exclude_path_with_unc_targets():
     assert result.exit_code == 0
     cfg = runner_cls.call_args[0][0]
     assert "*/Windows/*" in cfg.targets.exclude_unc
+
+
+# ---------- FTP ----------
+
+def test_cli_ftp_targets():
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        instance = runner_cls.return_value
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--ftp", "ftp://10.0.0.5/data", "--ftp", "10.0.0.6"],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.targets.ftp_targets == ["ftp://10.0.0.5/data", "ftp://10.0.0.6"]
+    instance.execute.assert_called_once()
+
+
+def test_cli_ftp_file(tmp_path):
+    targets = tmp_path / "ftp_targets.txt"
+    targets.write_text("ftp://10.0.0.5/share\n10.0.0.6\n# comment\n\nftp://10.0.0.7:2121\n")
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        instance = runner_cls.return_value
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--ftp-file", str(targets)],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.targets.ftp_targets == [
+        "ftp://10.0.0.5/share",
+        "ftp://10.0.0.6",
+        "ftp://10.0.0.7:2121",
+    ]
+    instance.execute.assert_called_once()
+
+
+def test_cli_ftp_and_ftp_file_exclusive(tmp_path):
+    targets = tmp_path / "ftp_targets.txt"
+    targets.write_text("10.0.0.5\n")
+    with patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        result = runner.invoke(
+            app,
+            base_args() + ["--ftp", "10.0.0.5", "--ftp-file", str(targets)],
+        )
+
+    assert result.exit_code != 0
+    assert "not both" in result.output
+
+
+def test_cli_ftp_exclusive_with_unc():
+    with patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        result = runner.invoke(
+            app,
+            base_args() + ["--ftp", "10.0.0.5", "--unc", "//srv/share"],
+        )
+
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
