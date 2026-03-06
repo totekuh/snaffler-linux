@@ -1,9 +1,9 @@
-snaffler-ng (1.5.0-0kali1) kali-dev; urgency=medium
+snaffler-ng (1.5.1-0kali1) kali-dev; urgency=medium
 
   * FTP server scanning (--ftp) — scan FTP/FTPS servers with the same classification engine
-  * Resume now restores finding counts from previous runs
+  * Add --ftp-file for loading FTP targets from a file
   * Add --ftp-tls for FTP over TLS (FTPS)
-  * Multiple --ftp targets supported, bare hostnames accepted
+  * Resume now restores finding counts from previous runs
 
  -- totekuh <totekuh@protonmail.com>  Fri, 06 Mar 2026 12:00:00 +0000
 
