@@ -7,7 +7,7 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler) — a post-exp
 - **Language**: Python 3.9+
 - **Package manager**: pip / setuptools
 - **Entry point**: `snaffler.cli.main:app` (Typer CLI, registered as `snaffler` console script)
-- **Version**: 1.5.3
+- **Version**: 1.5.4
 - **License**: Apache 2.0
 - **Author**: totekuh
 
@@ -183,6 +183,8 @@ After share discovery completes, `_rebalance_file_threads()` adds the idle share
 
 Thread-local SMB connection caching in `SMBFileAccessor`, `ShareFinder`, and `SMBTreeWalker`.
 
+**Fair-share scheduling** (`--max-threads-per-share`): Limits concurrent tree-walk futures per share so one deep share can't monopolize all tree threads. Excess subdirectories are buffered in per-share `deque`s and drained as futures complete. Share completion requires both `share_pending == 0` AND an empty buffer. `--fast` auto-sets this; `0` = unlimited (default).
+
 FilePipeline uses `wait(FIRST_COMPLETED)` fan-out: each completed directory walk spawns sub-futures for discovered subdirectories, enabling intra-share parallel walking across tree threads. Share completion is tracked per-share via `share_pending` counters. When all futures for a share complete, `shares_walked` increments (for progress display) regardless of errors. Only error-free shares are marked done in the resume DB (`mark_share_done`) — shares with any walk errors have their failed directories retried on resume.
 
 ### Resume Support
@@ -218,6 +220,8 @@ Two auth paths, both in SMBTransport and LDAPTransport:
 ### Path Exclusion
 
 `--exclude-unc` (aliased as `--exclude-path`) accepts glob patterns (repeatable) to skip directories during tree walking. Patterns are matched against the full path (case-insensitive), e.g. `*/Windows/*`, `*/node_modules/*`. Applied to both share roots (in `FilePipeline.run()`) and subdirectories (in `TreeWalker._should_scan_directory()`). Works with UNC, local, and FTP paths. Stored in `config.targets.exclude_unc` as a list of strings. Also available as `exclude_unc` parameter in the library API `Snaffler` constructor.
+
+`--fast` prepends 31 built-in exclusion patterns (`FAST_MODE_EXCLUSIONS` in `config/configuration.py`) that skip known time-waster directories: Windows OS internals (Installer, SoftwareDistribution, Temp, Logs, Prefetch, Fonts, etc.), program/package caches (WindowsApps, Windows Defender, Package Cache), version control internals (.git/objects, .svn, .hg), and build/dependency caches (__pycache__, .tox, .venv, .gradle, .m2, bower_components, .cargo, .npm). User-provided `--exclude-unc` patterns are preserved (appended after fast mode patterns). `--fast` also auto-sets `--max-threads-per-share` for interleaved walking.
 
 ### Finding Post-Filter
 
@@ -268,7 +272,7 @@ Key test directories:
 - `test_cli/` — CLI run (flags, aliases, exclusions), dual output (auto-format), stdin, HTML report rendering, results subcommand
 - `test_config/` — configuration dataclass
 - `test_discovery/` — share finder, tree walker, AD discovery, FTP tree walker
-- `test_engine/` — file pipeline (45 tests: fan-out, resume, max-depth, share error tracking, progress), runner (incl. rescan-unreadable tests), graceful shutdown
+- `test_engine/` — file pipeline (52 tests: fan-out, resume, max-depth, share error tracking, progress, fair-share scheduling), runner (incl. rescan-unreadable tests), graceful shutdown
 - `test_resume/` — scan state, SQLite state store
 - `test_transport/` — SMB, LDAP, SOCKS, FTP transport tests
 - `test_utils/` — hotkeys, nxc parser, progress, target parser
