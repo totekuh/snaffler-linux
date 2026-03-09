@@ -17,7 +17,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.5.3"  # fallback for PyInstaller builds
+        return "1.5.4"  # fallback for PyInstaller builds
 
 
 def _version_callback(value: bool):
@@ -298,6 +298,12 @@ def main(
             help="Maximum directory recursion depth (0 = share root only)",
             rich_help_panel="Scanning",
         ),
+        fast: bool = typer.Option(
+            False,
+            "--fast",
+            help="Skip known time-waster directories and interleave share walking",
+            rich_help_panel="Scanning",
+        ),
         match_filter: Optional[str] = typer.Option(
             None, "--match",
             help="Only output findings matching this regex (applied to path, rule, match, context)",
@@ -315,6 +321,12 @@ def main(
             100,
             "--dns-threads",
             help="Concurrent threads for DNS + port 445 reachability probes (default: 100)",
+            rich_help_panel="Advanced",
+        ),
+        max_threads_per_share: int = typer.Option(
+            0,
+            "--max-threads-per-share",
+            help="Max concurrent tree-walk threads per share (0 = unlimited, --fast auto-sets)",
             rich_help_panel="Advanced",
         ),
         config_file: Optional[Path] = typer.Option(
@@ -522,6 +534,16 @@ def main(
     cfg.advanced.share_threads = per_bucket
     cfg.advanced.tree_threads = per_bucket
     cfg.advanced.file_threads = per_bucket
+
+    if _explicit("max_threads_per_share"):
+        cfg.advanced.max_tree_threads_per_share = max_threads_per_share
+
+    # ---------- --fast mode ----------
+    if fast:
+        from snaffler.config.configuration import FAST_MODE_EXCLUSIONS
+        cfg.targets.exclude_unc = list(FAST_MODE_EXCLUSIONS) + cfg.targets.exclude_unc
+        if not _explicit("max_threads_per_share"):
+            cfg.advanced.max_tree_threads_per_share = max(2, per_bucket // 4)
 
     if _explicit("rule_dir"):
         cfg.rules.rule_dir = f"{rule_dir}"

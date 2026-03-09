@@ -703,3 +703,109 @@ def test_cli_rescan_unreadable_with_exclusions(tmp_path):
     cfg = runner_cls.call_args[0][0]
     assert cfg.targets.rescan_unreadable is True
     assert "DEADHOST" in cfg.targets.exclusions
+
+
+# ---------- --fast ----------
+
+def test_cli_fast_adds_exclusions():
+    """--fast prepends FAST_MODE_EXCLUSIONS to cfg.targets.exclude_unc."""
+    from snaffler.config.configuration import FAST_MODE_EXCLUSIONS
+
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--fast", "--unc", "//HOST/SHARE"],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    for pattern in FAST_MODE_EXCLUSIONS:
+        assert pattern in cfg.targets.exclude_unc
+
+
+def test_cli_fast_sets_max_threads_per_share():
+    """--fast auto-sets max_tree_threads_per_share when not explicitly provided."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--fast", "--unc", "//HOST/SHARE"],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.advanced.max_tree_threads_per_share >= 2
+
+
+def test_cli_fast_preserves_user_exclude_unc():
+    """--fast exclusions are additive with user-provided --exclude-unc."""
+    from snaffler.config.configuration import FAST_MODE_EXCLUSIONS
+
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--fast",
+                "--unc", "//HOST/SHARE",
+                "--exclude-unc", "*/my_custom/*",
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    # User patterns are preserved at end
+    assert "*/my_custom/*" in cfg.targets.exclude_unc
+    # Fast patterns are prepended
+    assert cfg.targets.exclude_unc[0] == FAST_MODE_EXCLUSIONS[0]
+
+
+def test_cli_max_threads_per_share_explicit():
+    """--max-threads-per-share sets the config value."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--unc", "//HOST/SHARE",
+                "--max-threads-per-share", "5",
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.advanced.max_tree_threads_per_share == 5
+
+
+def test_cli_fast_explicit_threads_per_share_overrides():
+    """--fast + explicit --max-threads-per-share: explicit value wins."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--fast",
+                "--unc", "//HOST/SHARE",
+                "--max-threads-per-share", "10",
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.advanced.max_tree_threads_per_share == 10

@@ -22,6 +22,46 @@ DEFAULT_CERT_PASSWORDS: List[str] = [
     "@OurPassword1", "@de08nt2128",
 ]
 
+# Directories skipped by --fast mode.  Massive file counts with near-zero
+# probability of containing credentials or secrets.
+FAST_MODE_EXCLUSIONS: List[str] = [
+    # Windows OS internals
+    "*/Windows/Installer/*",
+    "*/Windows/SoftwareDistribution/*",
+    "*/Windows/Temp/*",
+    "*/Windows/Logs/*",
+    "*/Windows/Prefetch/*",
+    "*/Windows/Panther/*",
+    "*/Windows/inf/*",
+    "*/Windows/Help/*",
+    "*/Windows/Fonts/*",
+    "*/Windows/Cursors/*",
+    "*/Windows/Globalization/*",
+    "*/Windows/IME/*",
+    "*/Windows/Resources/*",
+    "*/Windows/Boot/*",
+    "*/Windows/PolicyDefinitions/*",
+    "*/DriverStore/FileRepository/*",
+    # Program / package caches
+    "*/Program Files/WindowsApps/*",
+    "*/Program Files/Windows Defender/*",
+    "*/ProgramData/Microsoft/Windows Defender/*",
+    "*/ProgramData/Package Cache/*",
+    # Version control internals
+    "*/.git/objects/*",
+    "*/.svn/*",
+    "*/.hg/*",
+    # Build / dependency caches
+    "*/__pycache__/*",
+    "*/.tox/*",
+    "*/.venv/*",
+    "*/.gradle/*",
+    "*/.m2/repository/*",
+    "*/bower_components/*",
+    "*/.cargo/registry/*",
+    "*/.npm/*",
+]
+
 
 # ---------------- AUTH ----------------
 
@@ -110,6 +150,7 @@ class AdvancedConfig:
     tree_threads: int = 20
     file_threads: int = 20
     dns_threads: int = 100
+    max_tree_threads_per_share: int = 0  # 0 = unlimited; >0 caps concurrent walks per share
     stealth: bool = False
 
 

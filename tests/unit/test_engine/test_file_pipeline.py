@@ -13,6 +13,7 @@ def make_cfg():
 
     cfg.advanced.tree_threads = 2
     cfg.advanced.file_threads = 2
+    cfg.advanced.max_tree_threads_per_share = 0  # unlimited by default
 
     cfg.rules.file = []
     cfg.rules.content = []
@@ -1360,3 +1361,206 @@ def test_shares_with_errors_case_insensitive():
     assert progress.shares_walked == 1
     # But NOT marked done in resume DB (had error)
     state.mark_share_done.assert_not_called()
+
+
+# ── fair-share scheduling ──────────────────────────────────────
+
+def test_fair_share_limits_concurrent_walks_per_share():
+    """With max_per_share=1, only one walk runs per share at a time.
+    Both shares must still complete (buffered dirs get drained)."""
+    cfg = make_cfg()
+    cfg.advanced.tree_threads = 4
+    cfg.advanced.max_tree_threads_per_share = 1
+
+    progress = ProgressState()
+    pipeline = FilePipeline(cfg, progress=progress)
+
+    walked = []
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        walked.append(path)
+        if path == "//HOST/SHARE1":
+            if on_dir:
+                on_dir("//HOST/SHARE1/a")
+                on_dir("//HOST/SHARE1/b")
+            return ["//HOST/SHARE1/a", "//HOST/SHARE1/b"]
+        if path == "//HOST/SHARE2":
+            if on_dir:
+                on_dir("//HOST/SHARE2/x")
+            return ["//HOST/SHARE2/x"]
+        if on_file:
+            on_file(f"{path}/file.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE1", "//HOST/SHARE2"])
+
+    # All dirs must be walked despite the per-share limit
+    assert "//HOST/SHARE1/a" in walked
+    assert "//HOST/SHARE1/b" in walked
+    assert "//HOST/SHARE2/x" in walked
+    assert progress.shares_walked == 2
+
+
+def test_fair_share_zero_means_unlimited():
+    """max_per_share=0 disables fair-share (current default behavior)."""
+    cfg = make_cfg()
+    cfg.advanced.tree_threads = 4
+    cfg.advanced.max_tree_threads_per_share = 0
+
+    pipeline = FilePipeline(cfg)
+
+    walked = []
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        walked.append(path)
+        if path == "//HOST/SHARE":
+            return ["//HOST/SHARE/a", "//HOST/SHARE/b", "//HOST/SHARE/c"]
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    assert "//HOST/SHARE/a" in walked
+    assert "//HOST/SHARE/b" in walked
+    assert "//HOST/SHARE/c" in walked
+
+
+def test_fair_share_interleaves_across_shares():
+    """With per-share cap, threads are distributed across multiple shares
+    rather than all piling into one deep share."""
+    cfg = make_cfg()
+    cfg.advanced.tree_threads = 2
+    cfg.advanced.max_tree_threads_per_share = 1
+
+    pipeline = FilePipeline(cfg)
+
+    walked = []
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        walked.append(path)
+        # SHARE1 is deep — produces 5 levels of subdirs
+        if path == "//HOST/SHARE1":
+            return ["//HOST/SHARE1/d1"]
+        if path == "//HOST/SHARE1/d1":
+            return ["//HOST/SHARE1/d1/d2"]
+        if path == "//HOST/SHARE1/d1/d2":
+            return ["//HOST/SHARE1/d1/d2/d3"]
+        # SHARE2 is shallow
+        if path == "//HOST/SHARE2":
+            if on_file:
+                on_file("//HOST/SHARE2/secret.txt", 100, 0.0)
+            return []
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE1", "//HOST/SHARE2"])
+
+    # Both shares must complete
+    assert "//HOST/SHARE2" in walked
+    assert "//HOST/SHARE1/d1/d2/d3" in walked
+
+
+def test_fair_share_share_completion_waits_for_buffer():
+    """A share is not marked done until both pending futures AND buffer are empty."""
+    cfg = make_cfg()
+    cfg.advanced.tree_threads = 2
+    cfg.advanced.max_tree_threads_per_share = 1
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = []
+
+    progress = ProgressState()
+    pipeline = FilePipeline(cfg, state=state, progress=progress)
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            return ["//HOST/SHARE/a", "//HOST/SHARE/b"]
+        if on_file:
+            on_file(f"{path}/file.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # Share should be fully complete (both buffered dirs walked)
+    assert progress.shares_walked == 1
+    state.mark_share_done.assert_called_once_with("//HOST/SHARE")
+
+
+def test_fair_share_with_errors_still_drains_buffer():
+    """Errors in one subdir don't prevent the rest of the buffer from being walked."""
+    cfg = make_cfg()
+    cfg.advanced.tree_threads = 2
+    cfg.advanced.max_tree_threads_per_share = 1
+
+    progress = ProgressState()
+    pipeline = FilePipeline(cfg, progress=progress)
+
+    walked = []
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        walked.append(path)
+        if path == "//HOST/SHARE":
+            return ["//HOST/SHARE/bad", "//HOST/SHARE/good"]
+        if path == "//HOST/SHARE/bad":
+            raise ConnectionError("timeout")
+        if on_file:
+            on_file(f"{path}/file.txt", 100, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # Both dirs should have been attempted
+    assert "//HOST/SHARE/bad" in walked
+    assert "//HOST/SHARE/good" in walked
+    assert progress.shares_walked == 1
+
+
+def test_fair_share_resume_respects_limit():
+    """Unwalked dirs from resume also respect the per-share thread limit."""
+    cfg = make_cfg()
+    cfg.advanced.tree_threads = 2
+    cfg.advanced.max_tree_threads_per_share = 1
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = [
+        "//HOST/SHARE/d1",
+        "//HOST/SHARE/d2",
+        "//HOST/SHARE/d3",
+    ]
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state)
+
+    walked = []
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        walked.append(path)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # All dirs should eventually be walked (buffered then drained)
+    assert "//HOST/SHARE/d1" in walked
+    assert "//HOST/SHARE/d2" in walked
+    assert "//HOST/SHARE/d3" in walked

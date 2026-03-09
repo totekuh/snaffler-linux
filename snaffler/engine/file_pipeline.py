@@ -3,6 +3,7 @@ import logging
 import queue
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from typing import List
 
@@ -147,6 +148,7 @@ class FilePipeline:
 
         self.tree_threads = cfg.advanced.tree_threads
         self.file_threads = cfg.advanced.file_threads
+        self.max_per_share = cfg.advanced.max_tree_threads_per_share  # 0 = unlimited
 
         self.tree_walker = tree_walker or SMBTreeWalker(cfg)
 
@@ -237,7 +239,7 @@ class FilePipeline:
                     # Maps: future → dir UNC, future → share root UNC
                     dir_for_future = {}
                     share_for_future = {}
-                    # Per-share pending futures count
+                    # Per-share pending futures count (active in executor)
                     share_pending = {}
                     # Shares that had at least one walk error (don't mark done)
                     shares_with_errors = set()
@@ -246,6 +248,50 @@ class FilePipeline:
                     pending = set()
                     # Track all submitted dirs to prevent double walks
                     submitted_dirs = set()
+
+                    # --- Fair-share scheduling ---
+                    max_per_share = self.max_per_share  # 0 = unlimited
+                    share_buffer = {}   # share_key -> deque of subdir paths
+                    share_root_map = {} # share_key -> original share_root string
+
+                    def _submit_dir(subdir, share_root, cancel_ev):
+                        """Submit a directory walk, or buffer if share is at its thread limit."""
+                        key = share_root.lower()
+                        if max_per_share and share_pending.get(key, 0) >= max_per_share:
+                            if key not in share_buffer:
+                                share_buffer[key] = deque()
+                            share_buffer[key].append(subdir)
+                            return
+                        fut = executor.submit(
+                            self.tree_walker.walk_directory,
+                            subdir, on_file, on_dir, cancel_ev,
+                        )
+                        dir_for_future[fut] = subdir
+                        share_for_future[fut] = share_root
+                        share_pending[key] = share_pending.get(key, 0) + 1
+                        pending.add(fut)
+
+                    def _drain_buffer(key):
+                        """Submit buffered dirs for a share until at its thread limit."""
+                        if key not in share_buffer:
+                            return
+                        buf = share_buffer[key]
+                        cancel_ev = cancel_events.get(key, threading.Event())
+                        root = share_root_map.get(key)
+                        while buf and (not max_per_share or share_pending.get(key, 0) < max_per_share):
+                            subdir = buf.popleft()
+                            # No submitted_dirs check needed — dirs are dedup'd
+                            # before entering the buffer.
+                            fut = executor.submit(
+                                self.tree_walker.walk_directory,
+                                subdir, on_file, on_dir, cancel_ev,
+                            )
+                            dir_for_future[fut] = subdir
+                            share_for_future[fut] = root
+                            share_pending[key] = share_pending.get(key, 0) + 1
+                            pending.add(fut)
+                        if not buf:
+                            del share_buffer[key]
 
                     # Pre-populate with already-walked dirs from resume DB
                     if self.state:
@@ -264,15 +310,17 @@ class FilePipeline:
                                     self.progress.shares_walked += 1
                                 continue
                         cancel = threading.Event()
-                        cancel_events[path.lower()] = cancel
-                        submitted_dirs.add(path.lower())
+                        key = path.lower()
+                        cancel_events[key] = cancel
+                        share_root_map[key] = path
+                        submitted_dirs.add(key)
                         future = executor.submit(
                             self.tree_walker.walk_directory,
                             path, on_file, on_dir, cancel,
                         )
                         dir_for_future[future] = path
                         share_for_future[future] = path
-                        share_pending[path.lower()] = 1
+                        share_pending[key] = 1
                         pending.add(future)
 
                     # --- Resume: re-walk unwalked directories ---
@@ -280,28 +328,21 @@ class FilePipeline:
                         max_depth = self.cfg.scanning.max_depth
                         for unwalked_dir in self.state.load_unwalked_dirs():
                             share_root = _extract_share_unc(unwalked_dir)
+                            key = share_root.lower()
                             # Only re-walk dirs belonging to shares we're processing
-                            if share_root.lower() not in cancel_events:
+                            if key not in cancel_events:
                                 continue
                             # Skip dirs already submitted (e.g. share roots)
                             if unwalked_dir.lower() in submitted_dirs:
                                 continue
                             # Respect --max-depth on resume
                             if max_depth is not None and share_root:
-                                rel = unwalked_dir.lower()[len(share_root.lower()):].strip("/")
+                                rel = unwalked_dir.lower()[len(key):].strip("/")
                                 depth = len(rel.split("/")) if rel else 0
                                 if depth > max_depth:
                                     continue
                             submitted_dirs.add(unwalked_dir.lower())
-                            cancel = cancel_events[share_root.lower()]
-                            future = executor.submit(
-                                self.tree_walker.walk_directory,
-                                unwalked_dir, on_file, on_dir, cancel,
-                            )
-                            dir_for_future[future] = unwalked_dir
-                            share_for_future[future] = share_root
-                            share_pending[share_root.lower()] = share_pending.get(share_root.lower(), 0) + 1
-                            pending.add(future)
+                            _submit_dir(unwalked_dir, share_root, cancel_events[key])
 
                     # --- Resume: seed unchecked files into queue ---
                     # Seed all unchecked files from the DB. Files from dirs
@@ -365,7 +406,7 @@ class FilePipeline:
                                 if self.state and dir_unc and walk_ok:
                                     self.state.mark_dir_walked(dir_unc)
 
-                                # Submit subdirectories
+                                # Submit subdirectories (or buffer if share at thread limit)
                                 max_depth = self.cfg.scanning.max_depth
                                 for subdir in subdirs:
                                     if subdir.lower() in submitted_dirs:
@@ -376,26 +417,22 @@ class FilePipeline:
                                         if depth > max_depth:
                                             continue
                                     submitted_dirs.add(subdir.lower())
-                                    cancel = cancel_events.get(share_root.lower(), threading.Event())
-                                    sub_future = executor.submit(
-                                        self.tree_walker.walk_directory,
-                                        subdir, on_file, on_dir, cancel,
-                                    )
-                                    dir_for_future[sub_future] = subdir
-                                    share_for_future[sub_future] = share_root
-                                    share_pending[share_root.lower()] = share_pending.get(share_root.lower(), 0) + 1
-                                    pending.add(sub_future)
+                                    cancel_ev = cancel_events.get(share_root.lower(), threading.Event())
+                                    _submit_dir(subdir, share_root, cancel_ev)
 
-                                # Track share completion
+                                # Decrement active count and drain buffer
                                 if share_root:
-                                    share_pending[share_root.lower()] -= 1
-                                    if share_pending[share_root.lower()] == 0:
+                                    key = share_root.lower()
+                                    share_pending[key] -= 1
+                                    _drain_buffer(key)
+                                    # Track share completion — pending == 0 AND buffer empty
+                                    if share_pending.get(key, 0) == 0 and key not in share_buffer:
                                         # Always count as walked for progress display
                                         if self.progress:
                                             self.progress.shares_walked += 1
                                         # Only mark done in resume DB if no errors
                                         # (shares with errors retry failed dirs on resume)
-                                        if share_root.lower() not in shares_with_errors:
+                                        if key not in shares_with_errors:
                                             walked_shares.append(share_root)
 
                     except KeyboardInterrupt:
