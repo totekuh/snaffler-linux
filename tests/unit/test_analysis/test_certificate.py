@@ -163,6 +163,47 @@ def test_pkcs12_with_password():
 # ---------- BUG-K: custom_passwords replaces defaults ----------
 
 
+def test_pem_unsupported_algorithm_falls_through_to_passwords():
+    """BUG-04: UnsupportedAlgorithm from load_pem_private_key should fall
+    through to the password loop, not skip it entirely."""
+    from unittest.mock import patch, MagicMock
+    from cryptography.exceptions import UnsupportedAlgorithm
+
+    key = gen_key()
+    cert = gen_cert(key)
+
+    # Encrypted PEM — needs password to load
+    data = (
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.BestAvailableEncryption(b"mypass"),
+        )
+        + cert.public_bytes(serialization.Encoding.PEM)
+    )
+
+    real_load = serialization.load_pem_private_key
+
+    def load_raising_unsupported(data, password, **kwargs):
+        """First call (password=None) raises UnsupportedAlgorithm;
+        subsequent calls with a password delegate to the real loader."""
+        if password is None:
+            raise UnsupportedAlgorithm("simulated unsupported algo")
+        return real_load(data, password=password, **kwargs)
+
+    checker = CertificateChecker(custom_passwords=["mypass"])
+
+    with patch(
+        "snaffler.analysis.certificates.serialization.load_pem_private_key",
+        side_effect=load_raising_unsupported,
+    ):
+        res = checker.check_certificate(data, "weird_algo.pem")
+
+    # Password loop must have been reached and cracked the key
+    assert "HasPrivateKey" in res
+    assert "PasswordCracked:mypass" in res
+
+
 def test_custom_passwords_replace_defaults():
     """BUG-K: custom_passwords replaces defaults, not appended to them."""
     checker = CertificateChecker(custom_passwords=["foo", "bar"])

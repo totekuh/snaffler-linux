@@ -26,6 +26,7 @@ def _change_log_level(key: str) -> None:
     handler = _get_console_handler()
     if handler is None:
         return
+    key = key.lower()
     if key == "d":
         handler.setLevel(logging.DEBUG)
         logging.getLogger("snaffler").info("Log level \u2192 DEBUG (press 'i' for INFO)")

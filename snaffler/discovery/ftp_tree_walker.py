@@ -118,6 +118,7 @@ class FTPTreeWalker(TreeWalker):
         if not remote_path.endswith("/"):
             remote_path += "/"
 
+        logger.debug(f"Walking directory: {ftp_path}")
         try:
             ftp = self._get_ftp(host, port)
             return self._list_directory(ftp, host, port, remote_path, on_file, on_dir)

@@ -1,3 +1,18 @@
+snaffler-ng (1.5.2-0kali1) kali-dev; urgency=medium
+
+  * Add --max-hosts N flag to cap number of scanned hosts
+  * Cap FTP threads to avoid overwhelming servers with connections
+  * Fix hotkey case sensitivity (D/I now work alongside d/i)
+  * Fix "No credentials" warning appearing in --ftp and --local-fs modes
+  * Fix invalid --match regex crashing mid-scan (now exits with clear error)
+  * Fix UnsupportedAlgorithm crash in PEM key loader
+  * HTML report: finding status tracking, rule filter dropdown, deep search
+  * Live dashboard: rule filter dropdown, deep search, visible/total count
+  * Resume: skip already-walked dirs, respect --max-depth on resume
+  * FTP tree walker now emits debug logs during directory walking
+
+ -- totekuh <totekuh@protonmail.com>  Sun, 09 Mar 2026 12:00:00 +0000
+
 snaffler-ng (1.5.1-0kali1) kali-dev; urgency=medium
 
   * FTP server scanning (--ftp) — scan FTP/FTPS servers with the same classification engine

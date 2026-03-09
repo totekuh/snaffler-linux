@@ -10,6 +10,7 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import pkcs12
+from cryptography.exceptions import UnsupportedAlgorithm
 
 logger = logging.getLogger("snaffler")
 
@@ -134,7 +135,7 @@ class CertificateChecker:
                 cert_data, password=None, backend=default_backend()
             )
             password_used = None
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, UnsupportedAlgorithm):
             # Try with passwords
             for pwd in passwords:
                 try:

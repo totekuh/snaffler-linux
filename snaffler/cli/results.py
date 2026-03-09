@@ -249,12 +249,14 @@ def _render_html(stats: dict, findings: list) -> str:
         match_display = match_text[:120] + ("…" if len(match_text) > 120 else "")
         match_html = f'<span class="match">{esc(match_display)}</span>' if match_text else ""
 
+        finding_id = finding.get("finding_id") or f"f{idx}"
         rows += (
-            f'<tr data-idx="{idx}" data-triage="{esc(triage)}" '
+            f'<tr data-idx="{idx}" data-id="{esc(finding_id)}" data-triage="{esc(triage)}" '
             f'data-rule="{esc(finding["rule_name"])}" '
             f'data-path="{esc(finding["file_path"])}" '
             f'data-size="{esc(size_str)}" '
-            f'data-mtime="{esc(mtime_str)}">'
+            f'data-mtime="{esc(mtime_str)}" data-status="">'
+            f'<td class="status-cell"></td>'
             f"<td>{_badge(triage)}</td>"
             f"<td>{esc(finding['rule_name'])}</td>"
             f'<td class="path">{esc(finding["file_path"])}</td>'
@@ -289,6 +291,8 @@ def _render_html(stats: dict, findings: list) -> str:
   .badge[data-triage].dimmed {{ opacity: 0.35; }}
   #clear-filter {{ background: #333; color: #aaa; border: 1px solid #444; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-family: inherit; font-size: 0.85em; }}
   #clear-filter:hover {{ background: #444; color: #fff; }}
+  #rule-filter {{ padding: 8px 12px; background: #2d2d2d; color: #d4d4d4; border: 1px solid #444; border-radius: 6px; font-family: inherit; font-size: 0.9em; outline: none; max-width: 260px; }}
+  #rule-filter:focus {{ border-color: #888; }}
   #search {{ flex: 1; min-width: 200px; padding: 10px 14px; background: #2d2d2d; color: #d4d4d4; border: 1px solid #444; border-radius: 6px; font-family: inherit; font-size: 1em; outline: none; }}
   #search:focus {{ border-color: #888; }}
   table {{ width: 100%; border-collapse: collapse; }}
@@ -306,6 +310,20 @@ def _render_html(stats: dict, findings: list) -> str:
   .path {{ word-break: break-all; max-width: 320px; }}
   .match {{ display: block; margin-top: 4px; font-size: 0.8em; color: #ffd700; background: #1e1900; border-left: 2px solid #ffd700; padding: 2px 6px; word-break: break-all; }}
   .context {{ font-size: 0.82em; color: #999; max-width: 280px; word-break: break-all; }}
+  .status-cell {{ width: 28px; text-align: center; padding: 8px 4px; }}
+  .status-icon {{ cursor: pointer; font-size: 0.9em; opacity: 0.4; transition: opacity 0.15s; }}
+  .status-icon:hover {{ opacity: 1; }}
+  tr[data-status="done"] {{ opacity: 0.35; }}
+  tr[data-status="done"] .status-icon {{ opacity: 1; }}
+  tr[data-status="review"] .status-icon {{ opacity: 1; }}
+  .status-btns {{ display: flex; gap: 8px; align-items: center; }}
+  .status-btn {{ background: #333; color: #aaa; border: 1px solid #444; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-family: inherit; font-size: 0.85em; transition: all 0.15s; }}
+  .status-btn:hover {{ background: #444; color: #fff; }}
+  .status-btn.active {{ outline: 2px solid #fff; outline-offset: 1px; color: #fff; }}
+  .modal-actions {{ display: flex; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #333; }}
+  .modal-action {{ background: #333; color: #ccc; border: 1px solid #555; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-family: inherit; font-size: 0.85em; }}
+  .modal-action:hover {{ background: #444; color: #fff; }}
+  .modal-action.active {{ background: #444; color: #fff; border-color: #888; }}
   .footer {{ margin-top: 30px; color: #555; font-size: 0.8em; border-top: 1px solid #333; padding-top: 10px; }}
   /* Modal */
   .overlay {{ position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }}
@@ -337,19 +355,26 @@ def _render_html(stats: dict, findings: list) -> str:
 <div class="toolbar">
   <div class="severities">
 {severity_badges}  </div>
+  <select id="rule-filter"><option value="">All Rules</option></select>
+  <div class="status-btns">
+    <button class="status-btn" data-status-filter="review">Review Later</button>
+    <button class="status-btn" data-status-filter="done">Done</button>
+    <button class="status-btn" data-status-filter="hide-done">Hide Done</button>
+  </div>
   <button id="clear-filter">Show All</button>
-  <input id="search" type="text" placeholder="Filter findings..." />
+  <input id="search" type="text" placeholder="Filter findings (searches match &amp; context)..." />
 </div>
 
-<h2>Findings ({fc['total']:,})</h2>
+<h2>Findings (<span id="findings-visible">{fc['total']:,}</span> / {fc['total']:,})</h2>
 <table id="tbl">
 <thead><tr>
-  <th data-col="0">Triage</th>
-  <th data-col="1">Rule</th>
-  <th data-col="2">Path</th>
-  <th data-col="3">Size</th>
-  <th data-col="4">Modified</th>
-  <th data-col="5">Context</th>
+  <th data-col="0"></th>
+  <th data-col="1">Triage</th>
+  <th data-col="2">Rule</th>
+  <th data-col="3">Path</th>
+  <th data-col="4">Size</th>
+  <th data-col="5">Modified</th>
+  <th data-col="6">Context</th>
 </tr></thead>
 <tbody>
 {rows}</tbody>
@@ -384,14 +409,87 @@ def _render_html(stats: dict, findings: list) -> str:
       <label>Context</label>
       <div class="modal-context" id="m-context"></div>
     </div>
+    <div class="modal-actions">
+      <button class="modal-action" id="m-review">Review Later</button>
+      <button class="modal-action" id="m-done">Mark Done</button>
+      <button class="modal-action" id="m-clear-status">Clear Status</button>
+    </div>
   </div>
 </div>
 
 <script>
 var MODAL_DATA = {modal_data_json};
 var activeTriage = null;
+var activeRule = "";
+var activeStatus = "";  // "", "review", "done", "hide-done"
 var TRIAGE_ORDER = {{'Black':0,'Red':1,'Yellow':2,'Green':3}};
 var TRIAGE_COLOR = {{'Black':'#888','Red':'#e74c3c','Yellow':'#f1c40f','Green':'#27ae60'}};
+var STATUS_ICONS = {{'': '\u2022', 'review': '\u2691', 'done': '\u2713'}};
+var currentModalRow = null;
+
+// ── localStorage persistence ─────────────────────────────────────
+var LS_KEY = 'snaffler_finding_status';
+function loadStatuses() {{
+  try {{ return JSON.parse(localStorage.getItem(LS_KEY)) || {{}}; }}
+  catch(e) {{ return {{}}; }}
+}}
+function saveStatuses(obj) {{
+  localStorage.setItem(LS_KEY, JSON.stringify(obj));
+}}
+
+function setStatus(findingId, status) {{
+  var statuses = loadStatuses();
+  if (status) {{ statuses[findingId] = status; }}
+  else {{ delete statuses[findingId]; }}
+  saveStatuses(statuses);
+}}
+
+function getStatus(findingId) {{
+  return loadStatuses()[findingId] || "";
+}}
+
+// ── Status cell rendering ────────────────────────────────────────
+function renderStatusCell(td, status) {{
+  var icon = STATUS_ICONS[status] || STATUS_ICONS[''];
+  var color = status === 'done' ? '#27ae60' : status === 'review' ? '#e67e22' : '#555';
+  var title = status === 'done' ? 'Done' : status === 'review' ? 'Review later' : 'No status';
+  td.innerHTML = '<span class="status-icon" style="color:' + color + '" title="' + title + '">' + icon + '</span>';
+}}
+
+// ── Init: restore statuses from localStorage ─────────────────────
+document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
+  var fid = row.getAttribute('data-id');
+  var status = getStatus(fid);
+  row.setAttribute('data-status', status);
+  renderStatusCell(row.querySelector('.status-cell'), status);
+
+  // Click status icon to cycle: none → review → done → none
+  row.querySelector('.status-icon').addEventListener('click', function(e) {{
+    e.stopPropagation();
+    var cur = row.getAttribute('data-status');
+    var next = cur === '' ? 'review' : cur === 'review' ? 'done' : '';
+    row.setAttribute('data-status', next);
+    setStatus(fid, next);
+    renderStatusCell(row.querySelector('.status-cell'), next);
+    applyFilter();
+  }});
+}});
+
+// Populate rule dropdown from findings
+(function() {{
+  var seen = {{}};
+  var sel = document.getElementById('rule-filter');
+  document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
+    var rule = row.getAttribute('data-rule');
+    if (rule && !seen[rule]) {{
+      seen[rule] = true;
+      var opt = document.createElement('option');
+      opt.value = rule;
+      opt.textContent = rule;
+      sel.appendChild(opt);
+    }}
+  }});
+}})();
 
 // ── Severity filter ──────────────────────────────────────────────
 document.querySelectorAll('.badge[data-triage]').forEach(function(badge) {{
@@ -405,8 +503,30 @@ document.querySelectorAll('.badge[data-triage]').forEach(function(badge) {{
 
 document.getElementById('clear-filter').addEventListener('click', function() {{
   activeTriage = null;
+  activeRule = "";
+  activeStatus = "";
+  document.getElementById('rule-filter').value = "";
+  document.getElementById('search').value = "";
+  document.querySelectorAll('.status-btn').forEach(function(b) {{ b.classList.remove('active'); }});
   syncBadges();
   applyFilter();
+}});
+
+document.getElementById('rule-filter').addEventListener('change', function() {{
+  activeRule = this.value;
+  applyFilter();
+}});
+
+// ── Status filter buttons ────────────────────────────────────────
+document.querySelectorAll('.status-btn[data-status-filter]').forEach(function(btn) {{
+  btn.addEventListener('click', function() {{
+    var f = this.getAttribute('data-status-filter');
+    activeStatus = (activeStatus === f) ? "" : f;
+    document.querySelectorAll('.status-btn').forEach(function(b) {{
+      b.classList.toggle('active', b.getAttribute('data-status-filter') === activeStatus);
+    }});
+    applyFilter();
+  }});
 }});
 
 function syncBadges() {{
@@ -422,11 +542,29 @@ document.getElementById('search').addEventListener('input', applyFilter);
 
 function applyFilter() {{
   var term = document.getElementById('search').value.toLowerCase();
+  var visible = 0;
   document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
     var triageOk = !activeTriage || row.getAttribute('data-triage') === activeTriage;
-    var textOk = !term || row.textContent.toLowerCase().indexOf(term) !== -1;
-    row.style.display = (triageOk && textOk) ? '' : 'none';
+    var ruleOk = !activeRule || row.getAttribute('data-rule') === activeRule;
+    var rowStatus = row.getAttribute('data-status') || '';
+    var statusOk = true;
+    if (activeStatus === 'review') {{ statusOk = rowStatus === 'review'; }}
+    else if (activeStatus === 'done') {{ statusOk = rowStatus === 'done'; }}
+    else if (activeStatus === 'hide-done') {{ statusOk = rowStatus !== 'done'; }}
+    var textOk = true;
+    if (term) {{
+      var idx = parseInt(row.getAttribute('data-idx'));
+      var data = MODAL_DATA[idx] || {{}};
+      var haystack = row.textContent.toLowerCase()
+        + "\\n" + (data.match || "").toLowerCase()
+        + "\\n" + (data.context || "").toLowerCase();
+      textOk = haystack.indexOf(term) !== -1;
+    }}
+    var show = triageOk && ruleOk && statusOk && textOk;
+    row.style.display = show ? '' : 'none';
+    if (show) visible++;
   }});
+  document.getElementById('findings-visible').textContent = visible.toLocaleString();
 }}
 
 // ── Sortable columns ─────────────────────────────────────────────
@@ -434,6 +572,7 @@ var sortCol = -1, sortAsc = true;
 document.querySelectorAll('th[data-col]').forEach(function(th) {{
   th.addEventListener('click', function() {{
     var col = parseInt(this.getAttribute('data-col'));
+    if (col === 0) return;  // status column not sortable
     sortAsc = (sortCol === col) ? !sortAsc : true;
     sortCol = col;
     document.querySelectorAll('th').forEach(function(h) {{ h.classList.remove('sort-asc', 'sort-desc'); }});
@@ -441,7 +580,7 @@ document.querySelectorAll('th[data-col]').forEach(function(th) {{
     var tbody = document.querySelector('#tbl tbody');
     var rows = Array.from(tbody.querySelectorAll('tr'));
     rows.sort(function(a, b) {{
-      if (col === 0) {{
+      if (col === 1) {{
         var ao = TRIAGE_ORDER[a.getAttribute('data-triage')];
         var bo = TRIAGE_ORDER[b.getAttribute('data-triage')];
         return sortAsc ? (ao - bo) : (bo - ao);
@@ -457,8 +596,16 @@ document.querySelectorAll('th[data-col]').forEach(function(th) {{
 // ── Modal ────────────────────────────────────────────────────────
 var overlay = document.getElementById('overlay');
 
+function syncModalActions() {{
+  if (!currentModalRow) return;
+  var s = currentModalRow.getAttribute('data-status') || '';
+  document.getElementById('m-review').classList.toggle('active', s === 'review');
+  document.getElementById('m-done').classList.toggle('active', s === 'done');
+}}
+
 document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
   row.addEventListener('click', function() {{
+    currentModalRow = this;
     var idx = parseInt(this.getAttribute('data-idx'));
     var data = MODAL_DATA[idx];
     var triage = this.getAttribute('data-triage');
@@ -477,9 +624,26 @@ document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
       matchWrap.style.display = 'none';
     }}
     document.getElementById('m-context').textContent = data.context;
+    syncModalActions();
     overlay.classList.remove('hidden');
   }});
 }});
+
+function setModalStatus(status) {{
+  if (!currentModalRow) return;
+  var fid = currentModalRow.getAttribute('data-id');
+  var cur = currentModalRow.getAttribute('data-status');
+  var next = (cur === status) ? '' : status;
+  currentModalRow.setAttribute('data-status', next);
+  setStatus(fid, next);
+  renderStatusCell(currentModalRow.querySelector('.status-cell'), next);
+  syncModalActions();
+  applyFilter();
+}}
+
+document.getElementById('m-review').addEventListener('click', function() {{ setModalStatus('review'); }});
+document.getElementById('m-done').addEventListener('click', function() {{ setModalStatus('done'); }});
+document.getElementById('m-clear-status').addEventListener('click', function() {{ setModalStatus(''); }});
 
 document.getElementById('modal-close').addEventListener('click', function() {{
   overlay.classList.add('hidden');

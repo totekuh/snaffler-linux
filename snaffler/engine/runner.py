@@ -57,14 +57,33 @@ class SnafflerRunner:
         set_finding_store(self.state.store_finding)
         logger.info(f"State DB: {cfg.state.state_db}")
 
-        self.share_pipeline = SharePipeline(
-            cfg=cfg, state=self.state, progress=self.progress,
-        )
+        # SharePipeline is only needed for SMB-based modes
+        if not cfg.targets.ftp_targets and not cfg.targets.local_targets:
+            self.share_pipeline = SharePipeline(
+                cfg=cfg, state=self.state, progress=self.progress,
+            )
+        else:
+            self.share_pipeline = None
 
         # Inject FTP transport when --ftp is used
         if cfg.targets.ftp_targets:
             from snaffler.accessors.ftp_file_accessor import FTPFileAccessor
             from snaffler.discovery.ftp_tree_walker import FTPTreeWalker
+
+            # Cap FTP threads to avoid overwhelming servers with connections.
+            # Each tree + file thread opens its own FTP connection (thread-local
+            # caching), so 20+20 = 40 connections can easily exceed server limits
+            # (vsftpd: 50, proftpd: 30, IIS FTP: 25).  Cap at 4+4 unless the
+            # user explicitly set --max-threads above the default.
+            _FTP_MAX_PER_BUCKET = 4
+            if cfg.advanced.tree_threads > _FTP_MAX_PER_BUCKET:
+                cfg.advanced.share_threads = 0
+                cfg.advanced.tree_threads = _FTP_MAX_PER_BUCKET
+                cfg.advanced.file_threads = _FTP_MAX_PER_BUCKET
+                logger.info(
+                    f"FTP mode: capped threads to {_FTP_MAX_PER_BUCKET} tree + "
+                    f"{_FTP_MAX_PER_BUCKET} file to avoid connection floods"
+                )
 
             tree_walker = FTPTreeWalker(cfg)
             file_accessor = FTPFileAccessor(cfg)
@@ -187,6 +206,16 @@ class SnafflerRunner:
             else:
                 logger.debug(f"Skipping UNC path {p} (excluded by share filter)")
         return filtered
+
+    # ---------- --max-hosts cap ----------
+
+    def _cap_hosts(self, computers: List[str]) -> List[str]:
+        """Limit computer list to --max-hosts if set."""
+        limit = self.cfg.targets.max_hosts
+        if isinstance(limit, int) and len(computers) > limit:
+            logger.info(f"--max-hosts {limit}: capped from {len(computers)} to {limit} hosts")
+            return computers[:limit]
+        return computers
 
     # ---------- exclusion helpers ----------
 
@@ -455,6 +484,24 @@ class SnafflerRunner:
             elif self.cfg.targets.unc_targets:
                 paths = self._filter_paths_by_share(self.cfg.targets.unc_targets)
                 paths = self._filter_paths_by_exclusions(paths)
+                # --max-hosts: keep only paths belonging to the first N hosts
+                limit = self.cfg.targets.max_hosts
+                if isinstance(limit, int):
+                    seen_hosts = {}
+                    capped = []
+                    for p in paths:
+                        if p.startswith("//"):
+                            host = p.strip("/").split("/")[0].lower()
+                        else:
+                            host = p
+                        if host not in seen_hosts:
+                            if len(seen_hosts) >= limit:
+                                continue
+                            seen_hosts[host] = True
+                        capped.append(p)
+                    if len(paths) != len(capped):
+                        logger.info(f"--max-hosts {limit}: kept {len(seen_hosts)} hosts, {len(capped)}/{len(paths)} paths")
+                    paths = capped
                 # Seed progress counters from UNC paths so summary stats
                 # include computer/share counts even without SharePipeline.
                 hosts = {
@@ -474,6 +521,7 @@ class SnafflerRunner:
                 computers = self._apply_exclusions(
                     self.cfg.targets.computer_targets
                 )
+                computers = self._cap_hosts(computers)
                 resolved = self._resolve_computers(computers) if computers else []
                 share_paths = self._resume_share_discovery(resolved) if resolved else []
                 if share_paths:
@@ -485,6 +533,7 @@ class SnafflerRunner:
                 logger.info("Starting full domain discovery")
                 domain_pipeline = DomainPipeline(self.cfg)
                 computers = self._resume_computer_discovery(domain_pipeline)
+                computers = self._cap_hosts(computers)
                 resolved = self._resolve_computers(computers) if computers else []
                 share_paths = self._resume_share_discovery(resolved) if resolved else []
 

@@ -33,6 +33,8 @@ def render_dashboard() -> str:
   .badge[data-triage].dimmed { opacity: 0.35; }
   #clear-filter { background: #333; color: #aaa; border: 1px solid #444; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-family: inherit; font-size: 0.85em; }
   #clear-filter:hover { background: #444; color: #fff; }
+  #rule-filter { padding: 8px 12px; background: #2d2d2d; color: #d4d4d4; border: 1px solid #444; border-radius: 6px; font-family: inherit; font-size: 0.9em; outline: none; max-width: 260px; }
+  #rule-filter:focus { border-color: #888; }
   #search { flex: 1; min-width: 200px; padding: 10px 14px; background: #2d2d2d; color: #d4d4d4; border: 1px solid #444; border-radius: 6px; font-family: inherit; font-size: 1em; outline: none; }
   #search:focus { border-color: #888; }
   table { width: 100%; border-collapse: collapse; }
@@ -96,11 +98,12 @@ def render_dashboard() -> str:
     <div class="severity"><span class="badge" data-triage="Yellow" style="background:#f1c40f">Yellow</span> <span id="sev-yellow">0</span></div>
     <div class="severity"><span class="badge" data-triage="Green" style="background:#27ae60">Green</span> <span id="sev-green">0</span></div>
   </div>
+  <select id="rule-filter"><option value="">All Rules</option></select>
   <button id="clear-filter">Show All</button>
-  <input id="search" type="text" placeholder="Filter findings..." />
+  <input id="search" type="text" placeholder="Filter findings (searches match &amp; context)..." />
 </div>
 
-<h2>Findings (<span id="findings-count">0</span>)</h2>
+<h2>Findings (<span id="findings-visible">0</span> / <span id="findings-count">0</span>)</h2>
 <table id="tbl">
 <thead><tr>
   <th data-col="0">Triage</th>
@@ -153,9 +156,11 @@ def render_dashboard() -> str:
   var TRIAGE_COLOR = {"Black":"#888","Red":"#e74c3c","Yellow":"#f1c40f","Green":"#27ae60"};
 
   var activeTriage = null;
+  var activeRule = "";
   var lastRowid = 0;
-  var findingsData = [];  // stores {match, context} for modal
+  var findingsData = [];  // stores {match, context, rule} for modal + filter
   var seenIds = {};       // finding_id → true (dedup on resume)
+  var knownRules = {};    // rule_name → true (for dropdown dedup)
   var pollActive = true;
   var stopScheduled = false;
   var serverElapsed = 0;
@@ -210,7 +215,15 @@ def render_dashboard() -> str:
 
   document.getElementById("clear-filter").addEventListener("click", function() {
     activeTriage = null;
+    activeRule = "";
+    document.getElementById("rule-filter").value = "";
+    document.getElementById("search").value = "";
     syncBadges();
+    applyFilter();
+  });
+
+  document.getElementById("rule-filter").addEventListener("change", function() {
+    activeRule = this.value;
     applyFilter();
   });
 
@@ -227,11 +240,25 @@ def render_dashboard() -> str:
 
   function applyFilter() {
     var term = document.getElementById("search").value.toLowerCase();
+    var visible = 0;
     document.querySelectorAll("#tbl tbody tr").forEach(function(row) {
       var triageOk = !activeTriage || row.getAttribute("data-triage") === activeTriage;
-      var textOk = !term || row.textContent.toLowerCase().indexOf(term) !== -1;
-      row.style.display = (triageOk && textOk) ? "" : "none";
+      var ruleOk = !activeRule || row.getAttribute("data-rule") === activeRule;
+      var textOk = true;
+      if (term) {
+        // Search visible text + full match/context from data array
+        var idx = parseInt(row.getAttribute("data-idx"));
+        var data = findingsData[idx] || {};
+        var haystack = row.textContent.toLowerCase()
+          + "\n" + (data.match || "").toLowerCase()
+          + "\n" + (data.context || "").toLowerCase();
+        textOk = haystack.indexOf(term) !== -1;
+      }
+      var show = triageOk && ruleOk && textOk;
+      row.style.display = show ? "" : "none";
+      if (show) visible++;
     });
+    document.getElementById("findings-visible").textContent = visible.toLocaleString();
   }
 
   // ── Sortable columns ─────────────────────────────────────────
@@ -312,7 +339,16 @@ def render_dashboard() -> str:
   // ── Add finding row ───────────────────────────────────────────
   function addFindingRow(f) {
     var idx = findingsData.length;
-    findingsData.push({match: f.match_text || "", context: f.context || ""});
+    findingsData.push({match: f.match_text || "", context: f.context || "", rule: f.rule_name || ""});
+
+    // Populate rule dropdown
+    if (f.rule_name && !knownRules[f.rule_name]) {
+      knownRules[f.rule_name] = true;
+      var opt = document.createElement("option");
+      opt.value = f.rule_name;
+      opt.textContent = f.rule_name;
+      document.getElementById("rule-filter").appendChild(opt);
+    }
 
     var tbody = document.querySelector("#tbl tbody");
     var tr = document.createElement("tr");
@@ -369,9 +405,16 @@ def render_dashboard() -> str:
 
     // Apply current filter
     var triageOk = !activeTriage || f.triage === activeTriage;
+    var ruleOk = !activeRule || f.rule_name === activeRule;
     var term = document.getElementById("search").value.toLowerCase();
-    var textOk = !term || tr.textContent.toLowerCase().indexOf(term) !== -1;
-    if (!(triageOk && textOk)) {
+    var textOk = true;
+    if (term) {
+      var haystack = tr.textContent.toLowerCase()
+        + "\n" + (f.match_text || "").toLowerCase()
+        + "\n" + (f.context || "").toLowerCase();
+      textOk = haystack.indexOf(term) !== -1;
+    }
+    if (!(triageOk && ruleOk && textOk)) {
       tr.style.display = "none";
     }
   }
@@ -422,9 +465,9 @@ def render_dashboard() -> str:
       document.getElementById("sev-yellow").textContent = (d.severity_yellow || 0).toLocaleString();
       document.getElementById("sev-green").textContent = (d.severity_green || 0).toLocaleString();
 
-      // Findings count
-      document.getElementById("findings-count").textContent =
-        ((d.severity_black || 0) + (d.severity_red || 0) + (d.severity_yellow || 0) + (d.severity_green || 0)).toLocaleString();
+      // Findings count (total from server)
+      var total = (d.severity_black || 0) + (d.severity_red || 0) + (d.severity_yellow || 0) + (d.severity_green || 0);
+      document.getElementById("findings-count").textContent = total.toLocaleString();
     }).catch(function() {});
   }
 
@@ -442,6 +485,7 @@ def render_dashboard() -> str:
         }
         lastRowid = data.max_rowid || lastRowid;
         sortTable();
+        applyFilter();
       }
     }).catch(function() {});
   }

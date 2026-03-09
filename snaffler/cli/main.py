@@ -17,7 +17,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.5.1"  # fallback for PyInstaller builds
+        return "1.5.2"  # fallback for PyInstaller builds
 
 
 def _version_callback(value: bool):
@@ -183,6 +183,11 @@ def main(
         exclusions_file: Optional[Path] = typer.Option(
             None, "--exclusions",
             help="File of hostnames/IPs to skip (one per line)",
+            rich_help_panel="Targeting",
+        ),
+        max_hosts: Optional[int] = typer.Option(
+            None, "--max-hosts",
+            help="Stop after scanning N hosts (applied after exclusions)",
             rich_help_panel="Targeting",
         ),
 
@@ -404,6 +409,9 @@ def main(
         cfg.targets.exclusions = [
             l.strip().upper() for l in exclusions_file.read_text().splitlines() if l.strip()
         ]
+
+    if _explicit("max_hosts"):
+        cfg.targets.max_hosts = max_hosts
 
     # ---------- LOCAL TARGET VALIDATION ----------
     if cfg.targets.local_targets:

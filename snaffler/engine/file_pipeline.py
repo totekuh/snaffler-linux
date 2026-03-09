@@ -247,6 +247,11 @@ class FilePipeline:
                     # Track all submitted dirs to prevent double walks
                     submitted_dirs = set()
 
+                    # Pre-populate with already-walked dirs from resume DB
+                    if self.state:
+                        for d in self.state.load_walked_dirs():
+                            submitted_dirs.add(d.lower())
+
                     # --- Seed initial share roots ---
                     for path in paths:
                         # Check seed paths against --exclude-unc patterns
@@ -272,6 +277,7 @@ class FilePipeline:
 
                     # --- Resume: re-walk unwalked directories ---
                     if self.state:
+                        max_depth = self.cfg.scanning.max_depth
                         for unwalked_dir in self.state.load_unwalked_dirs():
                             share_root = _extract_share_unc(unwalked_dir)
                             # Only re-walk dirs belonging to shares we're processing
@@ -280,6 +286,12 @@ class FilePipeline:
                             # Skip dirs already submitted (e.g. share roots)
                             if unwalked_dir.lower() in submitted_dirs:
                                 continue
+                            # Respect --max-depth on resume
+                            if max_depth is not None and share_root:
+                                rel = unwalked_dir.lower()[len(share_root.lower()):].strip("/")
+                                depth = len(rel.split("/")) if rel else 0
+                                if depth > max_depth:
+                                    continue
                             submitted_dirs.add(unwalked_dir.lower())
                             cancel = cancel_events[share_root.lower()]
                             future = executor.submit(
@@ -292,18 +304,16 @@ class FilePipeline:
                             pending.add(future)
 
                     # --- Resume: seed unchecked files into queue ---
-                    # Only seed files from shares NOT being actively walked
-                    # (active shares will re-discover their files via walk_directory)
+                    # Seed all unchecked files from the DB. Files from dirs
+                    # being re-walked may also be re-discovered via on_file,
+                    # but the enqueued set + should_skip_file dedup handles that.
                     if self.state:
-                        walked_roots = {p.lower() for p in paths}
                         include_filter = self.cfg.targets.share_filter
                         exclude_filter = self.cfg.targets.exclude_share
                         exclude_dir_patterns = self.cfg.targets.exclude_unc
                         unchecked = self.state.load_unchecked_files()
                         for unc_path, size, mtime in unchecked:
                             file_share = _extract_share_unc(unc_path).lower()
-                            if file_share in walked_roots:
-                                continue  # will be re-discovered by live walk
                             # Respect --share / --exclude-share for DB-seeded files
                             share_name = file_share.rstrip("/").rsplit("/", 1)[-1]
                             if not share_matches_filter(share_name, include_filter, exclude_filter):

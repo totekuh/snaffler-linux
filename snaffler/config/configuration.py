@@ -68,6 +68,8 @@ class TargetingConfig:
     ftp_targets: List[str] = field(default_factory=list)
     ftp_tls: bool = False
 
+    max_hosts: Optional[int] = None
+
 
 # ---------------- SCANNING ----------------
 

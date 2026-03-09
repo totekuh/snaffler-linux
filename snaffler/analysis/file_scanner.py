@@ -64,10 +64,13 @@ class FileScanner:
             custom_passwords=cfg.scanning.cert_passwords
         )
         mf = getattr(cfg.scanning, 'match_filter', None)
-        self._match_re = (
-            re.compile(mf, re.IGNORECASE)
-            if isinstance(mf, str) else None
-        )
+        self._match_re = None
+        if isinstance(mf, str):
+            try:
+                self._match_re = re.compile(mf, re.IGNORECASE)
+            except re.error as e:
+                logger.error(f"Invalid --match regex '{mf}': {e}")
+                raise SystemExit(1)
         self._max_read_bytes = cfg.scanning.max_read_bytes
         self._match_context_bytes = cfg.scanning.match_context_bytes
 

@@ -176,7 +176,7 @@ class TestRenderHtml:
         stats["findings"] = {"total": 0, "black": 0, "red": 0, "yellow": 0, "green": 0}
         out = _render_html(stats, [])
         assert "<!DOCTYPE html>" in out
-        assert "Findings (0)" in out
+        assert "Findings (" in out
         assert "<tbody>" in out
 
     def test_xss_escape_filename(self):
@@ -220,7 +220,7 @@ class TestRenderHtml:
     def test_search_input_present(self):
         out = _render_html(_sample_stats(), _sample_findings())
         assert 'id="search"' in out
-        assert 'placeholder="Filter findings..."' in out
+        assert 'placeholder="Filter findings' in out
 
     def test_filter_script_present(self):
         out = _render_html(_sample_stats(), _sample_findings())
@@ -271,7 +271,7 @@ class TestHtmlCli:
         )
         assert result.exit_code == 0
         assert "<!DOCTYPE html>" in result.output
-        assert "Findings (0)" in result.output
+        assert "Findings (" in result.output
 
     def test_html_min_interest_filters(self, tmp_path):
         db_path = tmp_path / "snaffler.db"

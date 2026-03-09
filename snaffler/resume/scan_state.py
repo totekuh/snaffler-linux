@@ -91,6 +91,9 @@ class ScanState:
     def load_unwalked_dirs(self, share: str | None = None) -> list:
         return self.store.load_unwalked_dirs(share)
 
+    def load_walked_dirs(self) -> list:
+        return self.store.load_walked_dirs()
+
     # ---------- files (batch) ----------
 
     def store_file(self, unc_path: str, share: str, size: int = 0, mtime: float = 0.0):
@@ -442,6 +445,13 @@ class SQLiteStateStore:
                 rows = self.conn.execute(
                     "SELECT unc_path FROM target_dir WHERE walked = 0"
                 ).fetchall()
+            return [r[0] for r in rows]
+
+    def load_walked_dirs(self) -> list:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT unc_path FROM target_dir WHERE walked = 1"
+            ).fetchall()
             return [r[0] for r in rows]
 
     # ---------- findings ----------
