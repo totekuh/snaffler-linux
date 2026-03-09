@@ -103,6 +103,20 @@ snaffler --local-fs /mnt/share
 snaffler --local-fs /tmp/extracted --local-fs /home/user/Documents
 ```
 
+### Rescan Unreadable Shares (`--rescan-unreadable`)
+
+Re-test previously access-denied shares with new credentials — useful after password spraying:
+
+```bash
+# Initial scan with low-privilege creds
+snaffler -u lowpriv -p 'Password1' -d CORP.LOCAL --state scan.db
+
+# Later, with higher-privilege creds
+snaffler --rescan-unreadable -u highpriv -p 'NewPass!' --state scan.db
+```
+
+The initial scan stores all discovered shares (readable and unreadable) in the state DB. `--rescan-unreadable` loads only the previously denied shares, re-tests them with current credentials, and scans any that are now accessible. Respects `--share`, `--exclude-share`, and `--exclusions` filters.
+
 ## Filtering
 
 ```bash
