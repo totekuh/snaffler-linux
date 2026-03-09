@@ -82,12 +82,12 @@ def test_sqlite_store_share_tracking():
 
         assert store.load_shares() == []
 
-        store.store_shares(["//HOST1/SHARE", "//HOST2/DATA"])
+        store.store_shares([("//HOST1/SHARE", True), ("//HOST2/DATA", True)])
         loaded = store.load_shares()
         assert sorted(loaded) == ["//HOST1/SHARE", "//HOST2/DATA"]
 
         # idempotent
-        store.store_shares(["//HOST1/SHARE", "//HOST3/APPS"])
+        store.store_shares([("//HOST1/SHARE", True), ("//HOST3/APPS", True)])
         loaded = store.load_shares()
         assert sorted(loaded) == ["//HOST1/SHARE", "//HOST2/DATA", "//HOST3/APPS"]
 
@@ -456,8 +456,8 @@ def test_case_insensitive_target_share():
     try:
         store = SQLiteStateStore(path)
 
-        store.store_shares(["//HOST/Share"])
-        store.store_shares(["//host/share"])
+        store.store_shares([("//HOST/Share", True)])
+        store.store_shares([("//host/share", True)])
         loaded = store.load_shares()
         assert len(loaded) == 1
 
@@ -985,6 +985,186 @@ def test_count_findings_by_triage():
 
         result = store.count_findings_by_triage()
         assert result == {"Red": 2, "Black": 1, "Yellow": 1}
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- readable / unreadable shares ----------
+
+
+def test_store_shares_with_readable_flag():
+    """store_shares accepts (unc_path, readable) tuples."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_shares([
+            ("//HOST/PUBLIC", True),
+            ("//HOST/SECRET", False),
+        ])
+
+        # load_shares returns only readable
+        readable = store.load_shares()
+        assert readable == ["//HOST/PUBLIC"]
+
+        # load_unreadable_shares returns only unreadable
+        unreadable = store.load_unreadable_shares()
+        assert unreadable == ["//HOST/SECRET"]
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_store_shares_plain_strings_backwards_compat():
+    """store_shares still accepts plain strings (readable=NULL, treated as readable)."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_shares(["//HOST/SHARE"])
+
+        # NULL readable treated as readable by load_shares
+        assert store.load_shares() == ["//HOST/SHARE"]
+
+        # Not in unreadable
+        assert store.load_unreadable_shares() == []
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_update_share_readable():
+    """update_share_readable flips readable from 0 to 1."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_shares([("//HOST/SECRET", False)])
+        assert store.load_unreadable_shares() == ["//HOST/SECRET"]
+        assert store.load_shares() == []
+
+        store.update_share_readable("//HOST/SECRET")
+
+        assert store.load_unreadable_shares() == []
+        assert store.load_shares() == ["//HOST/SECRET"]
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_store_shares_updates_readable_on_conflict():
+    """Re-storing a share with different readable flag updates it."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_shares([("//HOST/SHARE", False)])
+        assert store.load_unreadable_shares() == ["//HOST/SHARE"]
+
+        # Re-store with readable=True
+        store.store_shares([("//HOST/SHARE", True)])
+        assert store.load_unreadable_shares() == []
+        assert store.load_shares() == ["//HOST/SHARE"]
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_update_share_readable_case_insensitive():
+    """update_share_readable works case-insensitively."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_shares([("//HOST/Secret", False)])
+        store.update_share_readable("//host/secret")
+
+        assert store.load_unreadable_shares() == []
+        assert len(store.load_shares()) == 1
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_load_unreadable_shares_empty_db():
+    """load_unreadable_shares returns empty list on fresh DB."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+        assert store.load_unreadable_shares() == []
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_load_shares_excludes_unreadable():
+    """load_shares() used for resume must not return unreadable shares."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_shares([
+            ("//HOST1/PUBLIC", True),
+            ("//HOST1/DENIED", False),
+            ("//HOST2/OPEN", True),
+            ("//HOST2/LOCKED", False),
+            ("//HOST2/ALSO_LOCKED", False),
+        ])
+
+        # load_shares (used in resume) only returns readable
+        readable = store.load_shares()
+        assert sorted(readable) == ["//HOST1/PUBLIC", "//HOST2/OPEN"]
+
+        # load_unreadable_shares returns only denied
+        unreadable = store.load_unreadable_shares()
+        assert sorted(unreadable) == [
+            "//HOST1/DENIED", "//HOST2/ALSO_LOCKED", "//HOST2/LOCKED",
+        ]
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_mixed_readable_and_plain_shares():
+    """Mixing tuples and plain strings in separate calls works."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        # First call with tuples
+        store.store_shares([("//H/READABLE", True), ("//H/DENIED", False)])
+        # Second call with plain strings
+        store.store_shares(["//H/LEGACY"])
+
+        readable = sorted(store.load_shares())
+        assert readable == ["//H/LEGACY", "//H/READABLE"]
+
+        unreadable = store.load_unreadable_shares()
+        assert unreadable == ["//H/DENIED"]
 
         store.close()
     finally:

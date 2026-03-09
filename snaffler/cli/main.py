@@ -17,7 +17,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.5.2"  # fallback for PyInstaller builds
+        return "1.5.3"  # fallback for PyInstaller builds
 
 
 def _version_callback(value: bool):
@@ -148,6 +148,11 @@ def main(
         shares_only: bool = typer.Option(
             False, "-a", "--shares-only",
             help="Only enumerate shares, skip filesystem walking",
+            rich_help_panel="Targeting",
+        ),
+        rescan_unreadable: bool = typer.Option(
+            False, "--rescan-unreadable",
+            help="Re-test previously unreadable shares from state DB with current creds",
             rich_help_panel="Targeting",
         ),
         include_disabled: bool = typer.Option(
@@ -389,6 +394,7 @@ def main(
     if _explicit("local"):            cfg.targets.local_targets = local or []
     if _explicit("shares_only"):      cfg.targets.shares_only = shares_only
     if _explicit("include_disabled"): cfg.targets.skip_disabled_computers = not include_disabled
+    if _explicit("rescan_unreadable"): cfg.targets.rescan_unreadable = rescan_unreadable
     if _explicit("share"):            cfg.targets.share_filter = share or []
     if _explicit("exclude_share"):    cfg.targets.exclude_share = exclude_share or []
     if _explicit("exclude_unc"):      cfg.targets.exclude_unc = exclude_unc or []
@@ -474,11 +480,19 @@ def main(
     has_domain = bool(cfg.auth.domain)
     has_ftp = bool(cfg.targets.ftp_targets)
 
+    # --rescan-unreadable is SMB-only, mutually exclusive with local/FTP
+    if cfg.targets.rescan_unreadable and (has_local or has_ftp):
+        raise typer.BadParameter(
+            "--rescan-unreadable is mutually exclusive with --local-fs and --ftp"
+        )
+
     # At least one targeting mode must be selected
-    if not (has_unc or has_local or has_computers or has_domain or has_ftp):
+    if not (has_unc or has_local or has_computers or has_domain or has_ftp
+            or cfg.targets.rescan_unreadable):
         raise typer.BadParameter(
             "No targets specified. Use one of: "
-            "--unc, --local-fs, --ftp, --computer/--computer-file, --stdin, or --domain"
+            "--unc, --local-fs, --ftp, --computer/--computer-file, --stdin, --domain, "
+            "or --rescan-unreadable"
         )
     # ---------- SCANNING ----------
     if _explicit("min_interest"):   cfg.scanning.min_interest = min_interest

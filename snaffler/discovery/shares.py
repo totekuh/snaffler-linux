@@ -240,15 +240,18 @@ class ShareFinder:
                 logger.debug(f"Readable share: {unc_path}")
                 if snaffle_rule:
                     logger.info(f"[{snaffle_rule.triage.label}] [{snaffle_rule.rule_name}] Share: {unc_path}")
-                results.append((unc_path, share))
             else:
                 logger.debug(f"Unreadable share (access denied): {unc_path}")
 
+            results.append((unc_path, share))
+
         # Summary for diagnostics
         if shares:
+            readable_count = sum(1 for _, s in results if s.readable)
             logger.debug(
                 f"[{computer}] Share discovery summary: "
-                f"{len(shares)} enumerated, {len(results)} readable"
+                f"{len(shares)} enumerated, {readable_count} readable, "
+                f"{len(results) - readable_count} denied"
             )
 
         return results

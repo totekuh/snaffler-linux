@@ -17,6 +17,13 @@ def make_cfg():
     return cfg
 
 
+def _share(readable=True):
+    """Create a mock share with a readable attribute."""
+    s = MagicMock()
+    s.readable = readable
+    return s
+
+
 # ---------- tests ----------
 
 def test_share_pipeline_no_shares():
@@ -36,8 +43,8 @@ def test_share_pipeline_basic():
 
     pipeline.share_finder.get_computer_shares = MagicMock(
         return_value=[
-            ("//HOST1/SHARE1", object()),
-            ("//HOST1/SHARE2", object()),
+            ("//HOST1/SHARE1", _share()),
+            ("//HOST1/SHARE2", _share()),
         ]
     )
 
@@ -57,7 +64,7 @@ def test_share_pipeline_shares_only():
 
     pipeline.share_finder.get_computer_shares = MagicMock(
         return_value=[
-            ("//HOST1/SHARE", object()),
+            ("//HOST1/SHARE", _share()),
         ]
     )
 
@@ -73,7 +80,7 @@ def test_share_pipeline_partial_failure():
     def side_effect(host):
         if host == "BAD":
             raise RuntimeError("boom")
-        return [("//GOOD/SHARE", object())]
+        return [("//GOOD/SHARE", _share())]
 
     pipeline.share_finder.get_computer_shares = MagicMock(
         side_effect=side_effect
@@ -101,8 +108,8 @@ def test_share_pipeline_progress_counters():
 
     pipeline.share_finder.get_computer_shares = MagicMock(
         side_effect=[
-            [("//H1/S1", object()), ("//H1/S2", object())],
-            [("//H2/S1", object())],
+            [("//H1/S1", _share()), ("//H1/S2", _share())],
+            [("//H2/S1", _share())],
         ]
     )
 
@@ -123,7 +130,7 @@ def test_share_pipeline_progress_counts_failures():
     def side_effect(host):
         if host == "BAD":
             raise RuntimeError("boom")
-        return [("//GOOD/SHARE", object())]
+        return [("//GOOD/SHARE", _share())]
 
     pipeline.share_finder.get_computer_shares = MagicMock(side_effect=side_effect)
 
@@ -147,8 +154,8 @@ def test_share_pipeline_marks_computers_in_state():
 
     pipeline.share_finder.get_computer_shares = MagicMock(
         side_effect=[
-            [("//H1/S1", object())],
-            [("//H2/S1", object()), ("//H2/S2", object())],
+            [("//H1/S1", _share())],
+            [("//H2/S1", _share()), ("//H2/S2", _share())],
         ]
     )
 
@@ -172,7 +179,7 @@ def test_share_pipeline_marks_failed_computer_in_state():
     def side_effect(host):
         if host == "BAD":
             raise RuntimeError("boom")
-        return [("//GOOD/SHARE", object())]
+        return [("//GOOD/SHARE", _share())]
 
     pipeline.share_finder.get_computer_shares = MagicMock(side_effect=side_effect)
 
@@ -182,3 +189,130 @@ def test_share_pipeline_marks_failed_computer_in_state():
     assert state.mark_computer_done.call_count == 2
     state.mark_computer_done.assert_any_call("BAD")
     state.mark_computer_done.assert_any_call("GOOD")
+
+
+# ---------- readable / unreadable ----------
+
+def test_share_pipeline_stores_readable_and_unreadable():
+    """All shares (readable + unreadable) are stored to state with readable flag."""
+    cfg = make_cfg()
+    state = MagicMock()
+    pipeline = SharePipeline(cfg, state=state)
+
+    pipeline.share_finder.get_computer_shares = MagicMock(
+        return_value=[
+            ("//H1/PUBLIC", _share(readable=True)),
+            ("//H1/SECRET", _share(readable=False)),
+        ]
+    )
+
+    result = pipeline.run(["H1"])
+
+    # Only readable shares returned for walking
+    assert result == ["//H1/PUBLIC"]
+
+    # Both stored to state with readable flag
+    state.store_shares.assert_called_once()
+    stored = state.store_shares.call_args[0][0]
+    assert ("//H1/PUBLIC", True) in stored
+    assert ("//H1/SECRET", False) in stored
+
+
+def test_share_pipeline_only_counts_readable_in_progress():
+    """Progress.shares_found only counts readable shares."""
+    cfg = make_cfg()
+    progress = ProgressState()
+    pipeline = SharePipeline(cfg, progress=progress)
+
+    pipeline.share_finder.get_computer_shares = MagicMock(
+        return_value=[
+            ("//H1/PUBLIC", _share(readable=True)),
+            ("//H1/SECRET", _share(readable=False)),
+            ("//H1/ALSO_SECRET", _share(readable=False)),
+        ]
+    )
+
+    pipeline.run(["H1"])
+
+    assert progress.shares_found == 1
+
+
+def test_share_pipeline_all_unreadable():
+    """When all shares are unreadable, returns empty list."""
+    cfg = make_cfg()
+    pipeline = SharePipeline(cfg)
+
+    pipeline.share_finder.get_computer_shares = MagicMock(
+        return_value=[
+            ("//H1/SECRET", _share(readable=False)),
+        ]
+    )
+
+    result = pipeline.run(["H1"])
+
+    assert result == []
+
+
+def test_share_pipeline_unreadable_not_walked():
+    """Normal scan: unreadable shares stored but never returned for walking."""
+    cfg = make_cfg()
+    state = MagicMock()
+    progress = ProgressState()
+    pipeline = SharePipeline(cfg, state=state, progress=progress)
+
+    pipeline.share_finder.get_computer_shares = MagicMock(
+        side_effect=[
+            [
+                ("//H1/PUBLIC", _share(readable=True)),
+                ("//H1/DENIED1", _share(readable=False)),
+                ("//H1/DENIED2", _share(readable=False)),
+            ],
+            [
+                ("//H2/OPEN", _share(readable=True)),
+                ("//H2/LOCKED", _share(readable=False)),
+            ],
+        ]
+    )
+
+    result = pipeline.run(["H1", "H2"])
+
+    # Only readable shares in the return list
+    assert sorted(result) == ["//H1/PUBLIC", "//H2/OPEN"]
+
+    # All 5 shares stored to DB (readable + unreadable)
+    all_stored = []
+    for c in state.store_shares.call_args_list:
+        all_stored.extend(c[0][0])
+    assert len(all_stored) == 5
+    stored_readable = [unc for unc, r in all_stored if r]
+    stored_unreadable = [unc for unc, r in all_stored if not r]
+    assert sorted(stored_readable) == ["//H1/PUBLIC", "//H2/OPEN"]
+    assert sorted(stored_unreadable) == ["//H1/DENIED1", "//H1/DENIED2", "//H2/LOCKED"]
+
+    # Progress only counts readable
+    assert progress.shares_found == 2
+
+
+def test_share_pipeline_shares_only_with_unreadable():
+    """--shares-only: returns empty list but still stores all shares including unreadable."""
+    cfg = make_cfg()
+    cfg.targets.shares_only = True
+    state = MagicMock()
+    pipeline = SharePipeline(cfg, state=state)
+
+    pipeline.share_finder.get_computer_shares = MagicMock(
+        return_value=[
+            ("//H1/PUBLIC", _share(readable=True)),
+            ("//H1/SECRET", _share(readable=False)),
+        ]
+    )
+
+    result = pipeline.run(["H1"])
+
+    # shares_only returns empty (no walking)
+    assert result == []
+
+    # But both shares should be stored in DB for future --rescan-unreadable
+    state.store_shares.assert_called_once()
+    stored = state.store_shares.call_args[0][0]
+    assert len(stored) == 2

@@ -70,6 +70,8 @@ class TargetingConfig:
 
     max_hosts: Optional[int] = None
 
+    rescan_unreadable: bool = False
+
 
 # ---------------- SCANNING ----------------
 

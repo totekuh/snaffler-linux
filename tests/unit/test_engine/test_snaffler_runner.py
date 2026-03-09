@@ -35,8 +35,10 @@ def make_cfg():
     cfg.targets.local_targets = []
     cfg.targets.ftp_targets = []
     cfg.targets.shares_only = False
+    cfg.targets.rescan_unreadable = False
     cfg.targets.share_filter = []
     cfg.targets.exclude_share = []
+    cfg.targets.exclude_unc = []
     cfg.targets.exclusions = []
 
     # ---------- auth ----------
@@ -1649,3 +1651,417 @@ def test_sync_progress_empty_findings():
 
     assert runner.progress.files_matched == 0
     assert runner.progress.severity_black == 0
+
+
+# ---------- --rescan-unreadable ----------
+
+
+def test_runner_normal_scan_only_walks_readable_shares():
+    """Normal scan: even though unreadable shares are stored, only readable
+    shares reach file_pipeline.run()."""
+    cfg = make_cfg()
+    cfg.targets.computer_targets = ["HOST1"]
+
+    runner, state = _make_runner_with_state(cfg)
+    # DNS done, share discovery NOT done (triggers SharePipeline.run)
+    state.is_phase_done.side_effect = lambda phase: phase == "dns_resolution_done"
+    state.load_resolved_computers.return_value = ["HOST1"]
+    state.should_skip_computer.return_value = False
+    # After share pipeline stores all, load_shares returns only readable
+    state.load_shares.return_value = ["//HOST1/PUBLIC", "//HOST1/OPEN"]
+
+    # SharePipeline returns only readable shares
+    runner.share_pipeline.run = MagicMock(
+        return_value=["//HOST1/PUBLIC", "//HOST1/OPEN"]
+    )
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    # File pipeline must only get readable shares
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert sorted(paths) == ["//HOST1/OPEN", "//HOST1/PUBLIC"]
+
+
+def test_runner_resume_only_walks_readable_shares():
+    """On resume (share phase done), load_shares only returns readable shares,
+    so unreadable shares from a previous scan never reach file_pipeline."""
+    cfg = make_cfg()
+    cfg.targets.computer_targets = ["HOST1"]
+
+    runner, state = _make_runner_with_state(cfg)
+    # All phases done
+    state.is_phase_done.return_value = True
+    state.load_resolved_computers.return_value = ["HOST1"]
+    # load_shares filters out unreadable (readable=0)
+    state.load_shares.return_value = ["//HOST1/PUBLIC"]
+
+    runner.share_pipeline.run = MagicMock()
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    # SharePipeline should NOT have run (phase already done)
+    runner.share_pipeline.run.assert_not_called()
+    # File pipeline should only get the readable share
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert paths == ["//HOST1/PUBLIC"]
+
+
+def test_rescan_unreadable_finds_newly_readable():
+    """--rescan-unreadable re-tests denied shares and scans newly readable ones."""
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = [
+        "//HOST1/SECRET",
+        "//HOST1/FINANCE",
+        "//HOST1/STILL_DENIED",
+    ]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+         patch("snaffler.engine.runner.print_completion_stats"):
+        finder = finder_cls.return_value
+        # SECRET and FINANCE now readable, STILL_DENIED still denied
+        finder.is_share_readable.side_effect = lambda c, s: s != "STILL_DENIED"
+
+        runner.execute()
+
+    # File pipeline should get the 2 newly readable shares
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert sorted(paths) == ["//HOST1/FINANCE", "//HOST1/SECRET"]
+
+    # DB should be updated for newly readable shares
+    assert state.update_share_readable.call_count == 2
+    state.update_share_readable.assert_any_call("//HOST1/SECRET")
+    state.update_share_readable.assert_any_call("//HOST1/FINANCE")
+
+    # Progress should reflect newly readable count
+    assert runner.progress.shares_found == 2
+
+
+def test_rescan_unreadable_none_become_readable():
+    """--rescan-unreadable with all shares still denied: file pipeline not called."""
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = [
+        "//HOST1/SECRET",
+        "//HOST1/FINANCE",
+    ]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+         patch("snaffler.engine.runner.print_completion_stats"):
+        finder = finder_cls.return_value
+        finder.is_share_readable.return_value = False
+
+        runner.execute()
+
+    runner.file_pipeline.run.assert_not_called()
+    state.update_share_readable.assert_not_called()
+
+
+def test_rescan_unreadable_empty_db():
+    """--rescan-unreadable with no unreadable shares in DB: nothing happens."""
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = []
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    runner.file_pipeline.run.assert_not_called()
+
+
+def test_rescan_unreadable_extracts_host_and_share():
+    """--rescan-unreadable correctly parses //host/share from UNC paths."""
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = ["//dc01/ADMIN$"]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+         patch("snaffler.engine.runner.print_completion_stats"):
+        finder = finder_cls.return_value
+        finder.is_share_readable.return_value = True
+
+        runner.execute()
+
+    # Verify correct host/share extraction
+    finder.is_share_readable.assert_called_once_with("dc01", "ADMIN$")
+
+
+def test_rescan_unreadable_skips_other_modes(caplog):
+    """--rescan-unreadable takes priority: other targeting modes are not run."""
+    import logging
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+    cfg.targets.unc_targets = ["//HOST/SHARE"]  # should be ignored
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = ["//OTHER/DENIED"]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+         patch("snaffler.engine.runner.print_completion_stats"), \
+         caplog.at_level(logging.WARNING, logger="snaffler"):
+        finder = finder_cls.return_value
+        finder.is_share_readable.return_value = True
+
+        runner.execute()
+
+    # Should scan the rescan target, not the UNC target
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert paths == ["//OTHER/DENIED"]
+
+    # Should warn about ignored targets
+    assert any("--rescan-unreadable takes priority" in r.message
+               and "--unc" in r.message for r in caplog.records)
+
+
+def test_rescan_unreadable_malformed_path_skipped():
+    """Malformed UNC paths (no share component) are silently skipped."""
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = [
+        "//HOST1/SHARE",
+        "badpath",  # no //host/share structure
+    ]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+         patch("snaffler.engine.runner.print_completion_stats"):
+        finder = finder_cls.return_value
+        finder.is_share_readable.return_value = True
+
+        runner.execute()
+
+    # Only the valid path should be tested
+    finder.is_share_readable.assert_called_once_with("HOST1", "SHARE")
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert paths == ["//HOST1/SHARE"]
+
+
+def test_rescan_unreadable_exception_continues(caplog):
+    """If is_share_readable throws on one share, the loop continues to others."""
+    import logging
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = [
+        "//HOST1/EXPLODES",
+        "//HOST1/WORKS",
+        "//HOST2/ALSO_EXPLODES",
+        "//HOST2/FINE",
+    ]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+         patch("snaffler.engine.runner.print_completion_stats"), \
+         caplog.at_level(logging.INFO, logger="snaffler"):
+        finder = finder_cls.return_value
+
+        def selective_readable(computer, share_name):
+            if share_name in ("EXPLODES", "ALSO_EXPLODES"):
+                raise ConnectionError("connection reset")
+            return True
+
+        finder.is_share_readable.side_effect = selective_readable
+
+        runner.execute()
+
+    # Should still scan the shares that didn't throw
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert sorted(paths) == ["//HOST1/WORKS", "//HOST2/FINE"]
+
+    # Only non-errored shares should be updated in DB
+    assert state.update_share_readable.call_count == 2
+
+    # Log message should report errors separately
+    assert any("2 errors" in r.message for r in caplog.records)
+
+
+# ---------- rescan + share filters ----------
+
+
+def test_rescan_unreadable_respects_share_filter():
+    """--rescan-unreadable + --share only tests matching shares."""
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+    cfg.targets.share_filter = ["FINANCE*"]
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = [
+        "//HOST1/FINANCE",
+        "//HOST1/SECRET",
+        "//HOST2/FINANCE_ARCHIVE",
+    ]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+         patch("snaffler.engine.runner.print_completion_stats"):
+        finder = finder_cls.return_value
+        finder.is_share_readable.return_value = True
+
+        runner.execute()
+
+    # Only FINANCE and FINANCE_ARCHIVE match the glob; SECRET is filtered out
+    runner.file_pipeline.run.assert_called_once()
+    paths = sorted(runner.file_pipeline.run.call_args[0][0])
+    assert paths == ["//HOST1/FINANCE", "//HOST2/FINANCE_ARCHIVE"]
+
+
+def test_rescan_unreadable_respects_exclude_share():
+    """--rescan-unreadable + --exclude-share skips matching shares."""
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+    cfg.targets.exclude_share = ["ADMIN$"]
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = [
+        "//HOST1/DATA",
+        "//HOST1/ADMIN$",
+    ]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+         patch("snaffler.engine.runner.print_completion_stats"):
+        finder = finder_cls.return_value
+        finder.is_share_readable.return_value = True
+
+        runner.execute()
+
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert paths == ["//HOST1/DATA"]
+
+
+def test_rescan_unreadable_respects_exclusions():
+    """--rescan-unreadable + --exclusions skips excluded hosts."""
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+    cfg.targets.exclusions = ["DEADHOST"]
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = [
+        "//DEADHOST/SHARE",
+        "//GOODHOST/DATA",
+    ]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+         patch("snaffler.engine.runner.print_completion_stats"):
+        finder = finder_cls.return_value
+        finder.is_share_readable.return_value = True
+
+        runner.execute()
+
+    runner.file_pipeline.run.assert_called_once()
+    paths = runner.file_pipeline.run.call_args[0][0]
+    assert paths == ["//GOODHOST/DATA"]
+
+
+def test_rescan_unreadable_all_filtered_out():
+    """If all unreadable shares are filtered by --share/--exclusions, warn and exit."""
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+    cfg.targets.exclusions = ["HOST1", "HOST2"]
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = [
+        "//HOST1/SHARE",
+        "//HOST2/DATA",
+    ]
+
+    runner.file_pipeline.run = MagicMock()
+
+    with patch("snaffler.engine.runner.print_completion_stats"):
+        runner.execute()
+
+    runner.file_pipeline.run.assert_not_called()
+
+
+# ---------- rescan + other target warnings ----------
+
+
+def test_rescan_warns_about_ignored_computer(caplog):
+    """--rescan-unreadable + --computer emits a warning."""
+    import logging
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+    cfg.targets.computer_targets = ["HOST1"]
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = []
+
+    with patch("snaffler.engine.runner.print_completion_stats"), \
+         caplog.at_level(logging.WARNING, logger="snaffler"):
+        runner.execute()
+
+    assert any("--rescan-unreadable takes priority" in r.message
+               and "--computer" in r.message for r in caplog.records)
+
+
+def test_rescan_warns_about_ignored_domain(caplog):
+    """--rescan-unreadable + --domain emits a warning."""
+    import logging
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+    cfg.auth.domain = "CORP.LOCAL"
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = []
+
+    with patch("snaffler.engine.runner.print_completion_stats"), \
+         caplog.at_level(logging.WARNING, logger="snaffler"):
+        runner.execute()
+
+    assert any("--rescan-unreadable takes priority" in r.message
+               and "--domain" in r.message for r in caplog.records)
+
+
+def test_rescan_no_warning_when_standalone(caplog):
+    """--rescan-unreadable alone does not emit the 'takes priority' warning."""
+    import logging
+    cfg = make_cfg()
+    cfg.targets.rescan_unreadable = True
+
+    runner, state = _make_runner_with_state(cfg)
+    state.load_unreadable_shares.return_value = []
+
+    with patch("snaffler.engine.runner.print_completion_stats"), \
+         caplog.at_level(logging.WARNING, logger="snaffler"):
+        runner.execute()
+
+    assert not any("takes priority" in r.message for r in caplog.records
+                    if hasattr(r, "message"))

@@ -650,3 +650,159 @@ class TestCombinedFlags:
 
         # Very restrictive — fewer matches
         assert p.files_scanned > 0
+
+
+# ---------------------------------------------------------------------------
+# --rescan-unreadable (real SQLite, mocked ShareFinder)
+# ---------------------------------------------------------------------------
+
+class TestRescanUnreadable:
+    """Integration tests for --rescan-unreadable with a real SQLite state DB."""
+
+    def _make_cfg(self, db_path):
+        c = SnafflerConfiguration()
+        c.advanced.share_threads = 2
+        c.advanced.tree_threads = 2
+        c.advanced.file_threads = 2
+        c.scanning.max_read_bytes = 2 * 1024 * 1024
+        c.scanning.max_file_bytes = 10 * 1024 * 1024
+        c.scanning.match_context_bytes = 200
+        c.scanning.min_interest = 0
+        c.state.state_db = str(db_path)
+        RuleLoader.load(c)
+        return c
+
+    def test_full_flow_store_then_rescan(self, tmp_path):
+        """End-to-end: normal scan stores unreadable shares, rescan picks them up."""
+        from unittest.mock import patch, MagicMock
+        from snaffler.resume.scan_state import SQLiteStateStore, ScanState
+
+        db_path = tmp_path / "test.db"
+
+        # Phase 1: simulate a normal scan that stored some unreadable shares
+        store = SQLiteStateStore(str(db_path))
+        store.store_shares([
+            ("//SRV1/PUBLIC", True),
+            ("//SRV1/FINANCE", False),
+            ("//SRV2/BACKUP", False),
+            ("//SRV2/IT", True),
+        ])
+        store.close()
+
+        # Phase 2: rescan with new creds
+        cfg = self._make_cfg(db_path)
+        cfg.targets.rescan_unreadable = True
+
+        with patch("snaffler.discovery.shares.ShareFinder") as finder_cls:
+            finder = finder_cls.return_value
+            # FINANCE now readable, BACKUP still denied
+            finder.is_share_readable.side_effect = lambda c, s: s == "FINANCE"
+
+            runner = SnafflerRunner(cfg)
+            # Don't actually walk — we just test the rescan logic
+            runner.file_pipeline.run = MagicMock()
+            runner.execute()
+
+        # Only FINANCE should be passed to file pipeline
+        runner.file_pipeline.run.assert_called_once()
+        paths = runner.file_pipeline.run.call_args[0][0]
+        assert paths == ["//SRV1/FINANCE"]
+
+        # Verify DB was updated
+        store2 = SQLiteStateStore(str(db_path))
+        readable = sorted(store2.load_shares())
+        unreadable = sorted(store2.load_unreadable_shares())
+        store2.close()
+
+        assert "//SRV1/FINANCE" in readable
+        assert "//SRV1/PUBLIC" in readable
+        assert "//SRV2/IT" in readable
+        assert unreadable == ["//SRV2/BACKUP"]
+
+    def test_rescan_empty_db(self, tmp_path):
+        """Rescan on a fresh DB with no unreadable shares does nothing."""
+        from unittest.mock import MagicMock
+
+        db_path = tmp_path / "empty.db"
+        cfg = self._make_cfg(db_path)
+        cfg.targets.rescan_unreadable = True
+
+        runner = SnafflerRunner(cfg)
+        runner.file_pipeline.run = MagicMock()
+        runner.execute()
+
+        runner.file_pipeline.run.assert_not_called()
+        assert runner.progress.scan_complete is True
+
+    def test_rescan_all_still_denied(self, tmp_path):
+        """All shares still denied: DB unchanged, file pipeline not called."""
+        from unittest.mock import patch, MagicMock
+        from snaffler.resume.scan_state import SQLiteStateStore
+
+        db_path = tmp_path / "denied.db"
+        store = SQLiteStateStore(str(db_path))
+        store.store_shares([
+            ("//SRV/SECRET1", False),
+            ("//SRV/SECRET2", False),
+        ])
+        store.close()
+
+        cfg = self._make_cfg(db_path)
+        cfg.targets.rescan_unreadable = True
+
+        with patch("snaffler.discovery.shares.ShareFinder") as finder_cls:
+            finder = finder_cls.return_value
+            finder.is_share_readable.return_value = False
+
+            runner = SnafflerRunner(cfg)
+            runner.file_pipeline.run = MagicMock()
+            runner.execute()
+
+        runner.file_pipeline.run.assert_not_called()
+
+        # DB still has both as unreadable
+        store2 = SQLiteStateStore(str(db_path))
+        assert sorted(store2.load_unreadable_shares()) == ["//SRV/SECRET1", "//SRV/SECRET2"]
+        assert store2.load_shares() == []
+        store2.close()
+
+    def test_rescan_connection_error_continues(self, tmp_path):
+        """Connection error on one share doesn't block others."""
+        from unittest.mock import patch, MagicMock
+        from snaffler.resume.scan_state import SQLiteStateStore
+
+        db_path = tmp_path / "errors.db"
+        store = SQLiteStateStore(str(db_path))
+        store.store_shares([
+            ("//DEAD/SHARE", False),
+            ("//ALIVE/DATA", False),
+        ])
+        store.close()
+
+        cfg = self._make_cfg(db_path)
+        cfg.targets.rescan_unreadable = True
+
+        with patch("snaffler.discovery.shares.ShareFinder") as finder_cls:
+            finder = finder_cls.return_value
+
+            def check(computer, share_name):
+                if computer == "DEAD":
+                    raise ConnectionError("host unreachable")
+                return True
+
+            finder.is_share_readable.side_effect = check
+
+            runner = SnafflerRunner(cfg)
+            runner.file_pipeline.run = MagicMock()
+            runner.execute()
+
+        # ALIVE/DATA should still be scanned despite DEAD failing
+        runner.file_pipeline.run.assert_called_once()
+        paths = runner.file_pipeline.run.call_args[0][0]
+        assert paths == ["//ALIVE/DATA"]
+
+        # DEAD/SHARE should still be unreadable in DB
+        store2 = SQLiteStateStore(str(db_path))
+        assert store2.load_unreadable_shares() == ["//DEAD/SHARE"]
+        assert "//ALIVE/DATA" in store2.load_shares()
+        store2.close()

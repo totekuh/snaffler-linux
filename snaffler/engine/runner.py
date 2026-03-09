@@ -443,6 +443,71 @@ class SnafflerRunner:
 
         return self._filter_paths_by_share(new_shares)
 
+    # ---------- rescan unreadable ----------
+
+    def _rescan_unreadable(self):
+        """Re-test previously unreadable shares with current creds."""
+        unreadable = self.state.load_unreadable_shares()
+
+        # Apply --share / --exclude-share filters
+        unreadable = self._filter_paths_by_share(unreadable)
+
+        # Apply --exclusions host filter
+        unreadable = self._filter_paths_by_exclusions(unreadable)
+
+        if not unreadable:
+            logger.warning("No unreadable shares in state DB — nothing to rescan")
+            return
+
+        logger.info(f"Rescan: testing {len(unreadable)} previously unreadable shares")
+
+        from snaffler.discovery.shares import ShareFinder
+        finder = ShareFinder(self.cfg)
+
+        newly_readable = []
+        errors = 0
+
+        def _test_one(unc_path: str):
+            parts = unc_path.strip("/").split("/")
+            if len(parts) < 2:
+                return None
+            computer, share_name = parts[0], parts[1]
+            readable = finder.is_share_readable(computer, share_name)
+            return readable
+
+        with ThreadPoolExecutor(
+            max_workers=self.cfg.advanced.share_threads or 2,
+        ) as pool:
+            futures = {pool.submit(_test_one, p): p for p in unreadable}
+            for future in as_completed(futures):
+                unc_path = futures[future]
+                try:
+                    result = future.result()
+                except Exception as e:
+                    logger.debug(f"Rescan error for {unc_path}: {e}")
+                    errors += 1
+                    continue
+                if result is None:
+                    # Malformed path
+                    continue
+                if result:
+                    logger.info(f"[NEW] Readable: {unc_path}")
+                    self.state.update_share_readable(unc_path)
+                    newly_readable.append(unc_path)
+                else:
+                    logger.debug(f"Still unreadable: {unc_path}")
+
+        still_denied = len(unreadable) - len(newly_readable) - errors
+        msg = f"Rescan: {len(newly_readable)} newly readable, {still_denied} still denied"
+        if errors:
+            msg += f", {errors} errors"
+        logger.info(msg)
+
+        if newly_readable:
+            self.progress.shares_found = len(newly_readable)
+            self._rebalance_file_threads()
+            self.file_pipeline.run(newly_readable)
+
     def execute(self):
         self.start_time = datetime.now()
         logger.info(f"Starting Snaffler at {self.start_time:%Y-%m-%d %H:%M:%S}")
@@ -458,8 +523,24 @@ class SnafflerRunner:
                 except ImportError as exc:
                     logger.warning(f"Web dashboard unavailable: {exc}")
 
+            # ---------- rescan unreadable shares ----------
+            if self.cfg.targets.rescan_unreadable:
+                # Warn if other targeting modes were also specified
+                other = []
+                if self.cfg.targets.unc_targets:
+                    other.append("--unc")
+                if self.cfg.targets.computer_targets:
+                    other.append("--computer")
+                if self.cfg.auth.domain:
+                    other.append("--domain")
+                if other:
+                    logger.warning(
+                        f"--rescan-unreadable takes priority — ignoring {', '.join(other)}"
+                    )
+                self._rescan_unreadable()
+
             # ---------- FTP targets ----------
-            if self.cfg.targets.ftp_targets:
+            elif self.cfg.targets.ftp_targets:
                 if self.cfg.targets.shares_only:
                     logger.warning("--shares-only has no effect in --ftp mode")
                 if self.cfg.targets.exclusions:

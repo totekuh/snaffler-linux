@@ -23,6 +23,7 @@ def make_cfg():
     cfg.targets.local_targets = []
     cfg.targets.ftp_targets = []
     cfg.targets.shares_only = False
+    cfg.targets.rescan_unreadable = False
     cfg.targets.share_filter = []
     cfg.targets.exclude_share = []
     cfg.auth.domain = None

@@ -60,6 +60,12 @@ class ScanState:
     def load_shares(self) -> list:
         return self.store.load_shares()
 
+    def load_unreadable_shares(self) -> list:
+        return self.store.load_unreadable_shares()
+
+    def update_share_readable(self, unc_path: str):
+        self.store.update_share_readable(unc_path)
+
     def should_skip_share(self, unc_path: str) -> bool:
         return self.store.has_checked_share(unc_path)
 
@@ -166,6 +172,7 @@ class SQLiteStateStore:
             self.conn.execute(
                 "CREATE TABLE IF NOT EXISTS target_share "
                 "(unc_path TEXT PRIMARY KEY COLLATE NOCASE, "
+                "readable INTEGER DEFAULT NULL, "
                 "done INTEGER DEFAULT 0)"
             )
             self.conn.execute(
@@ -287,19 +294,45 @@ class SQLiteStateStore:
     # ---------- target shares ----------
 
     def store_shares(self, shares: list):
+        """Store shares. Accepts plain strings or (unc_path, readable) tuples."""
         with self.lock:
-            self.conn.executemany(
-                "INSERT OR IGNORE INTO target_share (unc_path) VALUES (?)",
-                [(s,) for s in shares],
-            )
+            for item in shares:
+                if isinstance(item, tuple):
+                    unc_path, readable = item
+                    self.conn.execute(
+                        "INSERT INTO target_share (unc_path, readable) VALUES (?, ?) "
+                        "ON CONFLICT(unc_path) DO UPDATE SET readable = ?",
+                        (unc_path, int(readable), int(readable)),
+                    )
+                else:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO target_share (unc_path) VALUES (?)",
+                        (item,),
+                    )
             self.conn.commit()
 
     def load_shares(self) -> list:
+        """Load readable shares (readable=1 or readable=NULL for backwards compat)."""
         with self.lock:
             rows = self.conn.execute(
-                "SELECT unc_path FROM target_share"
+                "SELECT unc_path FROM target_share WHERE readable IS NULL OR readable = 1"
             ).fetchall()
             return [r[0] for r in rows]
+
+    def load_unreadable_shares(self) -> list:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT unc_path FROM target_share WHERE readable = 0"
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    def update_share_readable(self, unc_path: str):
+        with self.lock:
+            self.conn.execute(
+                "UPDATE target_share SET readable = 1 WHERE unc_path = ?",
+                (unc_path,),
+            )
+            self.conn.commit()
 
     # ---------- checked computers (via done column) ----------
 

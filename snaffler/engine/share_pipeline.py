@@ -67,14 +67,15 @@ class SharePipeline:
                         shares = future.result()
                         if shares:
                             all_shares.extend(shares)
-                            logger.debug(f"Found {len(shares)} readable shares on {computer}")
+                            readable_count = sum(1 for _, s in shares if s.readable)
+                            logger.debug(f"Found {readable_count} readable shares on {computer}")
                             if self.progress:
                                 with self.progress._lock:
-                                    self.progress.shares_found += len(shares)
-                            # Store shares incrementally for resume
+                                    self.progress.shares_found += readable_count
+                            # Store all shares (readable + unreadable) for resume / rescan
                             if self.state:
                                 self.state.store_shares(
-                                    [unc for unc, _ in shares]
+                                    [(unc, s.readable) for unc, s in shares]
                                 )
                     except Exception as e:
                         logger.debug(f"Error processing {computer}: {e}")
@@ -91,7 +92,8 @@ class SharePipeline:
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise
 
-        if not all_shares:
+        readable = [(unc, s) for unc, s in all_shares if s.readable]
+        if not readable:
             logger.warning("No readable shares found")
             return []
 
@@ -99,5 +101,5 @@ class SharePipeline:
             logger.info("Shares-only mode enabled, skipping file enumeration")
             return []
 
-        # Extract UNC paths only
-        return [unc_path for unc_path, _ in all_shares]
+        # Extract UNC paths only (readable shares)
+        return [unc_path for unc_path, _ in readable]

@@ -543,3 +543,163 @@ def test_cli_ftp_exclusive_with_unc():
 
     assert result.exit_code != 0
     assert "mutually exclusive" in result.output
+
+
+# ---------- --rescan-unreadable ----------
+
+def test_cli_rescan_unreadable():
+    """--rescan-unreadable flag wires to config and is accepted without other targets."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        instance = runner_cls.return_value
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--rescan-unreadable"],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.targets.rescan_unreadable is True
+    instance.execute.assert_called_once()
+
+
+def test_cli_rescan_unreadable_no_targets_required():
+    """--rescan-unreadable doesn't need --unc, --computer, or --domain."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--rescan-unreadable", "-u", "user", "-p", "pass"],
+        )
+
+    assert result.exit_code == 0
+
+
+def test_cli_rescan_unreadable_exclusive_with_local():
+    """--rescan-unreadable is mutually exclusive with --local-fs."""
+    with patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        result = runner.invoke(
+            app,
+            base_args() + ["--rescan-unreadable", "--local-fs", "/tmp"],
+        )
+
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
+
+
+def test_cli_rescan_unreadable_exclusive_with_ftp():
+    """--rescan-unreadable is mutually exclusive with --ftp."""
+    with patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        result = runner.invoke(
+            app,
+            base_args() + ["--rescan-unreadable", "--ftp", "10.0.0.5"],
+        )
+
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
+
+
+def test_cli_rescan_unreadable_with_unc():
+    """--rescan-unreadable + --unc is accepted (rescan takes priority)."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--rescan-unreadable", "--unc", "//HOST/SHARE"],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.targets.rescan_unreadable is True
+    assert cfg.targets.unc_targets == ["//HOST/SHARE"]
+
+
+def test_cli_rescan_unreadable_with_computer():
+    """--rescan-unreadable + --computer is accepted (rescan takes priority)."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--rescan-unreadable", "--computer", "HOST1"],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.targets.rescan_unreadable is True
+
+
+def test_cli_rescan_unreadable_with_domain():
+    """--rescan-unreadable + --domain is accepted (rescan takes priority)."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + ["--rescan-unreadable", "--domain", "CORP.LOCAL"],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.targets.rescan_unreadable is True
+
+
+def test_cli_rescan_unreadable_with_share_filter():
+    """--rescan-unreadable + --share filter is accepted."""
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--rescan-unreadable",
+                "--share", "FINANCE*",
+                "--exclude-share", "ADMIN$",
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.targets.rescan_unreadable is True
+    assert cfg.targets.share_filter == ["FINANCE*"]
+    assert cfg.targets.exclude_share == ["ADMIN$"]
+
+
+def test_cli_rescan_unreadable_with_exclusions(tmp_path):
+    """--rescan-unreadable + --exclusions file is accepted."""
+    excl_file = tmp_path / "exclusions.txt"
+    excl_file.write_text("DEADHOST\nBADHOST\n")
+
+    with patch("snaffler.cli.main.SnafflerRunner") as runner_cls, \
+            patch("snaffler.cli.main.RuleLoader.load"), \
+            patch("snaffler.cli.main.setup_logging"):
+        runner_cls.return_value.execute.return_value = None
+
+        result = runner.invoke(
+            app,
+            base_args() + [
+                "--rescan-unreadable",
+                "--exclusions", str(excl_file),
+            ],
+        )
+
+    assert result.exit_code == 0
+    cfg = runner_cls.call_args[0][0]
+    assert cfg.targets.rescan_unreadable is True
+    assert "DEADHOST" in cfg.targets.exclusions

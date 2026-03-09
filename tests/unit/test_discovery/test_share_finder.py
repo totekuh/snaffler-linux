@@ -387,7 +387,10 @@ def test_dollar_share_not_logged_when_unreadable(caplog, share_name):
         mock_enum.return_value = [ShareInfo(share_name, 0x00000000, "")]
         results = finder.get_computer_shares("DC01")
 
-    assert results == []
+    # Unreadable shares are still returned (for --rescan-unreadable), but not readable
+    assert len(results) == 1
+    assert results[0][1].readable is False
+    # No finding should be logged for unreadable share
     assert "KeepDollarShares" not in caplog.text
     assert "[Black]" not in caplog.text
 
@@ -429,11 +432,17 @@ def test_mixed_shares_only_readable_logged(caplog):
         ]
         results = finder.get_computer_shares("DC01")
 
-    # C$ and Users are readable, ADMIN$ is not
+    # All shares returned (readable + unreadable)
     result_names = [info.name for _, info in results]
     assert "C$" in result_names
     assert "Users" in result_names
-    assert "ADMIN$" not in result_names
+    assert "ADMIN$" in result_names
+
+    # Check readable flags
+    readable_map = {info.name: info.readable for _, info in results}
+    assert readable_map["C$"] is True
+    assert readable_map["Users"] is True
+    assert readable_map["ADMIN$"] is False
 
     # Only C$ should have a Black finding logged, not ADMIN$
     assert caplog.text.count("KeepDollarShares") == 1
