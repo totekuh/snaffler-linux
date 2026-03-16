@@ -31,7 +31,6 @@ FAST_MODE_EXCLUSIONS: List[str] = [
     "*/Windows/Temp/*",
     "*/Windows/Logs/*",
     "*/Windows/Prefetch/*",
-    "*/Windows/Panther/*",
     "*/Windows/inf/*",
     "*/Windows/Help/*",
     "*/Windows/Fonts/*",

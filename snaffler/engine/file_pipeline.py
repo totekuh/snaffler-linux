@@ -309,10 +309,23 @@ class FilePipeline:
                                 if self.progress:
                                     self.progress.shares_walked += 1
                                 continue
-                        cancel = threading.Event()
                         key = path.lower()
+                        # Resume: skip shares already fully processed
+                        if self.state and self.state.should_skip_share(path):
+                            logger.debug(f"Resume: skipping done share {path}")
+                            if self.progress:
+                                self.progress.shares_walked += 1
+                            submitted_dirs.add(key)
+                            continue
+                        cancel = threading.Event()
                         cancel_events[key] = cancel
                         share_root_map[key] = path
+                        # Resume: share root already walked — skip re-listing,
+                        # only unwalked subdirectories will be resumed below.
+                        if key in submitted_dirs:
+                            logger.debug(f"Resume: share root already walked {path}")
+                            share_pending[key] = 0
+                            continue
                         submitted_dirs.add(key)
                         future = executor.submit(
                             self.tree_walker.walk_directory,
@@ -327,22 +340,47 @@ class FilePipeline:
                     if self.state:
                         max_depth = self.cfg.scanning.max_depth
                         for unwalked_dir in self.state.load_unwalked_dirs():
-                            share_root = _extract_share_unc(unwalked_dir)
-                            key = share_root.lower()
-                            # Only re-walk dirs belonging to shares we're processing
+                            dir_lower = unwalked_dir.lower()
+                            # Find which share this dir belongs to by UNC
+                            # extraction first, then fall back to prefix
+                            # matching (needed for local paths where
+                            # _extract_share_unc doesn't match the raw root).
+                            share_root_unc = _extract_share_unc(unwalked_dir)
+                            key = share_root_unc.lower()
                             if key not in cancel_events:
-                                continue
+                                # Prefix match: find the share root this dir
+                                # is a child of (handles local FS paths).
+                                key = None
+                                for ck in cancel_events:
+                                    if dir_lower == ck or dir_lower.startswith(ck.rstrip("/") + "/"):
+                                        key = ck
+                                        break
+                                if key is None:
+                                    continue
+                            share_root = share_root_map.get(key, share_root_unc)
                             # Skip dirs already submitted (e.g. share roots)
-                            if unwalked_dir.lower() in submitted_dirs:
+                            if dir_lower in submitted_dirs:
                                 continue
                             # Respect --max-depth on resume
                             if max_depth is not None and share_root:
-                                rel = unwalked_dir.lower()[len(key):].strip("/")
+                                rel = dir_lower[len(key):].strip("/")
                                 depth = len(rel.split("/")) if rel else 0
                                 if depth > max_depth:
                                     continue
-                            submitted_dirs.add(unwalked_dir.lower())
+                            submitted_dirs.add(dir_lower)
                             _submit_dir(unwalked_dir, share_root, cancel_events[key])
+
+                    # --- Resume: finalize shares with no remaining work ---
+                    # Shares whose root was already walked and have no
+                    # unwalked subdirs are effectively done — mark them now
+                    # since the fan-out loop won't see any futures for them.
+                    for key in list(share_root_map):
+                        if share_pending.get(key, 0) == 0 and key not in share_buffer:
+                            root = share_root_map[key]
+                            if self.progress:
+                                self.progress.shares_walked += 1
+                            if key not in shares_with_errors:
+                                walked_shares.append(root)
 
                     # --- Resume: seed unchecked files into queue ---
                     # Seed all unchecked files from the DB. Files from dirs
@@ -415,6 +453,10 @@ class FilePipeline:
                                         rel = subdir.lower()[len(share_root.lower()):].strip("/")
                                         depth = len(rel.split("/")) if rel else 0
                                         if depth > max_depth:
+                                            # Store in DB so a future resume with
+                                            # higher --max-depth can pick it up
+                                            if self.state:
+                                                self.state.store_dirs([subdir])
                                             continue
                                     submitted_dirs.add(subdir.lower())
                                     cancel_ev = cancel_events.get(share_root.lower(), threading.Event())

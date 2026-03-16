@@ -472,6 +472,358 @@ class TestResumeLocal:
 
 
 # ---------------------------------------------------------------------------
+# Resume: directory re-walk avoidance
+# ---------------------------------------------------------------------------
+
+def _make_resume_cfg(db_path, root_dir):
+    """Build a config for resume tests with a real state DB and local target."""
+    c = SnafflerConfiguration()
+    c.targets.local_targets = [str(root_dir)]
+    c.scanning.max_read_bytes = 2 * 1024 * 1024
+    c.scanning.max_file_bytes = 10 * 1024 * 1024
+    c.scanning.match_context_bytes = 200
+    c.scanning.min_interest = 0
+    c.advanced.share_threads = 2
+    c.advanced.tree_threads = 2
+    c.advanced.file_threads = 2
+    c.state.state_db = db_path
+    RuleLoader.load(c)
+    return c
+
+
+class TestResumeSkipsDoneShares:
+    """Verify that resume does NOT re-walk shares/dirs that are already done.
+
+    Each test creates a real directory tree, runs a full scan against a
+    real SQLite state DB, then mutates the filesystem and/or the DB and
+    runs again to verify only the expected work happens.
+    """
+
+    def test_done_share_not_rewalked_new_root_file_invisible(self, tmp_path):
+        """After a full scan, adding a new file to the share root is NOT
+        found on resume because the done share is skipped entirely."""
+        from snaffler.resume.scan_state import SQLiteStateStore
+
+        root = tmp_path / "share"
+        root.mkdir()
+        (root / "ntds.dit").write_bytes(b"first run finding")
+        sub = root / "subdir"
+        sub.mkdir()
+        (sub / "id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n")
+
+        db_path = str(tmp_path / "state.db")
+        cfg = _make_resume_cfg(db_path, root)
+
+        # First run — full scan
+        _run(cfg)
+
+        store = SQLiteStateStore(db_path)
+        findings_first = store.count_findings()
+        assert findings_first >= 2  # ntds.dit + id_rsa at minimum
+        store.close()
+
+        # Add a new high-signal file to the root AFTER the scan
+        (root / "SYSTEM").write_bytes(b"new file after done")
+
+        # Resume — done share should be skipped, new file NOT found
+        cfg2 = _make_resume_cfg(db_path, root)
+        _run(cfg2)
+
+        store = SQLiteStateStore(db_path)
+        findings_second = store.count_findings()
+        store.close()
+
+        assert findings_second == findings_first, (
+            f"Done share was re-walked: {findings_second} > {findings_first}"
+        )
+
+    def test_done_share_new_subdir_file_invisible(self, tmp_path):
+        """After a full scan, adding a new file in an existing subdir is NOT
+        found on resume — the entire share tree is skipped."""
+        from snaffler.resume.scan_state import SQLiteStateStore
+
+        root = tmp_path / "share"
+        root.mkdir()
+        sub = root / "configs"
+        sub.mkdir()
+        (sub / "web.config").write_text(
+            '<connectionStrings>'
+            '<add connectionString="Server=db;Password=secret"/>'
+            '</connectionStrings>'
+        )
+
+        db_path = str(tmp_path / "state.db")
+        cfg = _make_resume_cfg(db_path, root)
+        _run(cfg)
+
+        store = SQLiteStateStore(db_path)
+        findings_first = store.count_findings()
+        store.close()
+
+        # Add new file deep in the tree
+        (sub / "SAM").write_bytes(b"added after scan")
+
+        cfg2 = _make_resume_cfg(db_path, root)
+        _run(cfg2)
+
+        store = SQLiteStateStore(db_path)
+        findings_second = store.count_findings()
+        store.close()
+
+        assert findings_second == findings_first
+
+    def test_fresh_scan_finds_all_files(self, tmp_path):
+        """Control test: without a state DB, a fresh scan finds everything
+        including files added after a previous run."""
+        from snaffler.resume.scan_state import SQLiteStateStore
+
+        root = tmp_path / "share"
+        root.mkdir()
+        (root / "ntds.dit").write_bytes(b"original")
+
+        db_path = str(tmp_path / "state.db")
+        cfg = _make_resume_cfg(db_path, root)
+        _run(cfg)
+
+        store = SQLiteStateStore(db_path)
+        findings_first = store.count_findings()
+        store.close()
+
+        # Add new file
+        (root / "SYSTEM").write_bytes(b"new file")
+
+        # Delete DB — fresh scan
+        Path(db_path).unlink()
+        cfg2 = _make_resume_cfg(db_path, root)
+        _run(cfg2)
+
+        store = SQLiteStateStore(db_path)
+        findings_fresh = store.count_findings()
+        store.close()
+
+        assert findings_fresh > findings_first, (
+            f"Fresh scan should find more: {findings_fresh} <= {findings_first}"
+        )
+
+    def test_walked_root_not_relisted_on_resume(self, tmp_path):
+        """When the share root was walked but the share is NOT marked done
+        (e.g. interrupted mid-scan), the root is not re-listed.  A new file
+        added to the root after the walk should be invisible on resume."""
+        from snaffler.resume.scan_state import SQLiteStateStore
+
+        root = tmp_path / "share"
+        root.mkdir()
+        (root / "ntds.dit").write_bytes(b"root finding")
+        sub = root / "deep"
+        sub.mkdir()
+        (sub / "id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n")
+
+        db_path = str(tmp_path / "state.db")
+        cfg = _make_resume_cfg(db_path, root)
+        _run(cfg)
+
+        store = SQLiteStateStore(db_path)
+        findings_first = store.count_findings()
+        # Undo the share-done flag so the share is "incomplete"
+        store.conn.execute(
+            "UPDATE target_share SET done = 0"
+        )
+        store.conn.commit()
+        store.close()
+
+        # Add a new file to the root — shouldn't be found because
+        # the root dir was already walked (even though share isn't done)
+        (root / "SAM").write_bytes(b"sneaky new file")
+
+        cfg2 = _make_resume_cfg(db_path, root)
+        _run(cfg2)
+
+        store = SQLiteStateStore(db_path)
+        findings_second = store.count_findings()
+        store.close()
+
+        assert findings_second == findings_first, (
+            f"Root was re-walked despite being marked walked: "
+            f"{findings_second} > {findings_first}"
+        )
+
+    def test_unwalked_subdir_is_resumed(self, tmp_path):
+        """When a subdir is marked unwalked in the DB, it IS re-walked on
+        resume and new files in it are found."""
+        from snaffler.resume.scan_state import SQLiteStateStore
+
+        root = tmp_path / "share"
+        root.mkdir()
+        (root / "ntds.dit").write_bytes(b"root file")
+        sub = root / "important"
+        sub.mkdir()
+        (sub / "id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nfake\n")
+
+        db_path = str(tmp_path / "state.db")
+        cfg = _make_resume_cfg(db_path, root)
+        _run(cfg)
+
+        store = SQLiteStateStore(db_path)
+        findings_first = store.count_findings()
+        assert findings_first >= 2
+
+        # Simulate interrupted walk: mark subdir as unwalked and its
+        # files as unchecked so they get re-processed
+        share_root = str(root)
+        sub_path = str(sub)
+        store.conn.execute(
+            "UPDATE target_dir SET walked = 0 WHERE unc_path = ?",
+            (sub_path,),
+        )
+        store.conn.execute(
+            "UPDATE target_file SET checked = 0 WHERE unc_path LIKE ?",
+            (sub_path + "%",),
+        )
+        # Undo share-done so resume actually processes this share
+        store.conn.execute(
+            "UPDATE target_share SET done = 0"
+        )
+        store.conn.commit()
+
+        # Add a NEW detectable file in the unwalked subdir
+        (sub / "SAM").write_bytes(b"found on resume")
+        store.close()
+
+        cfg2 = _make_resume_cfg(db_path, root)
+        _run(cfg2)
+
+        store = SQLiteStateStore(db_path)
+        findings_second = store.count_findings()
+        store.close()
+
+        assert findings_second > findings_first, (
+            f"Unwalked subdir was not re-walked: "
+            f"{findings_second} <= {findings_first}"
+        )
+
+    def test_resume_progress_counts_done_shares(self, tmp_path):
+        """Done shares should still be counted in shares_walked progress."""
+        root = tmp_path / "share"
+        root.mkdir()
+        (root / "ntds.dit").write_bytes(b"data")
+
+        db_path = str(tmp_path / "state.db")
+        cfg = _make_resume_cfg(db_path, root)
+        _run(cfg)
+
+        # Second run — share is done
+        cfg2 = _make_resume_cfg(db_path, root)
+        _, p = _run(cfg2)
+
+        assert p.shares_walked >= 1
+        assert p.scan_complete is True
+
+    def test_multiple_shares_only_incomplete_rewalked(self, tmp_path):
+        """With two share roots, one done and one incomplete, only the
+        incomplete one should have its tree re-walked."""
+        from snaffler.resume.scan_state import SQLiteStateStore
+
+        share_a = tmp_path / "share_a"
+        share_a.mkdir()
+        (share_a / "ntds.dit").write_bytes(b"share a finding")
+
+        share_b = tmp_path / "share_b"
+        share_b.mkdir()
+        (share_b / "id_rsa").write_text(
+            "-----BEGIN RSA PRIVATE KEY-----\nfake\n"
+        )
+
+        db_path = str(tmp_path / "state.db")
+        cfg = _make_resume_cfg(db_path, share_a)
+        cfg.targets.local_targets = [str(share_a), str(share_b)]
+        _run(cfg)
+
+        store = SQLiteStateStore(db_path)
+        findings_first = store.count_findings()
+
+        # Mark share_b as incomplete (not done, subdir unwalked)
+        store.conn.execute(
+            "UPDATE target_share SET done = 0 WHERE unc_path = ?",
+            (str(share_b),),
+        )
+        store.conn.execute(
+            "UPDATE target_dir SET walked = 0 WHERE unc_path = ?",
+            (str(share_b),),
+        )
+        store.conn.execute(
+            "UPDATE target_file SET checked = 0 WHERE unc_path LIKE ?",
+            (str(share_b) + "%",),
+        )
+        store.conn.commit()
+        store.close()
+
+        # Add new files to BOTH shares
+        (share_a / "SAM").write_bytes(b"invisible in done share")
+        (share_b / "SYSTEM").write_bytes(b"visible in incomplete share")
+
+        cfg2 = _make_resume_cfg(db_path, share_a)
+        cfg2.targets.local_targets = [str(share_a), str(share_b)]
+        _run(cfg2)
+
+        store = SQLiteStateStore(db_path)
+        findings_second = store.count_findings()
+        # Check that SYSTEM was found (from incomplete share_b)
+        all_findings = store.load_findings()
+        found_paths = [f["file_path"] for f in all_findings]
+        store.close()
+
+        # share_b's new file should be found (incomplete share re-walked)
+        assert any("SYSTEM" in p for p in found_paths), (
+            f"SYSTEM not found in incomplete share: {found_paths}"
+        )
+        # share_a's new file should NOT be found (done share skipped)
+        sam_in_a = [
+            p for p in found_paths
+            if "SAM" in p and str(share_a) in p
+        ]
+        assert len(sam_in_a) == 0, (
+            f"SAM found in done share_a — share was re-walked: {sam_in_a}"
+        )
+
+    def test_resume_no_extra_findings_second_run(self, tmp_path):
+        """Basic sanity: two identical runs produce the same finding count."""
+        from snaffler.resume.scan_state import SQLiteStateStore
+
+        root = tmp_path / "share"
+        root.mkdir()
+        (root / "ntds.dit").write_bytes(b"creds")
+        sub = root / "configs"
+        sub.mkdir()
+        (sub / "web.config").write_text(
+            '<connectionStrings>'
+            '<add connectionString="Server=db;Password=s"/>'
+            '</connectionStrings>'
+        )
+        deep = sub / "nested"
+        deep.mkdir()
+        (deep / "id_rsa").write_text(
+            "-----BEGIN RSA PRIVATE KEY-----\nfake\n"
+        )
+
+        db_path = str(tmp_path / "state.db")
+        cfg = _make_resume_cfg(db_path, root)
+        _run(cfg)
+
+        store = SQLiteStateStore(db_path)
+        findings_first = store.count_findings()
+        store.close()
+
+        cfg2 = _make_resume_cfg(db_path, root)
+        _run(cfg2)
+
+        store = SQLiteStateStore(db_path)
+        findings_second = store.count_findings()
+        store.close()
+
+        assert findings_second == findings_first
+
+
+# ---------------------------------------------------------------------------
 # Download (--snaffle)
 # ---------------------------------------------------------------------------
 

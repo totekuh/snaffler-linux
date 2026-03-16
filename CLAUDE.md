@@ -7,7 +7,7 @@ Impacket port of [Snaffler](https://github.com/SnaffCon/Snaffler) — a post-exp
 - **Language**: Python 3.9+
 - **Package manager**: pip / setuptools
 - **Entry point**: `snaffler.cli.main:app` (Typer CLI, registered as `snaffler` console script)
-- **Version**: 1.5.4
+- **Version**: 1.5.5
 - **License**: Apache 2.0
 - **Author**: totekuh
 
@@ -96,11 +96,11 @@ Orchestrated by `SnafflerRunner.execute()` which selects the entry point:
 ```
 snaffler/
 ├── cli/main.py              # Typer CLI, option parsing, config assembly
-│   ├── results.py           # `snaffler results` subcommand: stats/findings from scan DB (plain/json/html)
+│   ├── results.py           # `snaffler results` subcommand: stats/findings/unreadable shares from scan DB (plain/json/html); HTML has host filter, connect command copy
 ├── api.py                   # Snaffler: high-level library API (walk, check_file, scan_content, check_dir)
 ├── config/configuration.py  # Dataclass-based config (Auth/Targeting/Scanning/Output/Advanced/Rules/Resume); local_targets for --local-fs, ftp_targets/ftp_tls for --ftp, rescan_unreadable for --rescan-unreadable
 ├── engine/
-│   ├── runner.py            # Top-level orchestrator (SnafflerRunner), DFS merge + dedup, 30s status thread, thread rebalancing, _rescan_unreadable()
+│   ├── runner.py            # Top-level orchestrator (SnafflerRunner), DFS merge + dedup, 30s status thread, thread rebalancing, _rescan_unreadable(), scan mode change detection
 │   ├── domain_pipeline.py   # Domain → computer list + DFS targets via LDAP
 │   ├── share_pipeline.py    # Computers → share UNC paths (ThreadPoolExecutor); stores all shares (readable + unreadable) with readable flag, returns only readable
 │   └── file_pipeline.py     # UNC paths → parallel tree walk → file scan (ThreadPoolExecutor, _BatchWriter); DI for TreeWalker + FileAccessor
@@ -199,6 +199,10 @@ SQLite database (WAL mode, thread-safe with locks) tracks:
 
 Phase flags in `sync` table: `computer_discovery_done`, `dns_resolution_done`, `share_discovery_done`. DNS resolution stores IPs incrementally; on interrupt the phase flag is NOT set, so only unresolved hosts are retried on resume. Directories are marked walked only after complete listing. Files are marked checked after scan attempt completes (regardless of result).
 
+**Scan mode change detection**: The `sync` table stores a `scan_mode` key (domain/computer/unc/local/ftp/rescan). On startup, `_check_scan_mode_changed()` compares the current mode with the stored one. If different, all phase flags are cleared (so discovery re-runs correctly), but findings/files/dirs are preserved. This prevents stale phase flags from corrupting scans when switching between `-d`/`--unc`/`--computer` etc. with the same state file.
+
+**`--max-depth` and resume**: Subdirectories beyond the depth limit are stored in `target_dir` as `walked=0` (not silently dropped). On resume with a higher `--max-depth`, these dirs pass the depth check and get walked. Already-checked files are skipped via `should_skip_file()`. This enables progressive deepening across runs.
+
 `_BatchWriter` daemon thread batches dir/file inserts (500 items or 1s interval) to reduce SQLite contention. On resume, unwalked dirs are re-scheduled and unchecked files from non-active shares are seeded into the scan queue. Finding counts (files_matched, severity counters) are restored from the `finding` table via `count_findings_by_triage()` in `_sync_progress_from_state()`.
 
 ### Authentication
@@ -221,7 +225,7 @@ Two auth paths, both in SMBTransport and LDAPTransport:
 
 `--exclude-unc` (aliased as `--exclude-path`) accepts glob patterns (repeatable) to skip directories during tree walking. Patterns are matched against the full path (case-insensitive), e.g. `*/Windows/*`, `*/node_modules/*`. Applied to both share roots (in `FilePipeline.run()`) and subdirectories (in `TreeWalker._should_scan_directory()`). Works with UNC, local, and FTP paths. Stored in `config.targets.exclude_unc` as a list of strings. Also available as `exclude_unc` parameter in the library API `Snaffler` constructor.
 
-`--fast` prepends 31 built-in exclusion patterns (`FAST_MODE_EXCLUSIONS` in `config/configuration.py`) that skip known time-waster directories: Windows OS internals (Installer, SoftwareDistribution, Temp, Logs, Prefetch, Fonts, etc.), program/package caches (WindowsApps, Windows Defender, Package Cache), version control internals (.git/objects, .svn, .hg), and build/dependency caches (__pycache__, .tox, .venv, .gradle, .m2, bower_components, .cargo, .npm). User-provided `--exclude-unc` patterns are preserved (appended after fast mode patterns). `--fast` also auto-sets `--max-threads-per-share` for interleaved walking.
+`--fast` prepends 30 built-in exclusion patterns (`FAST_MODE_EXCLUSIONS` in `config/configuration.py`) that skip known time-waster directories: Windows OS internals (Installer, SoftwareDistribution, Temp, Logs, Prefetch, Fonts, etc.), program/package caches (WindowsApps, Windows Defender, Package Cache), version control internals (.git/objects, .svn, .hg), and build/dependency caches (__pycache__, .tox, .venv, .gradle, .m2, bower_components, .cargo, .npm). Deliberately NOT excluded: `Windows/Panther` (contains `unattend.xml` with credentials — matched by `RelayUnattendXml` rule). User-provided `--exclude-unc` patterns are preserved (appended after fast mode patterns). `--fast` also auto-sets `--max-threads-per-share` for interleaved walking.
 
 ### Finding Post-Filter
 
@@ -239,6 +243,8 @@ Two auth paths, both in SMBTransport and LDAPTransport:
 2. Later, run with `--rescan-unreadable` + new creds + same `--state-file` — loads `readable=0` shares, applies `--share`/`--exclude-share` and `--exclusions` filters, re-tests each via `ShareFinder.is_share_readable()` using `ThreadPoolExecutor` (parallel, `share_threads` workers), updates DB flag on success, passes newly readable shares to `FilePipeline.run()`
 
 Per-share exception handling ensures one connection failure doesn't abort the entire rescan. Errors are tracked separately from "still denied" in the summary log. Mutually exclusive with `--local-fs` and `--ftp`. When combined with `--unc`/`--computer`/`--domain`, a warning is logged and the rescan takes priority. Implementation in `SnafflerRunner._rescan_unreadable()`.
+
+`snaffler results` shows unreadable share count in stats and lists all unreadable share UNC paths (plain/json/html). The HTML report shows unreadable count in the Shares stat card (red sub-label) and lists them in a dedicated section with `--rescan-unreadable` hint. Note: host-level `STATUS_LOGON_TYPE_NOT_GRANTED` errors (can't even enumerate shares) do NOT produce unreadable share records — only per-share access denied does.
 
 ### Runtime Hotkeys
 
@@ -272,7 +278,7 @@ Key test directories:
 - `test_cli/` — CLI run (flags, aliases, exclusions), dual output (auto-format), stdin, HTML report rendering, results subcommand
 - `test_config/` — configuration dataclass
 - `test_discovery/` — share finder, tree walker, AD discovery, FTP tree walker
-- `test_engine/` — file pipeline (52 tests: fan-out, resume, max-depth, share error tracking, progress, fair-share scheduling), runner (incl. rescan-unreadable tests), graceful shutdown
+- `test_engine/` — file pipeline (58 tests: fan-out, resume, max-depth, max-depth resume deepening, share error tracking, progress, fair-share scheduling), runner (incl. rescan-unreadable tests), graceful shutdown
 - `test_resume/` — scan state, SQLite state store
 - `test_transport/` — SMB, LDAP, SOCKS, FTP transport tests
 - `test_utils/` — hotkeys, nxc parser, progress, target parser

@@ -489,6 +489,98 @@ def test_resume_walked_dirs_files_preseeded():
     assert "//HOST/SHARE/done_dir/missed.txt" in scanned
 
 
+def test_resume_skips_done_shares():
+    """Shares marked done in the state DB are not walked at all on resume."""
+    cfg = make_cfg()
+
+    state = MagicMock()
+    state.should_skip_share.side_effect = lambda p: p == "//HOST/DONE"
+    state.should_skip_file.return_value = False
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state)
+
+    walked = []
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        walked.append(path)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    progress = ProgressState()
+    pipeline.progress = progress
+
+    pipeline.run(["//HOST/DONE", "//HOST/ACTIVE"])
+
+    # Done share should never be walked
+    assert "//HOST/DONE" not in walked
+    # Active share should still be walked
+    assert "//HOST/ACTIVE" in walked
+    # Done share counted as walked in progress
+    assert progress.shares_walked >= 1
+
+
+def test_resume_share_root_walked_only_subdirs_resumed():
+    """When share root was already walked, only unwalked subdirs are submitted."""
+    cfg = make_cfg()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    # Share root already walked in previous run
+    state.load_walked_dirs.return_value = ["//HOST/SHARE"]
+    state.load_unwalked_dirs.return_value = [
+        "//HOST/SHARE/unfinished",
+    ]
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state)
+
+    walked = []
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        walked.append(path)
+        if on_file and path == "//HOST/SHARE/unfinished":
+            on_file("//HOST/SHARE/unfinished/data.txt", 50, 0.0)
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # Share root should NOT be re-walked (already walked)
+    assert "//HOST/SHARE" not in walked
+    # Unwalked subdir should be walked
+    assert "//HOST/SHARE/unfinished" in walked
+
+
+def test_resume_share_root_walked_no_remaining_work_marks_done():
+    """Share with walked root and no unwalked subdirs is marked done."""
+    cfg = make_cfg()
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+    state.should_skip_file.return_value = False
+    state.load_walked_dirs.return_value = ["//HOST/SHARE"]
+    state.load_unwalked_dirs.return_value = []
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state)
+    pipeline.tree_walker.walk_directory = MagicMock(
+        side_effect=make_walk_side_effect([])
+    )
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    # Share should be marked done since root was walked and no work remains
+    state.mark_share_done.assert_any_call("//HOST/SHARE")
+
+
 def test_preseed_respects_exclude_share():
     """Files in DB from an excluded share are NOT scanned on resume."""
     cfg = make_cfg()
@@ -1564,3 +1656,362 @@ def test_fair_share_resume_respects_limit():
     assert "//HOST/SHARE/d1" in walked
     assert "//HOST/SHARE/d2" in walked
     assert "//HOST/SHARE/d3" in walked
+
+
+# ── max_depth resume with increased depth ────────────────────────
+
+
+def test_max_depth_increase_on_resume_walks_deeper_dirs_skips_checked_files():
+    """Full scenario: scan with max_depth=1, resume with max_depth=3.
+
+    Directory tree (4 levels deep):
+
+        //HOST/SHARE/                          depth 0
+        ├── root.txt
+        └── level1/                            depth 1
+            ├── shallow.txt
+            └── level2/                        depth 2 (skipped in run 1)
+                ├── medium.txt
+                └── level3/                    depth 3 (skipped in run 1)
+                    ├── deep.txt
+                    └── level4/                depth 4 (skipped in both runs)
+                        └── abyss.txt
+
+    Run 1 (max_depth=1):
+      - Walks //HOST/SHARE (depth 0) and //HOST/SHARE/level1 (depth 1)
+      - Scans root.txt and shallow.txt
+      - Discovers level2 but depth 2 > max_depth 1, so it's stored in DB but NOT walked
+      - level3 and level4 are never even discovered
+
+    Run 2 (max_depth=3, resume):
+      - Shares are already walked — should_skip_share returns False (shares remain in the run list)
+      - level2 appears in load_unwalked_dirs, depth 2 <= 3, so it's walked
+      - Walking level2 discovers level3 (depth 3 <= max_depth) → walked
+      - Walking level3 discovers level4 (depth 4 > max_depth 3) → stored but NOT walked
+      - root.txt and shallow.txt already checked → should_skip_file returns True → NOT re-scanned
+      - medium.txt and deep.txt are new → scanned
+      - abyss.txt is never discovered (level4 not walked)
+    """
+    # ── Run 1: max_depth=1 ──────────────────────────────────────
+
+    cfg1 = make_cfg()
+    cfg1.scanning.max_depth = 1
+
+    # Track what the state DB would contain after run 1
+    stored_dirs = {}    # path → walked flag
+    checked_files = set()
+
+    state1 = MagicMock()
+    state1.should_skip_share.return_value = False
+    state1.should_skip_file.return_value = False
+    state1.load_unwalked_dirs.return_value = []
+    state1.load_unchecked_files.return_value = []
+
+    def track_store_dirs(dirs):
+        for d in dirs:
+            if d.lower() not in stored_dirs:
+                stored_dirs[d.lower()] = False  # walked=False
+
+    def track_mark_walked(d):
+        stored_dirs[d.lower()] = True  # walked=True
+
+    def track_mark_checked(f):
+        checked_files.add(f.lower())
+
+    state1.store_dirs.side_effect = track_store_dirs
+    state1.mark_dir_walked.side_effect = track_mark_walked
+    state1.mark_file_checked.side_effect = track_mark_checked
+
+    pipeline1 = FilePipeline(cfg1, state=state1)
+
+    def walk_full_tree(path, on_file=None, on_dir=None, cancel=None):
+        """Simulates the real SMB tree walker discovering the full tree."""
+        if path == "//HOST/SHARE":
+            if on_file:
+                on_file("//HOST/SHARE/root.txt", 100, 1000.0)
+            if on_dir:
+                on_dir("//HOST/SHARE/level1")
+            return ["//HOST/SHARE/level1"]
+        if path == "//HOST/SHARE/level1":
+            if on_file:
+                on_file("//HOST/SHARE/level1/shallow.txt", 200, 2000.0)
+            if on_dir:
+                on_dir("//HOST/SHARE/level1/level2")
+            return ["//HOST/SHARE/level1/level2"]
+        if path == "//HOST/SHARE/level1/level2":
+            if on_file:
+                on_file("//HOST/SHARE/level1/level2/medium.txt", 300, 3000.0)
+            if on_dir:
+                on_dir("//HOST/SHARE/level1/level2/level3")
+            return ["//HOST/SHARE/level1/level2/level3"]
+        if path == "//HOST/SHARE/level1/level2/level3":
+            if on_file:
+                on_file("//HOST/SHARE/level1/level2/level3/deep.txt", 400, 4000.0)
+            if on_dir:
+                on_dir("//HOST/SHARE/level1/level2/level3/level4")
+            return ["//HOST/SHARE/level1/level2/level3/level4"]
+        if path == "//HOST/SHARE/level1/level2/level3/level4":
+            if on_file:
+                on_file("//HOST/SHARE/level1/level2/level3/level4/abyss.txt", 500, 5000.0)
+            return []
+        return []
+
+    pipeline1.tree_walker.walk_directory = MagicMock(side_effect=walk_full_tree)
+    pipeline1.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline1.run(["//HOST/SHARE"])
+
+    # Verify run 1 walked only depth 0 and 1
+    walked1 = [c[0][0] for c in pipeline1.tree_walker.walk_directory.call_args_list]
+    assert "//HOST/SHARE" in walked1
+    assert "//HOST/SHARE/level1" in walked1
+    assert "//HOST/SHARE/level1/level2" not in walked1, "level2 should NOT be walked at max_depth=1"
+    assert "//HOST/SHARE/level1/level2/level3" not in walked1
+    assert "//HOST/SHARE/level1/level2/level3/level4" not in walked1
+
+    # Verify run 1 scanned only files at depth 0-1
+    scanned1 = [c[0][0] for c in pipeline1.file_scanner.scan_file.call_args_list]
+    assert "//HOST/SHARE/root.txt" in scanned1
+    assert "//HOST/SHARE/level1/shallow.txt" in scanned1
+    assert len(scanned1) == 2, f"Expected 2 files scanned, got {scanned1}"
+
+    # Verify level2 was stored in DB as unwalked (our fix)
+    assert "//host/share/level1/level2" in stored_dirs, "level2 must be in DB"
+    assert stored_dirs["//host/share/level1/level2"] is False, "level2 must be unwalked"
+    # level3+ should NOT be in the DB (never discovered)
+    assert "//host/share/level1/level2/level3" not in stored_dirs
+    assert "//host/share/level1/level2/level3/level4" not in stored_dirs
+
+    # ── Run 2: max_depth=3 (resume) ─────────────────────────────
+
+    cfg2 = make_cfg()
+    cfg2.scanning.max_depth = 3
+
+    # Simulate the state DB as it would be after run 1:
+    # - share root and level1 are walked
+    # - level2 is unwalked (stored by our fix)
+    # - root.txt and shallow.txt are checked
+    state2 = MagicMock()
+    state2.should_skip_share.return_value = False
+
+    run1_checked = {"//host/share/root.txt", "//host/share/level1/shallow.txt"}
+
+    def skip_file_run2(path):
+        return path.lower() in run1_checked
+
+    state2.should_skip_file.side_effect = skip_file_run2
+
+    # Only level2 is unwalked — share root and level1 were already walked
+    state2.load_unwalked_dirs.return_value = [
+        "//HOST/SHARE/level1/level2",
+    ]
+    state2.load_unchecked_files.return_value = []
+
+    stored_dirs_run2 = {}
+
+    def track_store_dirs_run2(dirs):
+        for d in dirs:
+            if d.lower() not in stored_dirs_run2:
+                stored_dirs_run2[d.lower()] = False
+
+    def track_mark_walked_run2(d):
+        stored_dirs_run2[d.lower()] = True
+
+    state2.store_dirs.side_effect = track_store_dirs_run2
+    state2.mark_dir_walked.side_effect = track_mark_walked_run2
+
+    pipeline2 = FilePipeline(cfg2, state=state2)
+    pipeline2.tree_walker.walk_directory = MagicMock(side_effect=walk_full_tree)
+    pipeline2.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline2.run(["//HOST/SHARE"])
+
+    # Verify run 2 walks share root (always), level2 (resumed), level3 (newly discovered)
+    walked2 = [c[0][0] for c in pipeline2.tree_walker.walk_directory.call_args_list]
+    assert "//HOST/SHARE" in walked2, "Share root is always walked"
+    assert "//HOST/SHARE/level1/level2" in walked2, "level2 should be walked on resume with higher depth"
+    assert "//HOST/SHARE/level1/level2/level3" in walked2, "level3 should be walked (depth 3 <= max_depth 3)"
+    assert "//HOST/SHARE/level1/level2/level3/level4" not in walked2, \
+        "level4 should NOT be walked (depth 4 > max_depth 3)"
+
+    # Verify run 2 does NOT re-scan files from run 1
+    scanned2 = [c[0][0] for c in pipeline2.file_scanner.scan_file.call_args_list]
+    assert "//HOST/SHARE/root.txt" not in scanned2, "root.txt already checked — must NOT re-scan"
+    assert "//HOST/SHARE/level1/shallow.txt" not in scanned2, "shallow.txt already checked — must NOT re-scan"
+
+    # Verify run 2 DOES scan the newly discovered files
+    assert "//HOST/SHARE/level1/level2/medium.txt" in scanned2, "medium.txt is new — must be scanned"
+    assert "//HOST/SHARE/level1/level2/level3/deep.txt" in scanned2, "deep.txt is new — must be scanned"
+
+    # abyss.txt should NOT be scanned (level4 was not walked)
+    assert "//HOST/SHARE/level1/level2/level3/level4/abyss.txt" not in scanned2, \
+        "abyss.txt must NOT be scanned — level4 exceeds max_depth 3"
+
+    # Verify level4 was stored for a future even-deeper resume
+    assert "//host/share/level1/level2/level3/level4" in stored_dirs_run2, \
+        "level4 should be stored in DB for future resume with higher max_depth"
+    assert stored_dirs_run2["//host/share/level1/level2/level3/level4"] is False, \
+        "level4 should be stored as unwalked"
+
+
+def test_max_depth_increase_resume_same_depth_no_extra_work():
+    """Resume with the SAME max_depth does not re-walk or re-scan anything.
+
+    After run 1 with max_depth=1, level2 is stored as unwalked. If we resume
+    with the same max_depth=1, level2 should still be skipped (depth 2 > 1).
+    The only work should be re-walking the share root (always happens), but
+    files already checked should be skipped via should_skip_file.
+    """
+    cfg = make_cfg()
+    cfg.scanning.max_depth = 1
+
+    state = MagicMock()
+    state.should_skip_share.return_value = False
+
+    # All files from run 1 are already checked
+    state.should_skip_file.return_value = True
+
+    # level2 is in the DB as unwalked from run 1
+    state.load_unwalked_dirs.return_value = [
+        "//HOST/SHARE/level1/level2",
+    ]
+    state.load_unchecked_files.return_value = []
+
+    pipeline = FilePipeline(cfg, state=state)
+
+    def walk(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            if on_file:
+                on_file("//HOST/SHARE/root.txt", 100, 1000.0)
+            if on_dir:
+                on_dir("//HOST/SHARE/level1")
+            return ["//HOST/SHARE/level1"]
+        if path == "//HOST/SHARE/level1":
+            if on_file:
+                on_file("//HOST/SHARE/level1/shallow.txt", 200, 2000.0)
+            if on_dir:
+                on_dir("//HOST/SHARE/level1/level2")
+            return ["//HOST/SHARE/level1/level2"]
+        return []
+
+    pipeline.tree_walker.walk_directory = MagicMock(side_effect=walk)
+    pipeline.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline.run(["//HOST/SHARE"])
+
+    walked = [c[0][0] for c in pipeline.tree_walker.walk_directory.call_args_list]
+    # level2 should NOT be walked — still exceeds max_depth=1
+    assert "//HOST/SHARE/level1/level2" not in walked
+
+    # No files should be scanned — all already checked
+    scanned = [c[0][0] for c in pipeline.file_scanner.scan_file.call_args_list]
+    assert len(scanned) == 0, f"Expected 0 files scanned on same-depth resume, got {scanned}"
+
+
+def test_max_depth_increase_progressive_deepening():
+    """Three successive runs with increasing depth: 0 → 1 → 2.
+
+    Verifies that each run only does incremental work and that the stored
+    unwalked dirs chain correctly across multiple depth increases.
+
+    Tree:
+        //HOST/SHARE/           depth 0
+        └── a/                  depth 1
+            └── b/              depth 2
+                └── leaf.txt
+    """
+    # ── Run 1: max_depth=0 ──────────────────────────────────────
+
+    cfg1 = make_cfg()
+    cfg1.scanning.max_depth = 0
+
+    stored_unwalked_1 = []
+
+    state1 = MagicMock()
+    state1.should_skip_share.return_value = False
+    state1.should_skip_file.return_value = False
+    state1.load_unwalked_dirs.return_value = []
+    state1.load_unchecked_files.return_value = []
+    state1.store_dirs.side_effect = lambda dirs: stored_unwalked_1.extend(dirs)
+
+    pipeline1 = FilePipeline(cfg1, state=state1)
+
+    def walk_tree(path, on_file=None, on_dir=None, cancel=None):
+        if path == "//HOST/SHARE":
+            if on_file:
+                on_file("//HOST/SHARE/root.txt", 10, 0.0)
+            if on_dir:
+                on_dir("//HOST/SHARE/a")
+            return ["//HOST/SHARE/a"]
+        if path == "//HOST/SHARE/a":
+            if on_dir:
+                on_dir("//HOST/SHARE/a/b")
+            return ["//HOST/SHARE/a/b"]
+        if path == "//HOST/SHARE/a/b":
+            if on_file:
+                on_file("//HOST/SHARE/a/b/leaf.txt", 20, 0.0)
+            return []
+        return []
+
+    pipeline1.tree_walker.walk_directory = MagicMock(side_effect=walk_tree)
+    pipeline1.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline1.run(["//HOST/SHARE"])
+
+    walked1 = [c[0][0] for c in pipeline1.tree_walker.walk_directory.call_args_list]
+    assert walked1 == ["//HOST/SHARE"], "Run 1 should only walk share root"
+    scanned1 = [c[0][0] for c in pipeline1.file_scanner.scan_file.call_args_list]
+    assert scanned1 == ["//HOST/SHARE/root.txt"]
+    assert "//HOST/SHARE/a" in stored_unwalked_1, "dir 'a' stored for future resume"
+
+    # ── Run 2: max_depth=1 ──────────────────────────────────────
+
+    cfg2 = make_cfg()
+    cfg2.scanning.max_depth = 1
+
+    stored_unwalked_2 = []
+
+    state2 = MagicMock()
+    state2.should_skip_share.return_value = False
+    state2.should_skip_file.side_effect = lambda p: p.lower() == "//host/share/root.txt"
+    state2.load_unwalked_dirs.return_value = ["//HOST/SHARE/a"]  # from run 1
+    state2.load_unchecked_files.return_value = []
+    state2.store_dirs.side_effect = lambda dirs: stored_unwalked_2.extend(dirs)
+
+    pipeline2 = FilePipeline(cfg2, state=state2)
+    pipeline2.tree_walker.walk_directory = MagicMock(side_effect=walk_tree)
+    pipeline2.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline2.run(["//HOST/SHARE"])
+
+    walked2 = [c[0][0] for c in pipeline2.tree_walker.walk_directory.call_args_list]
+    assert "//HOST/SHARE/a" in walked2, "dir 'a' should be walked on resume (depth 1 <= max_depth 1)"
+    assert "//HOST/SHARE/a/b" not in walked2, "dir 'b' should NOT be walked (depth 2 > max_depth 1)"
+
+    scanned2 = [c[0][0] for c in pipeline2.file_scanner.scan_file.call_args_list]
+    assert "//HOST/SHARE/root.txt" not in scanned2, "root.txt already checked"
+    assert "//HOST/SHARE/a/b" in stored_unwalked_2, "dir 'b' stored for future resume"
+
+    # ── Run 3: max_depth=2 ──────────────────────────────────────
+
+    cfg3 = make_cfg()
+    cfg3.scanning.max_depth = 2
+
+    state3 = MagicMock()
+    state3.should_skip_share.return_value = False
+    state3.should_skip_file.side_effect = lambda p: p.lower() == "//host/share/root.txt"
+    state3.load_unwalked_dirs.return_value = ["//HOST/SHARE/a/b"]  # from run 2
+    state3.load_unchecked_files.return_value = []
+
+    pipeline3 = FilePipeline(cfg3, state=state3)
+    pipeline3.tree_walker.walk_directory = MagicMock(side_effect=walk_tree)
+    pipeline3.file_scanner.scan_file = MagicMock(return_value=None)
+
+    pipeline3.run(["//HOST/SHARE"])
+
+    walked3 = [c[0][0] for c in pipeline3.tree_walker.walk_directory.call_args_list]
+    assert "//HOST/SHARE/a/b" in walked3, "dir 'b' should be walked on resume (depth 2 <= max_depth 2)"
+
+    scanned3 = [c[0][0] for c in pipeline3.file_scanner.scan_file.call_args_list]
+    assert "//HOST/SHARE/root.txt" not in scanned3, "root.txt already checked"
+    assert "//HOST/SHARE/a/b/leaf.txt" in scanned3, "leaf.txt is new — must be scanned"

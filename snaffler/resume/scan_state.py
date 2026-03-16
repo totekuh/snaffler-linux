@@ -29,6 +29,15 @@ class ScanState:
     def mark_phase_done(self, phase: str):
         self.store.set_sync_flag(phase)
 
+    def get_sync_value(self, key: str) -> str | None:
+        return self.store.get_sync_value(key)
+
+    def set_sync_value(self, key: str, value: str):
+        self.store.set_sync_value(key, value)
+
+    def clear_phase_flags(self):
+        self.store.clear_phase_flags()
+
     # ---------- computers ----------
 
     def store_computers(self, computers: list):
@@ -249,6 +258,30 @@ class SQLiteStateStore:
         with self.lock:
             self.conn.execute(
                 "INSERT OR IGNORE INTO sync VALUES (?, '1')", (key,)
+            )
+            self.conn.commit()
+
+    def get_sync_value(self, key: str) -> str | None:
+        with self.lock:
+            cur = self.conn.execute(
+                "SELECT value FROM sync WHERE key = ?", (key,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+
+    def set_sync_value(self, key: str, value: str):
+        with self.lock:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO sync VALUES (?, ?)", (key, value)
+            )
+            self.conn.commit()
+
+    def clear_phase_flags(self):
+        with self.lock:
+            self.conn.execute(
+                "DELETE FROM sync WHERE key IN "
+                "('computer_discovery_done', 'dns_resolution_done', "
+                "'share_discovery_done')"
             )
             self.conn.commit()
 

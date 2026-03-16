@@ -40,6 +40,7 @@ _PORT_CHECK_TIMEOUT = 3  # seconds — TCP probe during DNS pre-resolution
 _PHASE_COMPUTERS = "computer_discovery_done"
 _PHASE_DNS = "dns_resolution_done"
 _PHASE_SHARES = "share_discovery_done"
+_SYNC_SCAN_MODE = "scan_mode"
 
 
 class SnafflerRunner:
@@ -508,12 +509,43 @@ class SnafflerRunner:
             self._rebalance_file_threads()
             self.file_pipeline.run(newly_readable)
 
+    def _detect_scan_mode(self) -> str:
+        """Determine the current scan mode from config."""
+        if self.cfg.targets.rescan_unreadable:
+            return "rescan"
+        if self.cfg.targets.ftp_targets:
+            return "ftp"
+        if self.cfg.targets.local_targets:
+            return "local"
+        if self.cfg.targets.unc_targets:
+            return "unc"
+        if self.cfg.targets.computer_targets:
+            return "computer"
+        if self.cfg.auth.domain:
+            return "domain"
+        return "unknown"
+
+    def _check_scan_mode_changed(self):
+        """Reset phase flags if scan mode changed since last run."""
+        if not self.state:
+            return
+        mode = self._detect_scan_mode()
+        prev = self.state.get_sync_value(_SYNC_SCAN_MODE)
+        if prev and prev != mode:
+            logger.warning(
+                f"Scan mode changed ({prev} -> {mode}) — "
+                f"resetting discovery phase flags (findings preserved)"
+            )
+            self.state.clear_phase_flags()
+        self.state.set_sync_value(_SYNC_SCAN_MODE, mode)
+
     def execute(self):
         self.start_time = datetime.now()
         logger.info(f"Starting Snaffler at {self.start_time:%Y-%m-%d %H:%M:%S}")
 
         self._start_status_thread()
         start_hotkey_listener(self._stop_event)
+        self._check_scan_mode_changed()
         interrupted = False
         try:
             if self.cfg.web.enabled:

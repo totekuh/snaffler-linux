@@ -66,7 +66,15 @@ def _query_stats(conn: sqlite3.Connection) -> dict:
     stats["computers"] = comp
 
     # Shares
-    stats["shares"] = _count("target_share", "done", 1)
+    share_stats = _count("target_share", "done", 1)
+    try:
+        unreadable = conn.execute(
+            "SELECT COUNT(*) FROM target_share WHERE readable = 0"
+        ).fetchone()[0]
+    except Exception:
+        unreadable = 0
+    share_stats["unreadable"] = unreadable
+    stats["shares"] = share_stats
 
     # Directories
     dir_stats = _count("target_dir", "walked", 1)
@@ -93,6 +101,16 @@ def _query_stats(conn: sqlite3.Connection) -> dict:
     return stats
 
 
+def _query_unreadable_shares(conn: sqlite3.Connection) -> list:
+    try:
+        rows = conn.execute(
+            "SELECT unc_path FROM target_share WHERE readable = 0 ORDER BY unc_path"
+        ).fetchall()
+        return [row[0] for row in rows]
+    except Exception:
+        return []
+
+
 def _query_findings(conn: sqlite3.Connection, min_interest: int) -> list:
     # Map min_interest (0=Green+, 1=Yellow+, 2=Red+, 3=Black only) to triage names
     threshold = 3 - min_interest  # Green=0→3, Yellow=1→2, Red=2→1, Black=3→0
@@ -115,7 +133,7 @@ def _query_findings(conn: sqlite3.Connection, min_interest: int) -> list:
     return findings
 
 
-def _render_plain(stats: dict, findings: list, use_color: bool):
+def _render_plain(stats: dict, findings: list, unreadable_shares: list, use_color: bool):
     lines = []
 
     lines.append(f"{'── Stats ':─<50}")
@@ -124,7 +142,10 @@ def _render_plain(stats: dict, findings: list, use_color: bool):
         f"Computers:   {c['total']:,} discovered, {c['resolved']:,} resolved, {c['done']:,} done"
     )
     s = stats["shares"]
-    lines.append(f"Shares:      {s['total']:,} discovered, {s['done']:,} done")
+    share_line = f"Shares:      {s['total']:,} discovered, {s['done']:,} done"
+    if s.get("unreadable"):
+        share_line += f", {s['unreadable']:,} unreadable"
+    lines.append(share_line)
     d = stats["directories"]
     lines.append(f"Directories: {d['total']:,} discovered, {d['walked']:,} walked")
     f = stats["files"]
@@ -172,11 +193,18 @@ def _render_plain(stats: dict, findings: list, use_color: bool):
             preview = ctx[:200] + ("..." if len(ctx) > 200 else "")
             lines.append(f"  Context: {preview}")
 
+    if unreadable_shares:
+        lines.append("")
+        lines.append(f"{'── Unreadable Shares (' + str(len(unreadable_shares)) + ') ':─<50}")
+        lines.append(" Use --rescan-unreadable with new creds to retry these:")
+        for share in unreadable_shares:
+            lines.append(f"  {share}")
+
     typer.echo("\n".join(lines))
 
 
-def _render_json(stats: dict, findings: list):
-    output = {"stats": stats, "findings": findings}
+def _render_json(stats: dict, findings: list, unreadable_shares: list):
+    output = {"stats": stats, "findings": findings, "unreadable_shares": unreadable_shares}
     typer.echo(json.dumps(output, indent=2, default=str))
 
 
@@ -188,7 +216,19 @@ TRIAGE_HTML_COLORS = {
 }
 
 
-def _render_html(stats: dict, findings: list) -> str:
+def _render_unreadable_html(shares: list) -> str:
+    if not shares:
+        return ""
+    esc = html.escape
+    items = "\n".join(f"<li>{esc(s)}</li>" for s in shares)
+    return (
+        f'<h2>Unreadable Shares ({len(shares):,})</h2>'
+        f'<p style="color:#888;font-size:0.85em;">Use <code>--rescan-unreadable</code> with new creds to retry these.</p>'
+        f'<ul style="color:#e74c3c;font-size:0.9em;">{items}</ul>'
+    )
+
+
+def _render_html(stats: dict, findings: list, unreadable_shares: list | None = None) -> str:
     esc = html.escape
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -211,9 +251,21 @@ def _render_html(stats: dict, findings: list) -> str:
         data = f' data-triage="{esc(triage)}"' if clickable else ''
         return f'<span class="badge"{data} style="background:{color}">{esc(triage)}</span>'
 
+    def _stat_card_sub(label, done, total, sub_label=None, sub_value=None):
+        sub = ""
+        if sub_value:
+            sub = f'<div class="card-sub">{sub_value:,} {esc(sub_label)}</div>'
+        return (
+            f'<div class="card">'
+            f'<div class="card-value">{done:,} / {total:,}</div>'
+            f'<div class="card-label">{esc(label)}</div>'
+            f'{sub}'
+            f'</div>'
+        )
+
     cards = (
         _stat_card("Computers", c["done"], c["total"])
-        + _stat_card("Shares", s["done"], s["total"])
+        + _stat_card_sub("Shares", s["done"], s["total"], "unreadable", s.get("unreadable", 0))
         + _stat_card("Directories", d["walked"], d["total"])
         + _stat_card("Files", f["checked"], f["total"])
     )
@@ -250,10 +302,23 @@ def _render_html(stats: dict, findings: list) -> str:
         match_html = f'<span class="match">{esc(match_display)}</span>' if match_text else ""
 
         finding_id = finding.get("finding_id") or f"f{idx}"
+        # Extract host from UNC path (//HOST/SHARE/...) or FTP URL (ftp://HOST:PORT/...)
+        file_path = finding["file_path"]
+        host = ""
+        if file_path.startswith("//"):
+            parts = file_path.split("/")
+            if len(parts) >= 3:
+                host = parts[2]
+        elif file_path.startswith("ftp://"):
+            rest = file_path[6:]
+            slash_idx = rest.find("/")
+            host = rest[:slash_idx] if slash_idx != -1 else rest
+
         rows += (
             f'<tr data-idx="{idx}" data-id="{esc(finding_id)}" data-triage="{esc(triage)}" '
             f'data-rule="{esc(finding["rule_name"])}" '
-            f'data-path="{esc(finding["file_path"])}" '
+            f'data-host="{esc(host)}" '
+            f'data-path="{esc(file_path)}" '
             f'data-size="{esc(size_str)}" '
             f'data-mtime="{esc(mtime_str)}" data-status="">'
             f'<td class="status-cell"></td>'
@@ -282,6 +347,7 @@ def _render_html(stats: dict, findings: list) -> str:
   .card {{ background: #2d2d2d; border-radius: 8px; padding: 16px 24px; min-width: 140px; text-align: center; }}
   .card-value {{ font-size: 1.4em; font-weight: bold; color: #fff; }}
   .card-label {{ color: #888; font-size: 0.85em; margin-top: 4px; }}
+  .card-sub {{ color: #e74c3c; font-size: 0.8em; margin-top: 2px; }}
   .toolbar {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }}
   .severities {{ display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }}
   .severity {{ display: flex; align-items: center; gap: 6px; font-size: 1em; }}
@@ -291,8 +357,8 @@ def _render_html(stats: dict, findings: list) -> str:
   .badge[data-triage].dimmed {{ opacity: 0.35; }}
   #clear-filter {{ background: #333; color: #aaa; border: 1px solid #444; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-family: inherit; font-size: 0.85em; }}
   #clear-filter:hover {{ background: #444; color: #fff; }}
-  #rule-filter {{ padding: 8px 12px; background: #2d2d2d; color: #d4d4d4; border: 1px solid #444; border-radius: 6px; font-family: inherit; font-size: 0.9em; outline: none; max-width: 260px; }}
-  #rule-filter:focus {{ border-color: #888; }}
+  #host-filter, #rule-filter {{ padding: 8px 12px; background: #2d2d2d; color: #d4d4d4; border: 1px solid #444; border-radius: 6px; font-family: inherit; font-size: 0.9em; outline: none; max-width: 260px; }}
+  #host-filter:focus, #rule-filter:focus {{ border-color: #888; }}
   #search {{ flex: 1; min-width: 200px; padding: 10px 14px; background: #2d2d2d; color: #d4d4d4; border: 1px solid #444; border-radius: 6px; font-family: inherit; font-size: 1em; outline: none; }}
   #search:focus {{ border-color: #888; }}
   table {{ width: 100%; border-collapse: collapse; }}
@@ -355,6 +421,7 @@ def _render_html(stats: dict, findings: list) -> str:
 <div class="toolbar">
   <div class="severities">
 {severity_badges}  </div>
+  <select id="host-filter"><option value="">All Hosts</option></select>
   <select id="rule-filter"><option value="">All Rules</option></select>
   <div class="status-btns">
     <button class="status-btn" data-status-filter="review">Review Later</button>
@@ -380,6 +447,7 @@ def _render_html(stats: dict, findings: list) -> str:
 {rows}</tbody>
 </table>
 
+{_render_unreadable_html(unreadable_shares or [])}
 <div class="footer">Generated by snaffler-ng</div>
 
 <!-- Modal -->
@@ -395,6 +463,13 @@ def _render_html(stats: dict, findings: list) -> str:
       <div class="modal-path">
         <span id="m-path"></span>
         <button class="copy-btn" id="copy-path">Copy</button>
+      </div>
+    </div>
+    <div class="modal-field" id="m-cmd-wrap">
+      <label>Connect</label>
+      <div class="modal-path">
+        <code id="m-cmd" style="flex:1; color:#7ec8e3; font-size:0.9em;"></code>
+        <button class="copy-btn" id="copy-cmd">Copy</button>
       </div>
     </div>
     <div class="modal-meta">
@@ -421,6 +496,7 @@ def _render_html(stats: dict, findings: list) -> str:
 var MODAL_DATA = {modal_data_json};
 var activeTriage = null;
 var activeRule = "";
+var activeHost = "";
 var activeStatus = "";  // "", "review", "done", "hide-done"
 var TRIAGE_ORDER = {{'Black':0,'Red':1,'Yellow':2,'Green':3}};
 var TRIAGE_COLOR = {{'Black':'#888','Red':'#e74c3c','Yellow':'#f1c40f','Green':'#27ae60'}};
@@ -475,18 +551,27 @@ document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
   }});
 }});
 
-// Populate rule dropdown from findings
+// Populate host and rule dropdowns from findings
 (function() {{
-  var seen = {{}};
-  var sel = document.getElementById('rule-filter');
+  var seenRule = {{}}, seenHost = {{}};
+  var ruleSel = document.getElementById('rule-filter');
+  var hostSel = document.getElementById('host-filter');
   document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
     var rule = row.getAttribute('data-rule');
-    if (rule && !seen[rule]) {{
-      seen[rule] = true;
+    if (rule && !seenRule[rule]) {{
+      seenRule[rule] = true;
       var opt = document.createElement('option');
       opt.value = rule;
       opt.textContent = rule;
-      sel.appendChild(opt);
+      ruleSel.appendChild(opt);
+    }}
+    var host = row.getAttribute('data-host');
+    if (host && !seenHost[host]) {{
+      seenHost[host] = true;
+      var opt = document.createElement('option');
+      opt.value = host;
+      opt.textContent = host;
+      hostSel.appendChild(opt);
     }}
   }});
 }})();
@@ -504,8 +589,10 @@ document.querySelectorAll('.badge[data-triage]').forEach(function(badge) {{
 document.getElementById('clear-filter').addEventListener('click', function() {{
   activeTriage = null;
   activeRule = "";
+  activeHost = "";
   activeStatus = "";
   document.getElementById('rule-filter').value = "";
+  document.getElementById('host-filter').value = "";
   document.getElementById('search').value = "";
   document.querySelectorAll('.status-btn').forEach(function(b) {{ b.classList.remove('active'); }});
   syncBadges();
@@ -514,6 +601,11 @@ document.getElementById('clear-filter').addEventListener('click', function() {{
 
 document.getElementById('rule-filter').addEventListener('change', function() {{
   activeRule = this.value;
+  applyFilter();
+}});
+
+document.getElementById('host-filter').addEventListener('change', function() {{
+  activeHost = this.value;
   applyFilter();
 }});
 
@@ -546,6 +638,7 @@ function applyFilter() {{
   document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
     var triageOk = !activeTriage || row.getAttribute('data-triage') === activeTriage;
     var ruleOk = !activeRule || row.getAttribute('data-rule') === activeRule;
+    var hostOk = !activeHost || row.getAttribute('data-host') === activeHost;
     var rowStatus = row.getAttribute('data-status') || '';
     var statusOk = true;
     if (activeStatus === 'review') {{ statusOk = rowStatus === 'review'; }}
@@ -560,7 +653,7 @@ function applyFilter() {{
         + "\\n" + (data.context || "").toLowerCase();
       textOk = haystack.indexOf(term) !== -1;
     }}
-    var show = triageOk && ruleOk && statusOk && textOk;
+    var show = triageOk && ruleOk && hostOk && statusOk && textOk;
     row.style.display = show ? '' : 'none';
     if (show) visible++;
   }});
@@ -616,6 +709,14 @@ document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
     document.getElementById('m-path').textContent = this.getAttribute('data-path');
     document.getElementById('m-size').textContent = this.getAttribute('data-size');
     document.getElementById('m-mtime').textContent = this.getAttribute('data-mtime');
+    var cmd = buildConnectCmd(this.getAttribute('data-path'));
+    var cmdWrap = document.getElementById('m-cmd-wrap');
+    if (cmd) {{
+      document.getElementById('m-cmd').textContent = cmd;
+      cmdWrap.style.display = '';
+    }} else {{
+      cmdWrap.style.display = 'none';
+    }}
     var matchWrap = document.getElementById('m-match-wrap');
     if (data.match) {{
       document.getElementById('m-match').textContent = data.match;
@@ -661,13 +762,55 @@ document.getElementById('copy-path').addEventListener('click', function(e) {{
   btn.textContent = 'Copied!';
   setTimeout(function() {{ btn.textContent = 'Copy'; }}, 1500);
 }});
+
+function buildConnectCmd(path) {{
+  // UNC: //HOST/SHARE/... → impacket-smbclient HOST -k -no-pass
+  // FTP: ftp://HOST:PORT/... → ftp HOST PORT
+  // Local: /path/... → no command
+  if (path.startsWith('ftp://')) {{
+    var rest = path.slice(6);
+    var slashIdx = rest.indexOf('/');
+    var hostPort = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
+    var parts = hostPort.split(':');
+    var host = parts[0];
+    var port = parts[1] || '21';
+    return port === '21' ? 'ftp ' + host : 'ftp ' + host + ' ' + port;
+  }}
+  if (path.startsWith('//')) {{
+    var parts = path.split('/');
+    // parts: ["", "", HOST, SHARE, ...]
+    if (parts.length >= 3) {{
+      return 'impacket-smbclient ' + parts[2] + ' -k -no-pass';
+    }}
+  }}
+  return '';
+}}
+
+document.getElementById('copy-cmd').addEventListener('click', function(e) {{
+  e.stopPropagation();
+  navigator.clipboard.writeText(document.getElementById('m-cmd').textContent);
+  var btn = this;
+  btn.textContent = 'Copied!';
+  setTimeout(function() {{ btn.textContent = 'Copy'; }}, 1500);
+}});
 </script>
 </body>
 </html>"""
 
 
+def _query_rule_counts(conn: sqlite3.Connection) -> list:
+    """Return [(rule_name, triage, count)] sorted by count descending."""
+    rows = conn.execute(
+        "SELECT rule_name, triage, COUNT(*) as cnt "
+        "FROM finding GROUP BY rule_name, triage "
+        "ORDER BY cnt DESC"
+    ).fetchall()
+    return [(row[0], row[1], row[2]) for row in rows]
+
+
 @results_app.callback(invoke_without_command=True)
 def results(
+    ctx: typer.Context,
     state: Path = typer.Option(
         Path("snaffler.db"),
         "-s", "--state",
@@ -691,18 +834,96 @@ def results(
         min=0,
         max=3,
     ),
+    rule: Optional[list[str]] = typer.Option(
+        None,
+        "--rule", "-r",
+        help="Filter findings by rule name (repeatable)",
+    ),
+    hide_unreadable: bool = typer.Option(
+        False,
+        "--hide-unreadable", "-hu",
+        help="Hide unreadable shares section",
+    ),
 ):
+    # Store shared options for subcommands
+    ctx.ensure_object(dict)
+    ctx.obj["state"] = state
+    ctx.obj["no_color"] = no_color
+
+    # If a subcommand is being invoked, skip the default results display
+    if ctx.invoked_subcommand is not None:
+        return
+
     conn = _open_db(state)
     try:
         stats = _query_stats(conn)
         findings = _query_findings(conn, min_interest)
+        unreadable = [] if hide_unreadable else _query_unreadable_shares(conn)
+    finally:
+        conn.close()
+
+    # Apply --rule filter
+    if rule:
+        rule_set = {r.lower() for r in rule}
+        findings = [f for f in findings if f["rule_name"].lower() in rule_set]
+
+    if fmt == "json":
+        _render_json(stats, findings, unreadable)
+    elif fmt == "html":
+        typer.echo(_render_html(stats, findings, unreadable))
+    else:
+        use_color = not no_color and sys.stdout.isatty()
+        _render_plain(stats, findings, unreadable, use_color)
+
+
+@results_app.command()
+def rules(
+    ctx: typer.Context,
+    state: Path = typer.Option(
+        Path("snaffler.db"),
+        "-s", "--state",
+        help="Path to the scan state database",
+    ),
+    fmt: Optional[str] = typer.Option(
+        "plain",
+        "-f", "--format",
+        help="Output format",
+        click_type=click.Choice(["plain", "json"], case_sensitive=False),
+    ),
+    no_color: bool = typer.Option(
+        False,
+        "--no-color",
+        help="Disable colored output",
+    ),
+):
+    """List all matching rules and their finding counts."""
+    conn = _open_db(state)
+    try:
+        rule_counts = _query_rule_counts(conn)
     finally:
         conn.close()
 
     if fmt == "json":
-        _render_json(stats, findings)
-    elif fmt == "html":
-        typer.echo(_render_html(stats, findings))
-    else:
-        use_color = not no_color and sys.stdout.isatty()
-        _render_plain(stats, findings, use_color)
+        output = [
+            {"rule_name": name, "triage": triage, "count": cnt}
+            for name, triage, cnt in rule_counts
+        ]
+        typer.echo(json.dumps(output, indent=2))
+        return
+
+    if not rule_counts:
+        typer.echo("No findings in database.")
+        return
+
+    use_color = not no_color and sys.stdout.isatty()
+    total = sum(cnt for _, _, cnt in rule_counts)
+    lines = [f"{'── Rules (' + str(len(rule_counts)) + ' rules, ' + str(total) + ' findings) ':─<60}"]
+
+    for rule_name, triage, count in rule_counts:
+        if use_color:
+            color = TRIAGE_COLORS.get(triage, "")
+            lines.append(f"  {color}[{triage}]{Colors.RESET} {rule_name}: {count:,}")
+        else:
+            lines.append(f"  [{triage}] {rule_name}: {count:,}")
+
+    typer.echo("\n".join(lines))

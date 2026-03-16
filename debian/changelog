@@ -1,3 +1,11 @@
+snaffler-ng (1.5.5-0kali1) kali-dev; urgency=medium
+
+  * Fix --max-depth resume: store beyond-limit dirs for future deeper scans
+  * Fix --fast excluding Windows/Panther (contains unattend.xml with credentials)
+  * HTML report: add connect command with copy button in finding modal
+
+ -- totekuh <totekuh@protonmail.com>  Tue, 10 Mar 2026 12:00:00 +0000
+
 snaffler-ng (1.5.4-0kali1) kali-dev; urgency=medium
 
   * Add --fast: skip known time-waster directories (31 exclusion patterns)
