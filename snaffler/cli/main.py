@@ -65,6 +65,104 @@ def banner():
     """)
 
 
+def _run_grab(cfg: SnafflerConfiguration):
+    """Bulk download mode: read file paths from stdin, download each."""
+    import sys
+    import logging
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    logger = logging.getLogger("snaffler")
+    dest = cfg.scanning.snaffle_path
+    Path(dest).mkdir(parents=True, exist_ok=True)
+
+    # Read paths from stdin
+    raw = sys.stdin.read()
+    paths = [line.strip() for line in raw.splitlines() if line.strip()]
+    if not paths:
+        typer.echo("No file paths received on stdin.", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Grabbing {len(paths)} files to {dest}")
+
+    # Group paths by protocol and create accessors
+    smb_paths = []
+    ftp_paths = []
+    local_paths = []
+    for p in paths:
+        if p.startswith("ftp://"):
+            ftp_paths.append(p)
+        elif p.startswith("//"):
+            smb_paths.append(p)
+        else:
+            local_paths.append(p)
+
+    accessors = {}
+    if smb_paths:
+        from snaffler.accessors.smb_file_accessor import SMBFileAccessor
+        accessors["smb"] = SMBFileAccessor(cfg)
+    if ftp_paths:
+        from snaffler.accessors.ftp_file_accessor import FTPFileAccessor
+        accessors["ftp"] = FTPFileAccessor(cfg)
+    if local_paths:
+        from snaffler.accessors.local_file_accessor import LocalFileAccessor
+        accessors["local"] = LocalFileAccessor()
+
+    ok = 0
+    fail = 0
+    skip = 0
+
+    def _resolve_local_path(file_path: str) -> Path:
+        """Return the expected local path for a downloaded file."""
+        import os
+        if file_path.startswith("ftp://"):
+            from snaffler.discovery.ftp_tree_walker import parse_ftp_url
+            parsed = parse_ftp_url(file_path)
+            if parsed:
+                host, _port, remote = parsed
+                return (Path(dest) / host / remote.lstrip("/")).resolve()
+        elif file_path.startswith("//"):
+            from snaffler.utils.path_utils import parse_unc_path
+            parsed = parse_unc_path(file_path)
+            if parsed:
+                server, share, smb_path, _name, _ext = parsed
+                clean = smb_path.lstrip("\\/").replace("\\", "/")
+                return (Path(dest) / server / share / clean).resolve()
+        else:
+            rel = os.path.relpath(file_path, "/")
+            return (Path(dest) / rel).resolve()
+        return None
+
+    def _grab_one(file_path: str) -> bool:
+        """Download one file. Returns True on success."""
+        if file_path.startswith("ftp://"):
+            accessor = accessors["ftp"]
+        elif file_path.startswith("//"):
+            accessor = accessors["smb"]
+        else:
+            accessor = accessors["local"]
+        accessor.copy_to_local(file_path, dest)
+        local = _resolve_local_path(file_path)
+        return local is not None and local.exists()
+
+    workers = max(1, cfg.advanced.file_threads)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        future_to_path = {pool.submit(_grab_one, p): p for p in paths}
+        for future in as_completed(future_to_path):
+            p = future_to_path[future]
+            try:
+                if future.result():
+                    ok += 1
+                    logger.info(f"[OK] {p}")
+                else:
+                    fail += 1
+                    logger.warning(f"[FAIL] {p}")
+            except Exception as e:
+                fail += 1
+                logger.warning(f"[FAIL] {p}: {e}")
+
+    typer.echo(f"\nDone: {ok} downloaded, {fail} failed ({len(paths)} total)")
+
+
 @app.callback(invoke_without_command=True)
 def main(
         ctx: typer.Context,
@@ -153,6 +251,11 @@ def main(
         rescan_unreadable: bool = typer.Option(
             False, "--rescan-unreadable",
             help="Re-test previously unreadable shares from state DB with current creds",
+            rich_help_panel="Targeting",
+        ),
+        grab: bool = typer.Option(
+            False, "--grab",
+            help="Bulk download mode: read file paths from stdin, download to -m dir (no scanning)",
             rich_help_panel="Targeting",
         ),
         include_disabled: bool = typer.Option(
@@ -431,6 +534,18 @@ def main(
     if _explicit("max_hosts"):
         cfg.targets.max_hosts = max_hosts
 
+    # ---------- GRAB MODE VALIDATION ----------
+    if grab:
+        if not snaffle_path:
+            raise typer.BadParameter("--grab requires -m/--snaffle-path")
+        if (cfg.targets.unc_targets or cfg.targets.computer_targets
+                or cfg.targets.local_targets or cfg.auth.domain
+                or cfg.targets.ftp_targets or stdin_mode
+                or cfg.targets.rescan_unreadable):
+            raise typer.BadParameter(
+                "--grab is mutually exclusive with all other targeting modes"
+            )
+
     # ---------- LOCAL TARGET VALIDATION ----------
     if cfg.targets.local_targets:
         if cfg.targets.unc_targets or cfg.targets.computer_targets or cfg.auth.domain or stdin_mode:
@@ -499,12 +614,12 @@ def main(
         )
 
     # At least one targeting mode must be selected
-    if not (has_unc or has_local or has_computers or has_domain or has_ftp
+    if not grab and not (has_unc or has_local or has_computers or has_domain or has_ftp
             or cfg.targets.rescan_unreadable):
         raise typer.BadParameter(
             "No targets specified. Use one of: "
             "--unc, --local-fs, --ftp, --computer/--computer-file, --stdin, --domain, "
-            "or --rescan-unreadable"
+            "--grab, or --rescan-unreadable"
         )
     # ---------- SCANNING ----------
     if _explicit("min_interest"):   cfg.scanning.min_interest = min_interest
@@ -612,6 +727,11 @@ def main(
             setup_custom_dns(nameserver)
         except (ImportError, ValueError) as exc:
             raise typer.BadParameter(str(exc))
+
+    # ---------- grab mode ----------
+    if grab:
+        _run_grab(cfg)
+        raise typer.Exit()
 
     # ---------- run ----------
     snaff = SnafflerRunner(cfg)

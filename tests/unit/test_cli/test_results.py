@@ -349,3 +349,48 @@ def test_rules_subcommand_json(tmp_path):
     data = json.loads(result.output)
     assert len(data) == 2
     assert all(r["triage"] == "Black" for r in data)
+
+
+# ---------- --files flag ----------
+
+
+def test_files_flag_prints_paths(tmp_path):
+    db_path = tmp_path / "snaffler.db"
+    conn = _create_db(db_path)
+    _populate_db(conn)
+    conn.close()
+
+    result = runner.invoke(app, ["results", "--state", str(db_path), "--files"])
+    assert result.exit_code == 0
+    lines = [l for l in result.output.strip().splitlines() if l]
+    assert len(lines) == 5
+    assert "//DC01/IT$/passwords.kdbx" in lines
+    assert "//FS01/Data/readme.md" in lines
+
+
+def test_files_flag_respects_min_interest(tmp_path):
+    db_path = tmp_path / "snaffler.db"
+    conn = _create_db(db_path)
+    _populate_db(conn)
+    conn.close()
+
+    result = runner.invoke(app, ["results", "--state", str(db_path), "--files", "-b", "3"])
+    assert result.exit_code == 0
+    lines = [l for l in result.output.strip().splitlines() if l]
+    assert len(lines) == 2
+    assert all("//" in l for l in lines)
+
+
+def test_files_flag_respects_rule_filter(tmp_path):
+    db_path = tmp_path / "snaffler.db"
+    conn = _create_db(db_path)
+    _populate_db(conn)
+    conn.close()
+
+    result = runner.invoke(
+        app, ["results", "--state", str(db_path), "--files", "--rule", "KeepPassKDBX"]
+    )
+    assert result.exit_code == 0
+    lines = [l for l in result.output.strip().splitlines() if l]
+    assert len(lines) == 1
+    assert "passwords.kdbx" in lines[0]

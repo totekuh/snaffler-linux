@@ -852,6 +852,11 @@ def results(
         "--hide-unreadable", "-hu",
         help="Hide unreadable shares section",
     ),
+    files: bool = typer.Option(
+        False,
+        "--files",
+        help="Print one file path per line (pipe into --grab)",
+    ),
 ):
     # Store shared options for subcommands
     ctx.ensure_object(dict)
@@ -865,9 +870,10 @@ def results(
 
     conn = _open_db(state)
     try:
-        stats = _query_stats(conn)
         findings = _query_findings(conn, min_interest)
-        unreadable = [] if hide_unreadable else _query_unreadable_shares(conn)
+        if not files:
+            stats = _query_stats(conn)
+            unreadable = [] if hide_unreadable else _query_unreadable_shares(conn)
     finally:
         conn.close()
 
@@ -875,6 +881,11 @@ def results(
     if rule:
         rule_set = {r.lower() for r in rule}
         findings = [f for f in findings if f["rule_name"].lower() in rule_set]
+
+    if files:
+        for f in findings:
+            typer.echo(f["file_path"])
+        return
 
     if fmt == "json":
         _render_json(stats, findings, unreadable)
