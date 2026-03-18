@@ -285,3 +285,67 @@ def test_empty_db_json(tmp_path):
     data = json.loads(result.output)
     assert data["stats"]["findings"]["total"] == 0
     assert data["findings"] == []
+
+
+# ---------- rules subcommand ----------
+
+
+def test_rules_subcommand_shows_all(tmp_path):
+    db_path = tmp_path / "snaffler.db"
+    conn = _create_db(db_path)
+    _populate_db(conn)
+    conn.close()
+
+    result = runner.invoke(app, ["results", "--state", str(db_path), "--no-color", "rules"])
+    assert result.exit_code == 0
+    out = result.output
+    assert "5 rules" in out
+    assert "5 findings" in out
+    assert "KeepPassKDBX" in out
+    assert "MildlyInteresting" in out
+
+
+def test_rules_subcommand_min_interest_filters(tmp_path):
+    db_path = tmp_path / "snaffler.db"
+    conn = _create_db(db_path)
+    _populate_db(conn)
+    conn.close()
+
+    # --min-interest 3 → Black only
+    result = runner.invoke(
+        app, ["results", "--state", str(db_path), "--no-color", "-b", "3", "rules"]
+    )
+    assert result.exit_code == 0
+    out = result.output
+    assert "2 rules" in out
+    assert "2 findings" in out
+    assert "[Black]" in out
+    assert "[Red]" not in out
+    assert "[Yellow]" not in out
+    assert "[Green]" not in out
+
+    # --min-interest 2 → Red + Black
+    result = runner.invoke(
+        app, ["results", "--state", str(db_path), "--no-color", "-b", "2", "rules"]
+    )
+    assert result.exit_code == 0
+    out = result.output
+    assert "[Red]" in out
+    assert "[Black]" in out
+    assert "[Yellow]" not in out
+    assert "[Green]" not in out
+
+
+def test_rules_subcommand_json(tmp_path):
+    db_path = tmp_path / "snaffler.db"
+    conn = _create_db(db_path)
+    _populate_db(conn)
+    conn.close()
+
+    result = runner.invoke(
+        app, ["results", "--state", str(db_path), "-b", "3", "rules", "--format", "json"]
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert len(data) == 2
+    assert all(r["triage"] == "Black" for r in data)

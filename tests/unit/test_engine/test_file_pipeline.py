@@ -1712,6 +1712,10 @@ def test_max_depth_increase_on_resume_walks_deeper_dirs_skips_checked_files():
             if d.lower() not in stored_dirs:
                 stored_dirs[d.lower()] = False  # walked=False
 
+    def track_store_dir(unc_path, share):
+        if unc_path.lower() not in stored_dirs:
+            stored_dirs[unc_path.lower()] = False  # walked=False
+
     def track_mark_walked(d):
         stored_dirs[d.lower()] = True  # walked=True
 
@@ -1719,6 +1723,7 @@ def test_max_depth_increase_on_resume_walks_deeper_dirs_skips_checked_files():
         checked_files.add(f.lower())
 
     state1.store_dirs.side_effect = track_store_dirs
+    state1.store_dir.side_effect = track_store_dir
     state1.mark_dir_walked.side_effect = track_mark_walked
     state1.mark_file_checked.side_effect = track_mark_checked
 
@@ -1814,10 +1819,15 @@ def test_max_depth_increase_on_resume_walks_deeper_dirs_skips_checked_files():
             if d.lower() not in stored_dirs_run2:
                 stored_dirs_run2[d.lower()] = False
 
+    def track_store_dir_run2(unc_path, share):
+        if unc_path.lower() not in stored_dirs_run2:
+            stored_dirs_run2[unc_path.lower()] = False
+
     def track_mark_walked_run2(d):
         stored_dirs_run2[d.lower()] = True
 
     state2.store_dirs.side_effect = track_store_dirs_run2
+    state2.store_dir.side_effect = track_store_dir_run2
     state2.mark_dir_walked.side_effect = track_mark_walked_run2
 
     pipeline2 = FilePipeline(cfg2, state=state2)
@@ -1933,6 +1943,7 @@ def test_max_depth_increase_progressive_deepening():
     state1.load_unwalked_dirs.return_value = []
     state1.load_unchecked_files.return_value = []
     state1.store_dirs.side_effect = lambda dirs: stored_unwalked_1.extend(dirs)
+    state1.store_dir.side_effect = lambda p, s: stored_unwalked_1.append(p)
 
     pipeline1 = FilePipeline(cfg1, state=state1)
 
@@ -1977,6 +1988,7 @@ def test_max_depth_increase_progressive_deepening():
     state2.load_unwalked_dirs.return_value = ["//HOST/SHARE/a"]  # from run 1
     state2.load_unchecked_files.return_value = []
     state2.store_dirs.side_effect = lambda dirs: stored_unwalked_2.extend(dirs)
+    state2.store_dir.side_effect = lambda p, s: stored_unwalked_2.append(p)
 
     pipeline2 = FilePipeline(cfg2, state=state2)
     pipeline2.tree_walker.walk_directory = MagicMock(side_effect=walk_tree)

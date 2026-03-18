@@ -1,3 +1,9 @@
+snaffler-ng (1.5.6-0kali1) kali-dev; urgency=medium
+
+  * Fix `results rules` ignoring --min-interest from parent command
+
+ -- totekuh <totekuh@protonmail.com>  Tue, 18 Mar 2026 12:00:00 +0000
+
 snaffler-ng (1.5.5-0kali1) kali-dev; urgency=medium
 
   * Fix --max-depth resume: store beyond-limit dirs for future deeper scans

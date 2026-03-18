@@ -798,12 +798,20 @@ document.getElementById('copy-cmd').addEventListener('click', function(e) {{
 </html>"""
 
 
-def _query_rule_counts(conn: sqlite3.Connection) -> list:
+def _query_rule_counts(conn: sqlite3.Connection, min_interest: int = 0) -> list:
     """Return [(rule_name, triage, count)] sorted by count descending."""
+    threshold = 3 - min_interest  # Green=0→3, Yellow=1→2, Red=2→1, Black=3→0
+    allowed = [name for name, order in TRIAGE_ORDER.items() if order <= threshold]
+    if not allowed:
+        return []
+
+    placeholders = ",".join("?" for _ in allowed)
     rows = conn.execute(
-        "SELECT rule_name, triage, COUNT(*) as cnt "
-        "FROM finding GROUP BY rule_name, triage "
-        "ORDER BY cnt DESC"
+        f"SELECT rule_name, triage, COUNT(*) as cnt "  # noqa: S608
+        f"FROM finding WHERE triage IN ({placeholders}) "
+        f"GROUP BY rule_name, triage "
+        f"ORDER BY cnt DESC",
+        allowed,
     ).fetchall()
     return [(row[0], row[1], row[2]) for row in rows]
 
@@ -849,6 +857,7 @@ def results(
     ctx.ensure_object(dict)
     ctx.obj["state"] = state
     ctx.obj["no_color"] = no_color
+    ctx.obj["min_interest"] = min_interest
 
     # If a subcommand is being invoked, skip the default results display
     if ctx.invoked_subcommand is not None:
@@ -879,27 +888,22 @@ def results(
 @results_app.command()
 def rules(
     ctx: typer.Context,
-    state: Path = typer.Option(
-        Path("snaffler.db"),
-        "-s", "--state",
-        help="Path to the scan state database",
-    ),
     fmt: Optional[str] = typer.Option(
         "plain",
         "-f", "--format",
         help="Output format",
         click_type=click.Choice(["plain", "json"], case_sensitive=False),
     ),
-    no_color: bool = typer.Option(
-        False,
-        "--no-color",
-        help="Disable colored output",
-    ),
 ):
     """List all matching rules and their finding counts."""
+    obj = ctx.ensure_object(dict)
+    state = obj.get("state", Path("snaffler.db"))
+    no_color = obj.get("no_color", False)
+    min_interest = obj.get("min_interest", 0)
+
     conn = _open_db(state)
     try:
-        rule_counts = _query_rule_counts(conn)
+        rule_counts = _query_rule_counts(conn, min_interest)
     finally:
         conn.close()
 

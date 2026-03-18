@@ -456,7 +456,7 @@ class FilePipeline:
                                             # Store in DB so a future resume with
                                             # higher --max-depth can pick it up
                                             if self.state:
-                                                self.state.store_dirs([subdir])
+                                                self.state.store_dir(subdir, share_root)
                                             continue
                                     submitted_dirs.add(subdir.lower())
                                     cancel_ev = cancel_events.get(share_root.lower(), threading.Event())
