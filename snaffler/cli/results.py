@@ -324,6 +324,7 @@ def _render_html(stats: dict, findings: list, unreadable_shares: list | None = N
             f'<td class="status-cell"></td>'
             f"<td>{_badge(triage)}</td>"
             f"<td>{esc(finding['rule_name'])}</td>"
+            f"<td>{esc(host)}</td>"
             f'<td class="path">{esc(finding["file_path"])}</td>'
             f"<td>{esc(size_str)}</td>"
             f"<td>{esc(mtime_str)}</td>"
@@ -357,25 +358,44 @@ def _render_html(stats: dict, findings: list, unreadable_shares: list | None = N
   .badge[data-triage].dimmed {{ opacity: 0.35; }}
   #clear-filter {{ background: #333; color: #aaa; border: 1px solid #444; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-family: inherit; font-size: 0.85em; }}
   #clear-filter:hover {{ background: #444; color: #fff; }}
-  #host-filter, #rule-filter {{ padding: 8px 12px; background: #2d2d2d; color: #d4d4d4; border: 1px solid #444; border-radius: 6px; font-family: inherit; font-size: 0.9em; outline: none; max-width: 260px; }}
-  #host-filter:focus, #rule-filter:focus {{ border-color: #888; }}
+  .filter-row th {{ padding: 4px 4px; border-bottom: 2px solid #444; cursor: default; }}
+  .filter-row th:hover {{ color: #aaa; }}
+  .filter-cell {{ display: flex; gap: 2px; }}
+  .col-filter {{ flex: 1; min-width: 0; padding: 4px 6px; background: #252525; color: #d4d4d4; border: 1px solid #3a3a3a; border-radius: 4px; font-family: inherit; font-size: 0.8em; outline: none; box-sizing: border-box; }}
+  .col-filter:focus {{ border-color: #888; background: #2d2d2d; }}
+  .col-filter::placeholder {{ color: #555; }}
+  .col-select {{ width: 24px; flex-shrink: 0; padding: 0; background: #252525; color: #888; border: 1px solid #3a3a3a; border-radius: 4px; font-family: inherit; font-size: 0.8em; outline: none; cursor: pointer; appearance: none; -webkit-appearance: none; text-align: center; }}
+  .col-select:focus {{ border-color: #888; }}
+  .col-select:hover {{ color: #d4d4d4; background: #2d2d2d; }}
   #search {{ flex: 1; min-width: 200px; padding: 10px 14px; background: #2d2d2d; color: #d4d4d4; border: 1px solid #444; border-radius: 6px; font-family: inherit; font-size: 1em; outline: none; }}
   #search:focus {{ border-color: #888; }}
-  table {{ width: 100%; border-collapse: collapse; }}
-  th {{ text-align: left; padding: 8px 12px; border-bottom: 2px solid #444; color: #aaa; font-size: 0.8em; text-transform: uppercase; cursor: pointer; user-select: none; white-space: nowrap; }}
+  table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+  colgroup .col-status {{ width: 28px; }}
+  colgroup .col-triage {{ width: 70px; }}
+  colgroup .col-rule {{ width: 130px; }}
+  colgroup .col-host {{ width: 130px; }}
+  colgroup .col-path {{ width: 28%; }}
+  colgroup .col-size {{ width: 70px; }}
+  colgroup .col-mtime {{ width: 110px; }}
+  colgroup .col-context {{ width: auto; }}
+  thead {{ position: sticky; top: 0; z-index: 20; }}
+  thead tr {{ background: #1e1e1e; }}
+  th {{ text-align: left; padding: 8px 12px; border-bottom: 2px solid #444; color: #aaa; font-size: 0.8em; text-transform: uppercase; cursor: pointer; user-select: none; white-space: nowrap; position: relative; overflow: hidden; text-overflow: ellipsis; }}
   th:hover {{ color: #fff; }}
   th.sort-asc::after {{ content: ' ↑'; color: #fff; }}
   th.sort-desc::after {{ content: ' ↓'; color: #fff; }}
-  td {{ padding: 8px 12px; border-bottom: 1px solid #2a2a2a; vertical-align: top; }}
+  .resize-handle {{ position: absolute; right: 0; top: 0; width: 5px; height: 100%; cursor: col-resize; z-index: 10; }}
+  .resize-handle:hover, .resize-handle.active {{ background: #888; }}
+  td {{ padding: 8px 12px; border-bottom: 1px solid #2a2a2a; vertical-align: top; overflow: hidden; text-overflow: ellipsis; }}
   tbody tr {{ cursor: pointer; transition: filter 0.1s; }}
   tbody tr:hover {{ filter: brightness(1.3); }}
   tr[data-triage="Black"] {{ background: #271515; }}
   tr[data-triage="Red"] {{ background: #221212; }}
   tr[data-triage="Yellow"] {{ background: #201e0d; }}
   tr[data-triage="Green"] {{ background: #131d13; }}
-  .path {{ word-break: break-all; max-width: 320px; }}
+  .path {{ word-break: break-all; }}
   .match {{ display: block; margin-top: 4px; font-size: 0.8em; color: #ffd700; background: #1e1900; border-left: 2px solid #ffd700; padding: 2px 6px; word-break: break-all; }}
-  .context {{ font-size: 0.82em; color: #999; max-width: 280px; word-break: break-all; }}
+  .context {{ font-size: 0.82em; color: #999; word-break: break-all; }}
   .status-cell {{ width: 28px; text-align: center; padding: 8px 4px; }}
   .status-icon {{ cursor: pointer; font-size: 0.9em; opacity: 0.4; transition: opacity 0.15s; }}
   .status-icon:hover {{ opacity: 1; }}
@@ -421,8 +441,6 @@ def _render_html(stats: dict, findings: list, unreadable_shares: list | None = N
 <div class="toolbar">
   <div class="severities">
 {severity_badges}  </div>
-  <select id="host-filter"><option value="">All Hosts</option></select>
-  <select id="rule-filter"><option value="">All Rules</option></select>
   <div class="status-btns">
     <button class="status-btn" data-status-filter="review">Review Later</button>
     <button class="status-btn" data-status-filter="done">Done</button>
@@ -434,15 +452,38 @@ def _render_html(stats: dict, findings: list, unreadable_shares: list | None = N
 
 <h2>Findings (<span id="findings-visible">{fc['total']:,}</span> / {fc['total']:,})</h2>
 <table id="tbl">
-<thead><tr>
+<colgroup>
+  <col class="col-status">
+  <col class="col-triage">
+  <col class="col-rule">
+  <col class="col-host">
+  <col class="col-path">
+  <col class="col-size">
+  <col class="col-mtime">
+  <col class="col-context">
+</colgroup>
+<thead>
+<tr>
   <th data-col="0"></th>
-  <th data-col="1">Triage</th>
-  <th data-col="2">Rule</th>
-  <th data-col="3">Path</th>
-  <th data-col="4">Size</th>
-  <th data-col="5">Modified</th>
-  <th data-col="6">Context</th>
-</tr></thead>
+  <th data-col="1">Triage<div class="resize-handle"></div></th>
+  <th data-col="2">Rule<div class="resize-handle"></div></th>
+  <th data-col="3">Host<div class="resize-handle"></div></th>
+  <th data-col="4">Path<div class="resize-handle"></div></th>
+  <th data-col="5">Size<div class="resize-handle"></div></th>
+  <th data-col="6">Modified<div class="resize-handle"></div></th>
+  <th data-col="7">Context</th>
+</tr>
+<tr class="filter-row">
+  <th></th>
+  <th></th>
+  <th><div class="filter-cell"><input class="col-filter" id="f-rule" placeholder="rule..." /><select class="col-select" id="s-rule" title="Pick rule">&#9662;</select></div></th>
+  <th><div class="filter-cell"><input class="col-filter" id="f-host" placeholder="host..." /><select class="col-select" id="s-host" title="Pick host">&#9662;</select></div></th>
+  <th><input class="col-filter" id="f-path" placeholder="path..." /></th>
+  <th></th>
+  <th></th>
+  <th><input class="col-filter" id="f-context" placeholder="context..." /></th>
+</tr>
+</thead>
 <tbody>
 {rows}</tbody>
 </table>
@@ -495,8 +536,6 @@ def _render_html(stats: dict, findings: list, unreadable_shares: list | None = N
 <script>
 var MODAL_DATA = {modal_data_json};
 var activeTriage = null;
-var activeRule = "";
-var activeHost = "";
 var activeStatus = "";  // "", "review", "done", "hide-done"
 var TRIAGE_ORDER = {{'Black':0,'Red':1,'Yellow':2,'Green':3}};
 var TRIAGE_COLOR = {{'Black':'#888','Red':'#e74c3c','Yellow':'#f1c40f','Green':'#27ae60'}};
@@ -551,30 +590,6 @@ document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
   }});
 }});
 
-// Populate host and rule dropdowns from findings
-(function() {{
-  var seenRule = {{}}, seenHost = {{}};
-  var ruleSel = document.getElementById('rule-filter');
-  var hostSel = document.getElementById('host-filter');
-  document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
-    var rule = row.getAttribute('data-rule');
-    if (rule && !seenRule[rule]) {{
-      seenRule[rule] = true;
-      var opt = document.createElement('option');
-      opt.value = rule;
-      opt.textContent = rule;
-      ruleSel.appendChild(opt);
-    }}
-    var host = row.getAttribute('data-host');
-    if (host && !seenHost[host]) {{
-      seenHost[host] = true;
-      var opt = document.createElement('option');
-      opt.value = host;
-      opt.textContent = host;
-      hostSel.appendChild(opt);
-    }}
-  }});
-}})();
 
 // ── Severity filter ──────────────────────────────────────────────
 document.querySelectorAll('.badge[data-triage]').forEach(function(badge) {{
@@ -588,25 +603,56 @@ document.querySelectorAll('.badge[data-triage]').forEach(function(badge) {{
 
 document.getElementById('clear-filter').addEventListener('click', function() {{
   activeTriage = null;
-  activeRule = "";
-  activeHost = "";
   activeStatus = "";
-  document.getElementById('rule-filter').value = "";
-  document.getElementById('host-filter').value = "";
   document.getElementById('search').value = "";
+  document.querySelectorAll('.col-filter').forEach(function(f) {{ f.value = ""; }});
+  document.querySelectorAll('.col-select').forEach(function(s) {{ s.value = ""; }});
   document.querySelectorAll('.status-btn').forEach(function(b) {{ b.classList.remove('active'); }});
   syncBadges();
   applyFilter();
 }});
 
-document.getElementById('rule-filter').addEventListener('change', function() {{
-  activeRule = this.value;
-  applyFilter();
-}});
+// ── Inline column filters + select dropdowns ──────────────────────
+(function() {{
+  var seenHost = {{}}, seenRule = {{}};
+  document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
+    var h = row.getAttribute('data-host') || '';
+    var r = row.getAttribute('data-rule') || '';
+    if (h) seenHost[h] = true;
+    if (r) seenRule[r] = true;
+  }});
+  function fillSelect(selId, inputId, obj) {{
+    var sel = document.getElementById(selId);
+    var inp = document.getElementById(inputId);
+    // first option is the arrow label (already in HTML), replace with "All"
+    sel.innerHTML = '<option value="">All</option>';
+    Object.keys(obj).sort().forEach(function(v) {{
+      var opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = v;
+      sel.appendChild(opt);
+    }});
+    sel.addEventListener('change', function() {{
+      inp.value = this.value;
+      applyFilter();
+    }});
+  }}
+  fillSelect('s-host', 'f-host', seenHost);
+  fillSelect('s-rule', 'f-rule', seenRule);
+}})();
 
-document.getElementById('host-filter').addEventListener('change', function() {{
-  activeHost = this.value;
-  applyFilter();
+document.querySelectorAll('.col-filter').forEach(function(input) {{
+  input.addEventListener('input', function() {{
+    // clear the paired select when typing manually
+    var sel = this.parentElement && this.parentElement.querySelector('.col-select');
+    if (sel) sel.value = '';
+    applyFilter();
+  }});
+  // prevent clicking a filter input from triggering column sort
+  input.addEventListener('click', function(e) {{ e.stopPropagation(); }});
+}});
+document.querySelectorAll('.col-select').forEach(function(sel) {{
+  sel.addEventListener('click', function(e) {{ e.stopPropagation(); }});
 }});
 
 // ── Status filter buttons ────────────────────────────────────────
@@ -634,26 +680,38 @@ document.getElementById('search').addEventListener('input', applyFilter);
 
 function applyFilter() {{
   var term = document.getElementById('search').value.toLowerCase();
+  var fRule = (document.getElementById('f-rule').value || '').toLowerCase();
+  var fHost = (document.getElementById('f-host').value || '').toLowerCase();
+  var fPath = (document.getElementById('f-path').value || '').toLowerCase();
+  var fCtx  = (document.getElementById('f-context').value || '').toLowerCase();
   var visible = 0;
   document.querySelectorAll('#tbl tbody tr').forEach(function(row) {{
     var triageOk = !activeTriage || row.getAttribute('data-triage') === activeTriage;
-    var ruleOk = !activeRule || row.getAttribute('data-rule') === activeRule;
-    var hostOk = !activeHost || row.getAttribute('data-host') === activeHost;
+    var ruleOk = !fRule || (row.getAttribute('data-rule') || '').toLowerCase().indexOf(fRule) !== -1;
+    var hostOk = !fHost || (row.getAttribute('data-host') || '').toLowerCase().indexOf(fHost) !== -1;
+    var pathOk = !fPath || (row.getAttribute('data-path') || '').toLowerCase().indexOf(fPath) !== -1;
     var rowStatus = row.getAttribute('data-status') || '';
     var statusOk = true;
     if (activeStatus === 'review') {{ statusOk = rowStatus === 'review'; }}
     else if (activeStatus === 'done') {{ statusOk = rowStatus === 'done'; }}
     else if (activeStatus === 'hide-done') {{ statusOk = rowStatus !== 'done'; }}
-    var textOk = true;
-    if (term) {{
+    var ctxOk = true;
+    if (fCtx) {{
       var idx = parseInt(row.getAttribute('data-idx'));
       var data = MODAL_DATA[idx] || {{}};
+      var ctxHay = ((data.context || '') + '\\n' + (data.match || '')).toLowerCase();
+      ctxOk = ctxHay.indexOf(fCtx) !== -1;
+    }}
+    var textOk = true;
+    if (term) {{
+      var idx2 = parseInt(row.getAttribute('data-idx'));
+      var data2 = MODAL_DATA[idx2] || {{}};
       var haystack = row.textContent.toLowerCase()
-        + "\\n" + (data.match || "").toLowerCase()
-        + "\\n" + (data.context || "").toLowerCase();
+        + "\\n" + (data2.match || "").toLowerCase()
+        + "\\n" + (data2.context || "").toLowerCase();
       textOk = haystack.indexOf(term) !== -1;
     }}
-    var show = triageOk && ruleOk && hostOk && statusOk && textOk;
+    var show = triageOk && ruleOk && hostOk && pathOk && ctxOk && statusOk && textOk;
     row.style.display = show ? '' : 'none';
     if (show) visible++;
   }});
@@ -793,6 +851,44 @@ document.getElementById('copy-cmd').addEventListener('click', function(e) {{
   btn.textContent = 'Copied!';
   setTimeout(function() {{ btn.textContent = 'Copy'; }}, 1500);
 }});
+
+// ── Column resize ─────────────────────────────────────────────────
+(function() {{
+  var tbl = document.getElementById('tbl');
+  var cols = tbl.querySelectorAll('colgroup col');
+  var handles = tbl.querySelectorAll('.resize-handle');
+  var activeHandle = null, startX = 0, startW = 0, colIdx = 0;
+
+  handles.forEach(function(handle) {{
+    handle.addEventListener('mousedown', function(e) {{
+      e.preventDefault();
+      e.stopPropagation();
+      activeHandle = handle;
+      handle.classList.add('active');
+      var th = handle.parentElement;
+      colIdx = parseInt(th.getAttribute('data-col'));
+      startX = e.pageX;
+      startW = th.offsetWidth;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }});
+  }});
+
+  document.addEventListener('mousemove', function(e) {{
+    if (!activeHandle) return;
+    var diff = e.pageX - startX;
+    var newW = Math.max(40, startW + diff);
+    cols[colIdx].style.width = newW + 'px';
+  }});
+
+  document.addEventListener('mouseup', function() {{
+    if (!activeHandle) return;
+    activeHandle.classList.remove('active');
+    activeHandle = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }});
+}})();
 </script>
 </body>
 </html>"""
