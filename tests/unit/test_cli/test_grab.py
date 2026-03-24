@@ -1,5 +1,6 @@
 """Tests for --grab bulk download mode."""
 import os
+import re
 from unittest.mock import patch, MagicMock
 
 from typer.testing import CliRunner
@@ -7,6 +8,12 @@ from typer.testing import CliRunner
 from snaffler.cli.main import app
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 def base_args():
@@ -20,7 +27,7 @@ def test_grab_requires_snaffle_path():
         input="//HOST/SHARE/file.txt\n",
     )
     assert result.exit_code != 0
-    assert "--grab requires -m" in result.output
+    assert "--grab requires -m" in _strip_ansi(result.output)
 
 
 def test_grab_mutually_exclusive_with_unc():
@@ -30,7 +37,7 @@ def test_grab_mutually_exclusive_with_unc():
         input="//HOST/SHARE/file.txt\n",
     )
     assert result.exit_code != 0
-    assert "mutually exclusive" in result.output
+    assert "mutually exclusive" in _strip_ansi(result.output)
 
 
 def test_grab_mutually_exclusive_with_domain():
@@ -40,7 +47,7 @@ def test_grab_mutually_exclusive_with_domain():
         input="//HOST/SHARE/file.txt\n",
     )
     assert result.exit_code != 0
-    assert "mutually exclusive" in result.output
+    assert "mutually exclusive" in _strip_ansi(result.output)
 
 
 def test_grab_empty_stdin():
@@ -52,7 +59,7 @@ def test_grab_empty_stdin():
             input="",
         )
     assert result.exit_code != 0
-    assert "No file paths" in result.output
+    assert "No file paths" in _strip_ansi(result.output)
 
 
 def test_grab_smb_paths(tmp_path):
