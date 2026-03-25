@@ -498,6 +498,12 @@ class SnafflerRunner:
                 else:
                     logger.debug(f"Still unreadable: {unc_path}")
 
+        # Close all cached connections from rescan's ShareFinder
+        try:
+            finder.close()
+        except Exception:
+            pass
+
         still_denied = len(unreadable) - len(newly_readable) - errors
         msg = f"Rescan: {len(newly_readable)} newly readable, {still_denied} still denied"
         if errors:
@@ -700,6 +706,16 @@ class SnafflerRunner:
                     print_completion_stats(start_time=self.start_time, progress=self.progress)
                 except Exception:
                     pass
+                # Close all cached network connections (SMB/FTP sockets)
+                try:
+                    self.file_pipeline.close()
+                except Exception:
+                    pass
+                if self.share_pipeline:
+                    try:
+                        self.share_pipeline.close()
+                    except Exception:
+                        pass
                 if self.state:
                     try:
                         set_finding_store(None)

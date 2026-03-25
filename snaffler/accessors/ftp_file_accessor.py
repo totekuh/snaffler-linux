@@ -19,6 +19,8 @@ class FTPFileAccessor(FileAccessor):
         self._transport = FTPTransport(cfg)
         self._thread_local = threading.local()
         self._max_file_bytes = cfg.scanning.max_file_bytes
+        self._all_connections = []
+        self._conn_lock = threading.Lock()
 
     def _get_ftp(self, host: str, port: int):
         cache = getattr(self._thread_local, "ftp_cache", {})
@@ -31,6 +33,11 @@ class FTPFileAccessor(FileAccessor):
                 ftp.voidcmd("NOOP")
                 return ftp
             except Exception:
+                with self._conn_lock:
+                    try:
+                        self._all_connections.remove(ftp)
+                    except ValueError:
+                        pass
                 try:
                     ftp.quit()
                 except Exception:
@@ -39,6 +46,8 @@ class FTPFileAccessor(FileAccessor):
 
         ftp = self._transport.connect(host, port)
         cache[key] = ftp
+        with self._conn_lock:
+            self._all_connections.append(ftp)
         return ftp
 
     def _invalidate_ftp(self, host: str, port: int):
@@ -47,10 +56,25 @@ class FTPFileAccessor(FileAccessor):
             key = (host, port)
             ftp = cache.pop(key, None)
             if ftp:
+                with self._conn_lock:
+                    try:
+                        self._all_connections.remove(ftp)
+                    except ValueError:
+                        pass
                 try:
                     ftp.quit()
                 except Exception:
                     pass
+
+    def close(self):
+        """Close all cached FTP connections across all threads."""
+        with self._conn_lock:
+            for ftp in self._all_connections:
+                try:
+                    ftp.quit()
+                except Exception:
+                    pass
+            self._all_connections.clear()
 
     def read(self, file_path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
         parsed = parse_ftp_url(file_path)

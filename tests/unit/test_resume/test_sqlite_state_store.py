@@ -913,44 +913,6 @@ def test_load_unchecked_files_empty():
         os.unlink(path)
 
 
-def test_sqlite_store_migration_adds_done_column():
-    """Opening a DB with old target_computer/target_share (no done col) adds it."""
-    with tempfile.NamedTemporaryFile(delete=False) as f:
-        path = f.name
-
-    try:
-        # Create old-style tables without done column
-        conn = sqlite3.connect(path)
-        conn.execute(
-            "CREATE TABLE target_computer "
-            "(name TEXT PRIMARY KEY COLLATE NOCASE, ip TEXT)"
-        )
-        conn.execute(
-            "CREATE TABLE target_share "
-            "(unc_path TEXT PRIMARY KEY COLLATE NOCASE)"
-        )
-        conn.execute("INSERT INTO target_computer VALUES ('HOST1', '10.0.0.1')")
-        conn.execute("INSERT INTO target_share VALUES ('//HOST1/SHARE')")
-        conn.commit()
-        conn.close()
-
-        store = SQLiteStateStore(path)
-
-        # done column should exist and default to 0
-        assert store.has_checked_computer("HOST1") is False
-        assert store.has_checked_share("//HOST1/SHARE") is False
-
-        # Can mark done
-        store.mark_computer_checked("HOST1")
-        assert store.has_checked_computer("HOST1") is True
-
-        store.mark_share_checked("//HOST1/SHARE")
-        assert store.has_checked_share("//HOST1/SHARE") is True
-
-        store.close()
-    finally:
-        os.unlink(path)
-
 
 # ---------- count_findings_by_triage ----------
 

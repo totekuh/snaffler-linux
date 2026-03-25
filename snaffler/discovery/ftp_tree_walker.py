@@ -50,6 +50,8 @@ class FTPTreeWalker(TreeWalker):
         )
         self.ftp_transport = FTPTransport(cfg)
         self._local = threading.local()
+        self._all_connections = []
+        self._conn_lock = threading.Lock()
 
     def _get_ftp(self, host: str, port: int):
         """Return a cached FTP connection, creating one if needed.
@@ -69,6 +71,11 @@ class FTPTreeWalker(TreeWalker):
                 ftp.voidcmd("NOOP")
                 return ftp
             except Exception:
+                with self._conn_lock:
+                    try:
+                        self._all_connections.remove(ftp)
+                    except ValueError:
+                        pass
                 try:
                     ftp.quit()
                 except Exception:
@@ -77,6 +84,8 @@ class FTPTreeWalker(TreeWalker):
 
         ftp = self.ftp_transport.connect(host, port)
         cache[key] = ftp
+        with self._conn_lock:
+            self._all_connections.append(ftp)
         return ftp
 
     def _invalidate_ftp(self, host: str, port: int):
@@ -87,10 +96,25 @@ class FTPTreeWalker(TreeWalker):
         key = (host, port)
         ftp = cache.pop(key, None)
         if ftp is not None:
+            with self._conn_lock:
+                try:
+                    self._all_connections.remove(ftp)
+                except ValueError:
+                    pass
             try:
                 ftp.quit()
             except Exception:
                 pass
+
+    def close(self):
+        """Close all cached FTP connections across all threads."""
+        with self._conn_lock:
+            for ftp in self._all_connections:
+                try:
+                    ftp.quit()
+                except Exception:
+                    pass
+            self._all_connections.clear()
 
     def walk_directory(self, ftp_path: str, on_file=None, on_dir=None,
                        cancel: threading.Event | None = None) -> list:

@@ -16,6 +16,8 @@ class SMBFileAccessor(FileAccessor):
         self._transport = SMBTransport(cfg)
         self._thread_local = threading.local()
         self._max_file_bytes = cfg.scanning.max_file_bytes
+        self._all_connections = []
+        self._conn_lock = threading.Lock()
 
     @staticmethod
     def _parse(file_path: str):
@@ -36,6 +38,11 @@ class SMBFileAccessor(FileAccessor):
                 smb.getServerName()
                 return smb
             except Exception:
+                with self._conn_lock:
+                    try:
+                        self._all_connections.remove(smb)
+                    except ValueError:
+                        pass
                 try:
                     smb.logoff()
                 except Exception:
@@ -44,6 +51,8 @@ class SMBFileAccessor(FileAccessor):
 
         smb = self._transport.connect(server)
         cache[server] = smb
+        with self._conn_lock:
+            self._all_connections.append(smb)
         return smb
 
     def read(self, file_path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
@@ -72,8 +81,28 @@ class SMBFileAccessor(FileAccessor):
         except Exception:
             cache = getattr(self._thread_local, "smb_cache", None)
             if cache:
-                cache.pop(server, None)
+                smb = cache.pop(server, None)
+                if smb is not None:
+                    with self._conn_lock:
+                        try:
+                            self._all_connections.remove(smb)
+                        except ValueError:
+                            pass
+                    try:
+                        smb.logoff()
+                    except Exception:
+                        pass
             return None
+
+    def close(self):
+        """Close all cached SMB connections across all threads."""
+        with self._conn_lock:
+            for smb in self._all_connections:
+                try:
+                    smb.logoff()
+                except Exception:
+                    pass
+            self._all_connections.clear()
 
     def copy_to_local(self, file_path: str, dest_root) -> None:
         parsed = self._parse(file_path)

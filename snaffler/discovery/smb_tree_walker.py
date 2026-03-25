@@ -23,6 +23,8 @@ class SMBTreeWalker(TreeWalker):
         )
         self.smb_transport = SMBTransport(cfg)
         self._local = threading.local()
+        self._all_connections = []
+        self._conn_lock = threading.Lock()
 
     def _get_smb(self, server: str):
         """Return a cached SMB connection for *server*, creating one if needed.
@@ -49,6 +51,8 @@ class SMBTreeWalker(TreeWalker):
 
         smb = self.smb_transport.connect(server)
         cache[server] = smb
+        with self._conn_lock:
+            self._all_connections.append(smb)
         return smb
 
     def _invalidate_smb(self, server: str):
@@ -58,10 +62,25 @@ class SMBTreeWalker(TreeWalker):
             return
         smb = cache.pop(server, None)
         if smb is not None:
+            with self._conn_lock:
+                try:
+                    self._all_connections.remove(smb)
+                except ValueError:
+                    pass
             try:
                 smb.logoff()
             except Exception:
                 pass
+
+    def close(self):
+        """Close all cached SMB connections across all threads."""
+        with self._conn_lock:
+            for smb in self._all_connections:
+                try:
+                    smb.logoff()
+                except Exception:
+                    pass
+            self._all_connections.clear()
 
     @staticmethod
     def _parse_unc(unc_path: str):

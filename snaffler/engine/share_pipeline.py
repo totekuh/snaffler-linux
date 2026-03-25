@@ -37,6 +37,14 @@ class SharePipeline:
         if self.max_workers < 1:
             raise ValueError("Invalid share_threads configuration")
 
+    def close(self):
+        """Close all cached connections held by the share finder."""
+        if hasattr(self.share_finder, 'close'):
+            try:
+                self.share_finder.close()
+            except Exception:
+                pass
+
     def run(self, computers: List[str]) -> List[str]:
         """
         Enumerate readable shares on target computers

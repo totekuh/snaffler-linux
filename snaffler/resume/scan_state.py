@@ -160,7 +160,10 @@ class SQLiteStateStore:
 
     def _init(self):
         with self.conn:
-            self.conn.execute("PRAGMA journal_mode=WAL;")
+            try:
+                self.conn.execute("PRAGMA journal_mode=WAL;")
+            except Exception:
+                pass  # WAL unsupported — fall back to default journal mode
             self.conn.execute("PRAGMA synchronous=NORMAL;")
 
             # --- drop legacy tables ---
@@ -225,25 +228,6 @@ class SQLiteStateStore:
                 "ON target_file(share)"
             )
 
-            # --- migrate: add done column to target_computer if missing ---
-            cols = {
-                row[1]
-                for row in self.conn.execute("PRAGMA table_info(target_computer)")
-            }
-            if "done" not in cols:
-                self.conn.execute(
-                    "ALTER TABLE target_computer ADD COLUMN done INTEGER DEFAULT 0"
-                )
-
-            # --- migrate: add done column to target_share if missing ---
-            cols = {
-                row[1]
-                for row in self.conn.execute("PRAGMA table_info(target_share)")
-            }
-            if "done" not in cols:
-                self.conn.execute(
-                    "ALTER TABLE target_share ADD COLUMN done INTEGER DEFAULT 0"
-                )
 
     # ---------- sync flags ----------
 

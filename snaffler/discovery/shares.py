@@ -81,6 +81,8 @@ class ShareFinder:
             logger.warning("No credentials provided (NTLM or Kerberos) – continuing with NULL session")
 
         self._thread_local = threading.local()
+        self._all_connections = []
+        self._conn_lock = threading.Lock()
         self._sysvol_lock = threading.Lock()
         self._sysvol_scanned = False
         self._netlogon_scanned = False
@@ -97,6 +99,11 @@ class ShareFinder:
                 smb.getServerName()
                 return smb
             except Exception:
+                with self._conn_lock:
+                    try:
+                        self._all_connections.remove(smb)
+                    except ValueError:
+                        pass
                 try:
                     smb.logoff()
                 except Exception:
@@ -105,7 +112,19 @@ class ShareFinder:
 
         smb = self.smb_transport.connect(computer, timeout=self.cfg.auth.smb_timeout)
         cache[computer] = smb
+        with self._conn_lock:
+            self._all_connections.append(smb)
         return smb
+
+    def close(self):
+        """Close all cached SMB connections across all threads."""
+        with self._conn_lock:
+            for smb in self._all_connections:
+                try:
+                    smb.logoff()
+                except Exception:
+                    pass
+            self._all_connections.clear()
 
     def enumerate_shares(self, target: str) -> List[ShareInfo]:
         """

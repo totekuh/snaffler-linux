@@ -600,6 +600,19 @@ class FilePipeline:
             for share_path in walked_shares:
                 self.state.mark_share_done(share_path)
 
+    def close(self):
+        """Close all cached connections held by the tree walker and file accessor."""
+        if hasattr(self.tree_walker, 'close'):
+            try:
+                self.tree_walker.close()
+            except Exception:
+                pass
+        if hasattr(self.file_scanner, 'file_accessor') and hasattr(self.file_scanner.file_accessor, 'close'):
+            try:
+                self.file_scanner.file_accessor.close()
+            except Exception:
+                pass
+
     def _count_severity(self, result):
         """Increment the per-severity counter on progress state."""
         from snaffler.classifiers.rules import Triage
