@@ -97,6 +97,10 @@ class TreeWalker(ABC):
         """
         ...
 
+    def close(self):
+        """Release resources. Override in subclasses with connections to clean up."""
+        pass
+
     def _should_scan_directory(self, dir_path: str) -> bool:
         """Delegate to the shared module-level function."""
         return should_scan_directory(dir_path, self.dir_classifiers, self._exclude_unc)

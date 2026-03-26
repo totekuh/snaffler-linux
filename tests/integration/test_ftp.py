@@ -16,6 +16,7 @@ import socket
 import tempfile
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -39,6 +40,8 @@ from snaffler.discovery.ftp_tree_walker import FTPTreeWalker
 from snaffler.engine.runner import SnafflerRunner
 from snaffler.resume.scan_state import SQLiteStateStore
 from snaffler.utils.logger import set_finding_store
+
+_no_auth_check = patch.object(SnafflerRunner, "_validate_credentials")
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -228,13 +231,15 @@ class TestRunnerAuthenticated:
     def test_wrong_creds_no_findings(self, auth_ftp):
         """Wrong credentials should produce zero findings (connection fails)."""
         cfg = _make_cfg(auth_ftp, username="wrong", password="wrong")
-        _, p = _run(cfg)
+        with _no_auth_check:
+            _, p = _run(cfg)
         assert p.files_scanned == 0
 
     def test_anonymous_rejected(self, auth_ftp):
         """Anonymous access to an authenticated server should produce zero findings."""
         cfg = _make_cfg(auth_ftp)
-        _, p = _run(cfg)
+        with _no_auth_check:
+            _, p = _run(cfg)
         assert p.files_scanned == 0
 
     def test_consistent_results_across_runs(self, auth_ftp):

@@ -15,6 +15,8 @@ import ipaddress
 import logging
 import socket
 
+from snaffler.utils.fatal import check_fatal_os_error
+
 _original_getaddrinfo = socket.getaddrinfo
 logger = logging.getLogger("snaffler")
 
@@ -87,6 +89,7 @@ def setup_custom_dns(nameserver: str) -> None:
             if results:
                 return results
         except Exception as exc:
+            check_fatal_os_error(exc)
             logger.debug("Custom DNS resolution failed for %s: %s", host, exc)
 
         # Fallback to system resolver

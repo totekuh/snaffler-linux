@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import List, Optional
 
 import tomlkit
-import typer
 
 _cfg_logger = logging.getLogger("snaffler")
 
@@ -224,19 +223,19 @@ class SnafflerConfiguration:
         # ---------- AUTH VALIDATION ----------
         if self.auth.kerberos:
             if not self.auth.domain:
-                raise typer.BadParameter(
+                raise ValueError(
                     "Kerberos authentication requires a domain"
                 )
 
             if self.auth.use_kcache and self.auth.username:
-                raise typer.BadParameter(
+                raise ValueError(
                     "Cannot specify username when using Kerberos ccache"
                 )
 
             if self.auth.use_kcache:
                 import os
                 if "KRB5CCNAME" not in os.environ:
-                    raise typer.BadParameter(
+                    raise ValueError(
                         "KRB5CCNAME not set but Kerberos ccache was requested"
                     )
 

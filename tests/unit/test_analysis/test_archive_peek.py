@@ -33,16 +33,8 @@ TEST_RAR_BORING = os.path.join(
 # ---------------- helpers ----------------
 
 def make_cfg(max_read=2 * 1024 * 1024, match_filter=None):
-    cfg = MagicMock()
-    cfg.scanning.min_interest = 0
-    cfg.scanning.max_read_bytes = max_read
-    cfg.scanning.max_file_bytes = max_read
-    cfg.scanning.match_context_bytes = 20
-    cfg.scanning.snaffle = False
-    cfg.scanning.snaffle_path = None
-    cfg.scanning.cert_passwords = []
-    cfg.scanning.match_filter = match_filter
-    return cfg
+    from tests.conftest import make_scanner_cfg
+    return make_scanner_cfg(match_filter=match_filter, max_read=max_read)
 
 
 def _zip_bytes(*members):
@@ -127,8 +119,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/backups/stuff.zip", 500, 1700000000.0)
+        result = scanner.scan_file("//srv/share/backups/stuff.zip", 500, 1700000000.0)
 
         assert isinstance(result, FileResult)
         assert result.triage == Triage.BLACK
@@ -152,8 +143,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
+        result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         assert result is None
 
@@ -170,8 +160,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/bad.zip", 100, 1700000000.0)
+        result = scanner.scan_file("//srv/share/bad.zip", 100, 1700000000.0)
 
         assert result is None
 
@@ -187,8 +176,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(max_read=100), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/big.zip", 999999, 1700000000.0)
+        result = scanner.scan_file("//srv/share/big.zip", 999999, 1700000000.0)
 
         # No read because size > max_read_bytes
         accessor.read.assert_not_called()
@@ -210,8 +198,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/nested.zip", 500, 1700000000.0)
+        result = scanner.scan_file("//srv/share/nested.zip", 500, 1700000000.0)
 
         # inner.zip triggers ENTER_ARCHIVE but _peek_archive skips recursive
         # ENTER_ARCHIVE actions — only SNAFFLE is handled for members.
@@ -233,8 +220,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
+        result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         assert result is None
 
@@ -253,8 +239,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/archive.zip", 500, 1700000000.0)
+        result = scanner.scan_file("//srv/share/archive.zip", 500, 1700000000.0)
 
         assert result is not None
         assert result.file_path == "//srv/share/archive.zip\u2192passwords.txt"
@@ -272,8 +257,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"), \
-             patch.dict("sys.modules", {"py7zr": None}):
+        with patch.dict("sys.modules", {"py7zr": None}):
             result = scanner.scan_file("//srv/share/stuff.7z", 500, 1700000000.0)
 
         assert result is None
@@ -291,8 +275,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
+        result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         assert result is None
 
@@ -312,8 +295,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file(
+        result = scanner.scan_file(
                 "//srv/share/test_archive.zip", len(zip_data), 1700000000.0
             )
 
@@ -337,8 +319,7 @@ class TestArchivePeek:
             make_cfg(match_filter="nomatch_pattern"), accessor, evaluator
         )
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
+        result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         # --match fully suppresses non-matching findings
         assert result is None
@@ -358,8 +339,7 @@ class TestArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
+        result = scanner.scan_file("//srv/share/stuff.zip", 500, 1700000000.0)
 
         assert isinstance(result, FileResult)
         assert result.triage == Triage.BLACK
@@ -384,8 +364,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/backup.rar", len(rar_data), 1700000000.0)
+        result = scanner.scan_file("//srv/share/backup.rar", len(rar_data), 1700000000.0)
 
         assert isinstance(result, FileResult)
         assert result.triage == Triage.BLACK
@@ -407,8 +386,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/stuff.rar", len(rar_data), 1700000000.0)
+        result = scanner.scan_file("//srv/share/stuff.rar", len(rar_data), 1700000000.0)
 
         assert result is None
 
@@ -425,8 +403,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/bad.rar", 100, 1700000000.0)
+        result = scanner.scan_file("//srv/share/bad.rar", 100, 1700000000.0)
 
         assert result is None
 
@@ -443,8 +420,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"), \
-             patch.dict("sys.modules", {"rarfile": None}):
+        with patch.dict("sys.modules", {"rarfile": None}):
             result = scanner.scan_file("//srv/share/stuff.rar", 500, 1700000000.0)
 
         assert result is None
@@ -461,8 +437,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(max_read=100), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/big.rar", 999999, 1700000000.0)
+        result = scanner.scan_file("//srv/share/big.rar", 999999, 1700000000.0)
 
         accessor.read.assert_not_called()
         assert result is None
@@ -483,8 +458,7 @@ class TestRarArchivePeek:
 
         scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-        with patch("snaffler.analysis.file_scanner.log_file_result"):
-            result = scanner.scan_file("//srv/share/archive.rar", len(rar_data), 1700000000.0)
+        result = scanner.scan_file("//srv/share/archive.rar", len(rar_data), 1700000000.0)
 
         assert result is not None
         assert result.file_path == "//srv/share/archive.rar\u2192id_rsa"

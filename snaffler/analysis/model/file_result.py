@@ -36,6 +36,10 @@ class FileResult:
         self.match = match
         self.context = context
 
+    def match_haystack(self) -> str:
+        """Build the search string used by --match filter."""
+        return "\n".join(filter(None, [self.file_path, self.rule_name, self.match, self.context]))
+
     @staticmethod
     def pick_best(
             current: Optional[FileResult],

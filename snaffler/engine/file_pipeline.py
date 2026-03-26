@@ -11,11 +11,14 @@ from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.accessors.smb_file_accessor import SMBFileAccessor
 from snaffler.analysis.file_scanner import FileScanner
 from snaffler.classifiers.evaluator import RuleEvaluator
+from snaffler.classifiers.rules import Triage
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.discovery.shares import share_matches_filter
 from snaffler.discovery.smb_tree_walker import SMBTreeWalker
 from snaffler.discovery.tree import TreeWalker
 from snaffler.resume.scan_state import ScanState
+from snaffler.utils.fatal import check_fatal_os_error
+from snaffler.utils.logger import log_file_result
 from snaffler.utils.progress import ProgressState
 
 logger = logging.getLogger("snaffler")
@@ -30,22 +33,10 @@ _MAX_ENQUEUED = 500_000  # clear enqueued set to bound memory usage
 def _extract_share_unc(unc_path: str) -> str:
     """Extract //server/share from a full UNC path.
 
-    For FTP URLs (``ftp://host:port/...``), returns ``ftp://host:port`` as
-    the share key so files are grouped by FTP server in the resume database.
-
-    For local paths (not starting with ``//``), returns the path unchanged
-    so it can be used as-is as a share key in the resume database.
+    Delegates to :func:`snaffler.utils.path_utils.extract_share_root`.
     """
-    if unc_path.startswith("ftp://"):
-        from snaffler.discovery.ftp_tree_walker import extract_ftp_root
-        return extract_ftp_root(unc_path)
-    normalized = unc_path.replace("\\", "/")
-    if not normalized.startswith("//"):
-        return unc_path
-    parts = [p for p in normalized.split("/") if p]
-    if len(parts) >= 2:
-        return f"//{parts[0]}/{parts[1]}"
-    return unc_path
+    from snaffler.utils.path_utils import extract_share_root
+    return extract_share_root(unc_path)
 
 
 class _BatchWriter:
@@ -435,6 +426,7 @@ class FilePipeline:
                                     subdirs = future.result()
                                     walk_ok = True
                                 except Exception as e:
+                                    check_fatal_os_error(e)
                                     logger.debug(f"Error walking {dir_unc}: {e}")
                                     subdirs = []
                                     if share_root:
@@ -476,6 +468,11 @@ class FilePipeline:
                                         # (shares with errors retry failed dirs on resume)
                                         if key not in shares_with_errors:
                                             walked_shares.append(share_root)
+                                        else:
+                                            logger.warning(
+                                                f"Share {share_root} completed with walk errors "
+                                                f"(will retry failed dirs on resume)"
+                                            )
 
                     except KeyboardInterrupt:
                         shutdown.set()
@@ -532,6 +529,30 @@ class FilePipeline:
                         self.state.mark_file_done(unc_path)
 
                     if result:
+                        # Log the finding
+                        log_file_result(
+                            logger,
+                            result.file_path,
+                            result.triage.label,
+                            result.rule_name,
+                            result.match,
+                            result.context,
+                            result.size,
+                            result.modified.strftime("%Y-%m-%d %H:%M:%S")
+                            if result.modified
+                            else None,
+                        )
+                        # Download if configured
+                        if (
+                                self.cfg.scanning.snaffle
+                                and result.size <= self.cfg.scanning.max_file_bytes
+                                and self.file_scanner.file_accessor is not None
+                        ):
+                            self.file_scanner.file_accessor.copy_to_local(
+                                unc_path,
+                                self.cfg.scanning.snaffle_path,
+                            )
+
                         with consumer_lock:
                             consumer_results[0] += 1
                         if self.progress:
@@ -539,6 +560,7 @@ class FilePipeline:
                             self._count_severity(result)
 
                 except Exception as e:
+                    check_fatal_os_error(e)
                     logger.debug(f"Error scanning {unc_path}: {e}")
                 finally:
                     if self.progress:
@@ -602,21 +624,17 @@ class FilePipeline:
 
     def close(self):
         """Close all cached connections held by the tree walker and file accessor."""
-        if hasattr(self.tree_walker, 'close'):
-            try:
-                self.tree_walker.close()
-            except Exception:
-                pass
-        if hasattr(self.file_scanner, 'file_accessor') and hasattr(self.file_scanner.file_accessor, 'close'):
-            try:
-                self.file_scanner.file_accessor.close()
-            except Exception:
-                pass
+        try:
+            self.tree_walker.close()
+        except Exception:
+            pass
+        try:
+            self.file_scanner.file_accessor.close()
+        except Exception:
+            pass
 
     def _count_severity(self, result):
         """Increment the per-severity counter on progress state."""
-        from snaffler.classifiers.rules import Triage
-
         triage = result.triage
         if triage == Triage.BLACK:
             self.progress.severity_black += 1

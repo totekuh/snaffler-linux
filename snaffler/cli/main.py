@@ -694,8 +694,12 @@ def main(
     if _explicit("web_port") and not cfg.web.enabled:
         typer.echo("Warning: --web-port has no effect without --web", err=True)
 
-    # ---------- validate ----------
-    cfg.validate()
+    # ---------- validate (errors caught by try/except below) ----------
+    try:
+        cfg.validate()
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
 
     # ---------- logging (before rule loader so its messages are visible) ----------
     setup_logging(
@@ -707,7 +711,11 @@ def main(
     )
 
     # ---------- load classification rules ----------
-    RuleLoader.load(cfg)
+    try:
+        RuleLoader.load(cfg)
+    except RuntimeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
 
     # ---------- SOCKS proxy ----------
     # SOCKS must be set up before custom DNS so that DNS-over-TCP
@@ -734,11 +742,19 @@ def main(
         raise typer.Exit()
 
     # ---------- run ----------
-    snaff = SnafflerRunner(cfg)
     try:
+        snaff = SnafflerRunner(cfg)
         snaff.execute()
     except KeyboardInterrupt:
         raise typer.Exit(code=130)
+    except (ValueError, RuntimeError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+    except OSError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1)
+    except SystemExit:
+        raise  # let SystemExit (e.g. from check_fatal_os_error) propagate
 
 
 if __name__ == "__main__":

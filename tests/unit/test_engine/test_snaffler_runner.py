@@ -16,6 +16,21 @@ def _reset_finding_store():
     set_finding_store(None)
 
 
+@pytest.fixture(autouse=True)
+def _skip_auth_check(request):
+    """Disable preflight auth check — unit tests use fake hostnames.
+
+    Skipped for TestValidateCredentials which explicitly tests that method.
+    """
+    if request.node.get_closest_marker("real_auth_check") or \
+       (hasattr(request, "cls") and request.cls and
+        request.cls.__name__ == "TestValidateCredentials"):
+        yield
+    else:
+        with patch.object(SnafflerRunner, "_validate_credentials"):
+            yield
+
+
 def _patch_finding_store():
     """Suppress set_finding_store calls in runner init/cleanup."""
     return patch("snaffler.engine.runner.set_finding_store")
@@ -24,36 +39,8 @@ def _patch_finding_store():
 # ---------- helpers ----------
 
 def make_cfg():
-    cfg = MagicMock()
-
-    # ---------- state ----------
-    cfg.state.state_db = ":memory:"
-
-    # ---------- targets ----------
-    cfg.targets.unc_targets = []
-    cfg.targets.computer_targets = []
-    cfg.targets.local_targets = []
-    cfg.targets.ftp_targets = []
-    cfg.targets.shares_only = False
-    cfg.targets.rescan_unreadable = False
-    cfg.targets.share_filter = []
-    cfg.targets.exclude_share = []
-    cfg.targets.exclude_unc = []
-    cfg.targets.exclusions = []
-
-    # ---------- auth ----------
-    cfg.auth.domain = None
-
-    # ---------- advanced ----------
-    cfg.advanced.share_threads = 2
-    cfg.advanced.tree_threads = 2
-    cfg.advanced.file_threads = 2
-    cfg.advanced.dns_threads = 4
-
-    # ---------- web ----------
-    cfg.web.enabled = False
-
-    return cfg
+    from tests.conftest import make_engine_cfg
+    return make_engine_cfg()
 
 
 @contextmanager
@@ -2065,3 +2052,184 @@ def test_rescan_no_warning_when_standalone(caplog):
 
     assert not any("takes priority" in r.message for r in caplog.records
                     if hasattr(r, "message"))
+
+
+# ---------- _validate_credentials preflight ----------
+
+
+class TestValidateCredentials:
+    """Preflight auth check must hard-fail on bad creds."""
+
+    def test_smb_unc_auth_failure_aborts(self):
+        """Bad SMB creds against --unc target → SystemExit."""
+        cfg = make_cfg()
+        cfg.targets.unc_targets = ["//10.0.0.1/SHARE"]
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        with patch(
+            "snaffler.transport.smb.SMBTransport.connect",
+            side_effect=Exception("STATUS_LOGON_FAILURE"),
+        ):
+            with pytest.raises(SystemExit, match="SMB authentication failed"):
+                runner._validate_credentials()
+
+    def test_smb_unc_auth_success_passes(self):
+        """Good SMB creds → no error, connection closed."""
+        cfg = make_cfg()
+        cfg.targets.unc_targets = ["//10.0.0.1/SHARE"]
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        mock_smb = MagicMock()
+        with patch(
+            "snaffler.transport.smb.SMBTransport.connect",
+            return_value=mock_smb,
+        ):
+            runner._validate_credentials()  # should not raise
+            mock_smb.close.assert_called_once()
+
+    def test_smb_computer_auth_failure_aborts(self):
+        """Bad SMB creds against --computer target → SystemExit."""
+        cfg = make_cfg()
+        cfg.targets.computer_targets = ["DC01"]
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        with patch(
+            "snaffler.transport.smb.SMBTransport.connect",
+            side_effect=Exception("STATUS_LOGON_FAILURE"),
+        ):
+            with pytest.raises(SystemExit, match="SMB authentication failed"):
+                runner._validate_credentials()
+
+    def test_smb_rescan_auth_failure_aborts(self):
+        """Bad SMB creds during --rescan-unreadable → SystemExit."""
+        cfg = make_cfg()
+        cfg.targets.rescan_unreadable = True
+
+        runner, state = _make_runner_with_state(cfg)
+        state.load_unreadable_shares.return_value = ["//10.0.0.1/SECRET$"]
+
+        with patch(
+            "snaffler.transport.smb.SMBTransport.connect",
+            side_effect=Exception("STATUS_LOGON_FAILURE"),
+        ):
+            with pytest.raises(SystemExit, match="SMB authentication failed"):
+                runner._validate_credentials()
+
+    def test_ftp_auth_failure_aborts(self):
+        """Bad FTP creds → SystemExit."""
+        cfg = make_cfg()
+        cfg.targets.ftp_targets = ["ftp://10.0.0.1/data"]
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        with patch(
+            "snaffler.transport.ftp.FTPTransport.connect",
+            side_effect=Exception("530 Login incorrect"),
+        ):
+            with pytest.raises(SystemExit, match="FTP authentication failed"):
+                runner._validate_credentials()
+
+    def test_ftp_auth_success_passes(self):
+        """Good FTP creds → no error, connection closed."""
+        cfg = make_cfg()
+        cfg.targets.ftp_targets = ["ftp://10.0.0.1/data"]
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        mock_ftp = MagicMock()
+        with patch(
+            "snaffler.transport.ftp.FTPTransport.connect",
+            return_value=mock_ftp,
+        ):
+            runner._validate_credentials()  # should not raise
+            mock_ftp.quit.assert_called_once()
+
+    def test_local_mode_skips_validation(self):
+        """--local-fs should not attempt any auth validation."""
+        cfg = make_cfg()
+        cfg.targets.local_targets = ["/tmp/data"]
+
+        runner = SnafflerRunner(cfg)
+
+        # If it tried SMBTransport.connect, this would fail
+        with patch(
+            "snaffler.transport.smb.SMBTransport.connect",
+            side_effect=AssertionError("should not be called"),
+        ):
+            runner._validate_credentials()  # should not raise
+
+    def test_domain_mode_skips_validation(self):
+        """Domain mode skips preflight — LDAP validates creds on its own."""
+        cfg = make_cfg()
+        cfg.auth.domain = "example.com"
+        # No UNC, no computer, no rescan, no FTP → domain mode
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        with patch(
+            "snaffler.transport.smb.SMBTransport.connect",
+            side_effect=AssertionError("should not be called"),
+        ):
+            runner._validate_credentials()  # should not raise
+
+    def test_smb_network_error_reports_connectivity(self):
+        """OSError (network) → SystemExit mentioning connectivity, not creds."""
+        cfg = make_cfg()
+        cfg.targets.unc_targets = ["//10.0.0.1/SHARE"]
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        with patch(
+            "snaffler.transport.smb.SMBTransport.connect",
+            side_effect=OSError("Connection refused"),
+        ):
+            with pytest.raises(SystemExit, match="cannot reach SMB target"):
+                runner._validate_credentials()
+
+    def test_ftp_network_error_reports_connectivity(self):
+        """OSError on FTP → SystemExit mentioning connectivity, not creds."""
+        cfg = make_cfg()
+        cfg.targets.ftp_targets = ["ftp://10.0.0.1/data"]
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        with patch(
+            "snaffler.transport.ftp.FTPTransport.connect",
+            side_effect=OSError("Connection refused"),
+        ):
+            with pytest.raises(SystemExit, match="cannot reach FTP server"):
+                runner._validate_credentials()
+
+    def test_no_targets_skips_validation(self):
+        """No targets at all → nothing to validate against."""
+        cfg = make_cfg()
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        runner._validate_credentials()  # should not raise
+
+    def test_unc_non_unc_paths_skips(self):
+        """UNC targets that aren't // paths → no target to test."""
+        cfg = make_cfg()
+        cfg.targets.unc_targets = ["/local/path"]
+
+        with _patch_finding_store():
+            runner = SnafflerRunner(cfg)
+
+        with patch(
+            "snaffler.transport.smb.SMBTransport.connect",
+            side_effect=AssertionError("should not be called"),
+        ):
+            runner._validate_credentials()  # should not raise

@@ -6,7 +6,6 @@ import os
 import re
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from typing import Optional, List
 
@@ -15,7 +14,7 @@ from snaffler.analysis.model.file_context import FileContext
 from snaffler.analysis.model.file_result import FileResult
 from snaffler.classifiers.evaluator import RuleEvaluator
 from snaffler.classifiers.rules import MatchLocation, MatchAction, Triage
-from snaffler.utils.logger import log_file_result
+from snaffler.utils.fatal import check_fatal_os_error
 
 logger = logging.getLogger("snaffler")
 
@@ -76,53 +75,22 @@ class FileScanner:
 
     # -------------------------------------------------------------- Results
 
-    def _finalize_result(
+    def _filter_result(
             self,
             result: FileResult,
-            download_path: str,
     ) -> Optional[FileResult]:
-
+        """Apply min_interest and match_filter to a result. Pure filter, no side effects."""
         if result.triage.below(self.cfg.scanning.min_interest):
             return None
 
-        # --match filters both log output and downloads — only findings
-        # matching the regex are shown and snaffled
-        suppress = False
         if self._match_re:
             haystack = "\n".join(filter(None, [
                 result.file_path, result.rule_name,
                 result.match, result.context,
             ]))
             if not self._match_re.search(haystack):
-                suppress = True
+                return None
 
-        log_file_result(
-            logger,
-            result.file_path,
-            result.triage.label,
-            result.rule_name,
-            result.match,
-            result.context,
-            result.size,
-            result.modified.strftime("%Y-%m-%d %H:%M:%S")
-            if result.modified
-            else None,
-            suppress_log=suppress,
-        )
-
-        if (
-                not suppress
-                and self.cfg.scanning.snaffle
-                and result.size <= self.cfg.scanning.max_file_bytes
-                and self.file_accessor is not None
-        ):
-            self.file_accessor.copy_to_local(
-                download_path,
-                self.cfg.scanning.snaffle_path,
-            )
-
-        if suppress:
-            return None
         return result
 
     # -------------------------------------------------------------- Phase 1
@@ -133,17 +101,7 @@ class FileScanner:
         Returns a :class:`FileCheckResult` whose *status* tells the caller
         what to do next.
         """
-        file_name = os.path.basename(file_path)
-        file_ext = os.path.splitext(file_name)[1]
-        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch is not None else None
-
-        ctx = FileContext(
-            unc_path=file_path,
-            name=file_name,
-            ext=file_ext,
-            size=size,
-            modified=modified,
-        )
+        ctx = FileContext.from_path(file_path, size, mtime_epoch)
 
         content_rule_names: set = set()
         best_result: Optional[FileResult] = None
@@ -196,7 +154,7 @@ class FileScanner:
             result = FileResult(
                 file_path=file_path,
                 size=size,
-                modified=modified,
+                modified=ctx.modified,
                 triage=rule.triage,
                 rule_name=rule.rule_name,
                 match=decision.match,
@@ -293,9 +251,11 @@ class FileScanner:
     # -------------------------------------------------------------- Scanning (composed)
 
     def scan_file(self, file_path: str, size: int, mtime_epoch: float) -> Optional[FileResult]:
-        """Full scan: check_file → optional I/O → scan_with_data → finalize.
+        """Full scan: check_file → optional I/O → scan_with_data → filter.
 
         This is the main entry point used by FilePipeline.
+        Returns a filtered FileResult or None. No logging or download
+        side effects — those are the caller's responsibility.
         """
         try:
             check = self.check_file(file_path, size, mtime_epoch)
@@ -304,12 +264,12 @@ class FileScanner:
                 return None
 
             if check.status == FileCheckStatus.SNAFFLE:
-                return self._finalize_result(check.result, file_path)
+                return self._filter_result(check.result)
 
             # Phase 2 requires data — read it
             if self.file_accessor is None:
                 if check._best_result:
-                    return self._finalize_result(check._best_result, file_path)
+                    return self._filter_result(check._best_result)
                 return None
 
             data = self.file_accessor.read(
@@ -317,17 +277,18 @@ class FileScanner:
                 max_bytes=self._max_read_bytes,
             )
             if not data:
-                # Access denied or empty — finalize whatever we have from Phase 1
+                # Access denied or empty — filter whatever we have from Phase 1
                 if check._best_result:
-                    return self._finalize_result(check._best_result, file_path)
+                    return self._filter_result(check._best_result)
                 return None
 
             result = self.scan_with_data(data, check)
             if result:
-                return self._finalize_result(result, file_path)
+                return self._filter_result(result)
             return None
 
         except Exception as e:
+            check_fatal_os_error(e)
             logger.debug(f"Unhandled exception while scanning {file_path}: {e}")
             return
 
@@ -407,8 +368,8 @@ class FileScanner:
     ) -> Optional[FileResult]:
         """Evaluate archive members against file rules. No I/O, no finalization."""
         try:
-            bio = io.BytesIO(data)
-            members = self._list_archive_members(ctx.ext, bio)
+            with io.BytesIO(data) as bio:
+                members = self._list_archive_members(ctx.ext, bio)
             if not members:
                 return None
 

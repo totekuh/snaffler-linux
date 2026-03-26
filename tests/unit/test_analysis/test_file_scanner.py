@@ -14,16 +14,8 @@ from snaffler.classifiers.rules import (
 # ---------------- helpers ----------------
 
 def make_cfg(match_filter=None):
-    cfg = MagicMock()
-    cfg.scanning.min_interest = 0
-    cfg.scanning.max_read_bytes = 1024 * 1024
-    cfg.scanning.max_file_bytes = 1024 * 1024
-    cfg.scanning.match_context_bytes = 20
-    cfg.scanning.snaffle = False
-    cfg.scanning.snaffle_path = None
-    cfg.scanning.cert_passwords = []
-    cfg.scanning.match_filter = match_filter
-    return cfg
+    from tests.conftest import make_scanner_cfg
+    return make_scanner_cfg(match_filter=match_filter)
 
 
 def make_rule(
@@ -105,8 +97,7 @@ def test_scan_file_snaffle_rule():
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch("snaffler.analysis.file_scanner.log_file_result"):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
     assert result.rule_name == "SecretRule"
@@ -133,7 +124,7 @@ def test_scan_file_check_for_keys():
         scanner.cert_checker,
         "check_certificate",
         return_value=["HasPrivateKey"],
-    ), patch("snaffler.analysis.file_scanner.log_file_result"):
+    ):
         result = scanner.scan_file("//srv/share/cert.pfx", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
@@ -167,8 +158,7 @@ def test_scan_file_content_rule():
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch("snaffler.analysis.file_scanner.log_file_result"):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
     assert result.rule_name == "ContentRule"
@@ -219,8 +209,7 @@ def test_scan_file_black_triage_skips_content_scan():
 
     scanner = FileScanner(make_cfg(), accessor, evaluator)
 
-    with patch("snaffler.analysis.file_scanner.log_file_result"):
-        result = scanner.scan_file("//srv/share/ntds.dit", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/ntds.dit", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
     assert result.triage == Triage.BLACK
@@ -249,15 +238,14 @@ def test_match_filter_passes_matching_finding():
 
     scanner = FileScanner(make_cfg(match_filter="SecretRule"), accessor, evaluator)
 
-    with patch("snaffler.analysis.file_scanner.log_file_result"):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
     assert result.rule_name == "SecretRule"
 
 
 def test_match_filter_blocks_non_matching_finding():
-    """Finding that does not match --match regex is suppressed but still persisted."""
+    """Finding that does not match --match regex is suppressed."""
     accessor = MagicMock()
 
     rule = make_rule(
@@ -276,15 +264,15 @@ def test_match_filter_blocks_non_matching_finding():
 
     scanner = FileScanner(make_cfg(match_filter="nomatch_pattern"), accessor, evaluator)
 
-    with patch("snaffler.analysis.file_scanner.log_file_result") as mock_log:
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     # --match fully suppresses non-matching findings (returns None)
     assert result is None
 
 
-def test_match_filter_suppresses_download_for_non_matching():
-    """--match filter suppresses both log output and snaffle downloads."""
+def test_match_filter_suppresses_non_matching():
+    """--match filter returns None for non-matching findings.
+    Downloads are now the pipeline's responsibility, not FileScanner's."""
     accessor = MagicMock()
 
     rule = make_rule(
@@ -307,13 +295,10 @@ def test_match_filter_suppresses_download_for_non_matching():
 
     scanner = FileScanner(cfg, accessor, evaluator)
 
-    with patch("snaffler.analysis.file_scanner.log_file_result"):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     # --match fully suppresses non-matching findings
     assert result is None
-    # File was NOT downloaded
-    accessor.copy_to_local.assert_not_called()
 
 
 def test_match_filter_case_insensitive():
@@ -336,8 +321,7 @@ def test_match_filter_case_insensitive():
 
     scanner = FileScanner(make_cfg(match_filter="PASSWORD"), accessor, evaluator)
 
-    with patch("snaffler.analysis.file_scanner.log_file_result"):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
     assert result.rule_name == "PasswordRule"
@@ -426,8 +410,8 @@ def test_archive_member_cap():
     assert len(members) == 10_000
 
 
-def test_match_filter_allows_download_for_matching():
-    """BUG-R: When --match filter matches, copy_to_local IS called for downloads."""
+def test_match_filter_passes_matching_result():
+    """When --match filter matches, scan_file returns the result (pipeline handles download)."""
     accessor = MagicMock()
 
     rule = make_rule(
@@ -450,12 +434,11 @@ def test_match_filter_allows_download_for_matching():
 
     scanner = FileScanner(cfg, accessor, evaluator)
 
-    with patch("snaffler.analysis.file_scanner.log_file_result"):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
-    # Finding matches the filter — download should proceed
+    # Finding matches the filter — result is returned
     assert result is not None
-    accessor.copy_to_local.assert_called_once()
+    assert result.rule_name == "SecretRule"
 
 
 def test_match_filter_none_passes_all():
@@ -478,8 +461,7 @@ def test_match_filter_none_passes_all():
 
     scanner = FileScanner(make_cfg(match_filter=None), accessor, evaluator)
 
-    with patch("snaffler.analysis.file_scanner.log_file_result"):
-        result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
+    result = scanner.scan_file("//srv/share/f.txt", 100, 1700000000.0)
 
     assert isinstance(result, FileResult)
     assert result.rule_name == "AnyRule"

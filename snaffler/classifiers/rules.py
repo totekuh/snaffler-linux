@@ -29,9 +29,9 @@ class MatchLocation(Enum):
     FILE_NAME = "FileName"
     FILE_EXTENSION = "FileExtension"
     FILE_CONTENT_AS_STRING = "FileContentAsString"
-    FILE_CONTENT_AS_BYTES = "FileContentAsBytes"
+    FILE_CONTENT_AS_BYTES = "FileContentAsBytes"  # Not yet implemented
     FILE_LENGTH = "FileLength"
-    FILE_MD5 = "FileMD5"
+    FILE_MD5 = "FileMD5"  # Not yet implemented
 
 
 class MatchListType(Enum):

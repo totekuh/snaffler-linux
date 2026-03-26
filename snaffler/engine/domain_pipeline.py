@@ -8,6 +8,7 @@ from typing import List
 
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.discovery.ad import ADDiscovery
+from snaffler.utils.path_utils import extract_unc_host
 
 logger = logging.getLogger("snaffler")
 
@@ -17,7 +18,7 @@ class DomainPipeline:
     Domain → computers pipeline
     """
 
-    def __init__(self, cfg: SnafflerConfiguration):
+    def __init__(self, cfg: SnafflerConfiguration, exclusion_set: frozenset | None = None):
         self.cfg = cfg
 
         auth = cfg.auth
@@ -25,7 +26,12 @@ class DomainPipeline:
 
         self.domain = auth.domain
         self.ldap_filter = targets.ldap_filter
-        self.exclusions = targets.exclusions or []
+        if exclusion_set is not None:
+            self._exclusion_set = exclusion_set
+        else:
+            self._exclusion_set = frozenset(
+                e.upper() for e in (targets.exclusions or [])
+            )
 
         self.ad = ADDiscovery(cfg)
 
@@ -48,10 +54,9 @@ class DomainPipeline:
 
         logger.info(f"Discovered {len(computers)} computers from AD")
 
-        if self.exclusions:
-            exc_set = {e.upper() for e in self.exclusions}
+        if self._exclusion_set:
             before = len(computers)
-            computers = [c for c in computers if c.upper() not in exc_set]
+            computers = [c for c in computers if c.upper() not in self._exclusion_set]
             logger.info(
                 f"Excluded {before - len(computers)} computers via exclusions list"
             )
@@ -61,10 +66,9 @@ class DomainPipeline:
     def get_dfs_shares(self) -> List[str]:
         """Query AD for DFS namespace targets, applying exclusion filters."""
         dfs_paths = self.ad.get_dfs_targets()
-        if self.exclusions:
-            exc_set = {e.upper() for e in self.exclusions}
+        if self._exclusion_set:
             dfs_paths = [
                 p for p in dfs_paths
-                if p.lstrip("/").split("/")[0].upper() not in exc_set
+                if (extract_unc_host(p) or "").upper() not in self._exclusion_set
             ]
         return dfs_paths

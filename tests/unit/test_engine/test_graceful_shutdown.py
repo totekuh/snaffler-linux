@@ -13,25 +13,17 @@ def _reset_finding_store():
     set_finding_store(None)
 
 
+@pytest.fixture(autouse=True)
+def _skip_auth_check():
+    with patch.object(SnafflerRunner, "_validate_credentials"):
+        yield
+
+
 # ---------- helpers ----------
 
 def make_cfg():
-    cfg = MagicMock()
-    cfg.state.state_db = ":memory:"
-    cfg.targets.unc_targets = []
-    cfg.targets.computer_targets = []
-    cfg.targets.local_targets = []
-    cfg.targets.ftp_targets = []
-    cfg.targets.shares_only = False
-    cfg.targets.rescan_unreadable = False
-    cfg.targets.share_filter = []
-    cfg.targets.exclude_share = []
-    cfg.auth.domain = None
-    cfg.advanced.share_threads = 2
-    cfg.advanced.tree_threads = 2
-    cfg.advanced.file_threads = 2
-    cfg.web.enabled = False
-    return cfg
+    from tests.conftest import make_engine_cfg
+    return make_engine_cfg()
 
 
 # ---------- runner: state close ----------

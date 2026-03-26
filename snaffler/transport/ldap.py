@@ -1,6 +1,7 @@
 from impacket.ldap.ldap import LDAPConnection
 
 from snaffler.config.configuration import SnafflerConfiguration
+from snaffler.transport.auth import authenticate_ldap
 
 
 class LDAPTransport:
@@ -19,33 +20,5 @@ class LDAPTransport:
             self.auth.domain,
         )
 
-        # ---------------- Kerberos ----------------
-        if self.auth.kerberos:
-            ldap.kerberosLogin(
-                user=self.auth.username or "",
-                password=self.auth.password or "",
-                domain=self.auth.domain,
-                lmhash="",
-                nthash=self.auth.nthash or "",
-                kdcHost=self.auth.dc_host,
-                useCache=self.auth.use_kcache,
-            )
-            return ldap
-
-        # ---------------- NTLM ----------------
-        if self.auth.nthash:
-            ldap.login(
-                self.auth.username,
-                "",
-                self.auth.domain,
-                "",
-                self.auth.nthash,
-            )
-        else:
-            ldap.login(
-                self.auth.username,
-                self.auth.password or "",
-                self.auth.domain,
-            )
-
+        authenticate_ldap(ldap, self.auth)
         return ldap

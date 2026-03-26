@@ -151,6 +151,12 @@ def setup_logging(
 
     logger = logging.getLogger("snaffler")
     logger.setLevel(logging.DEBUG)
+    # Close existing handlers before removing them to avoid file descriptor leaks
+    for h in logger.handlers[:]:
+        try:
+            h.close()
+        except Exception:
+            pass
     logger.handlers.clear()
 
     if log_to_console:

@@ -12,6 +12,7 @@ import click
 import typer
 
 from snaffler.utils.logger import Colors, format_size
+from snaffler.utils.path_utils import extract_unc_host
 
 results_app = typer.Typer(
     help="Display stats and findings from a scan database",
@@ -304,12 +305,8 @@ def _render_html(stats: dict, findings: list, unreadable_shares: list | None = N
         finding_id = finding.get("finding_id") or f"f{idx}"
         # Extract host from UNC path (//HOST/SHARE/...) or FTP URL (ftp://HOST:PORT/...)
         file_path = finding["file_path"]
-        host = ""
-        if file_path.startswith("//"):
-            parts = file_path.split("/")
-            if len(parts) >= 3:
-                host = parts[2]
-        elif file_path.startswith("ftp://"):
+        host = extract_unc_host(file_path) or ""
+        if not host and file_path.startswith("ftp://"):
             rest = file_path[6:]
             slash_idx = rest.find("/")
             host = rest[:slash_idx] if slash_idx != -1 else rest

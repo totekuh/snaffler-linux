@@ -1,22 +1,12 @@
 import sqlite3
 import threading
 
-
-def _extract_share(path: str) -> str:
-    """Extract //server/share from a UNC path, or return local paths unchanged."""
-    normalized = path.replace("\\", "/")
-    if not normalized.startswith("//"):
-        return path
-    parts = [p for p in normalized.split("/") if p]
-    if len(parts) >= 2:
-        return f"//{parts[0]}/{parts[1]}"
-    return path
+from snaffler.utils.path_utils import extract_share_root as _extract_share
 
 
 class ScanState:
     def __init__(self, store):
         self.store = store
-        self.aborted = False  # reserved for cooperative shutdown
         # In-memory cache of checked files for O(1) lookups (case-insensitive)
         self._checked_files: set = store.load_checked_files()
         self._checked_lock = threading.Lock()

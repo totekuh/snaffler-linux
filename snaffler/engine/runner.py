@@ -18,6 +18,8 @@ from snaffler.engine.share_pipeline import SharePipeline
 from snaffler.resume.scan_state import SQLiteStateStore, ScanState
 from snaffler.utils.hotkeys import start_hotkey_listener, stop_hotkey_listener
 from snaffler.utils.logger import print_completion_stats, set_finding_store
+from snaffler.utils.fatal import check_fatal_os_error
+from snaffler.utils.path_utils import extract_unc_host, extract_unc_share_name
 from snaffler.utils.progress import ProgressState
 
 logger = logging.getLogger('snaffler')
@@ -47,6 +49,9 @@ class SnafflerRunner:
     def __init__(self, cfg: SnafflerConfiguration):
         self.cfg = cfg
         self.start_time = None
+
+        # ---------- pre-computed exclusion set ----------
+        self._exclusion_set = frozenset(e.upper() for e in (cfg.targets.exclusions or []))
 
         # ---------- progress ----------
         self.progress = ProgressState()
@@ -182,6 +187,12 @@ class SnafflerRunner:
             f"file={self.file_pipeline.file_threads}"
         )
 
+    def _run_file_pipeline(self, paths: list):
+        """Rebalance threads and run the file scanning pipeline."""
+        if paths:
+            self._rebalance_file_threads()
+            self.file_pipeline.run(paths)
+
     # ---------- share filtering ----------
 
     def _filter_paths_by_share(self, paths: List[str]) -> List[str]:
@@ -197,11 +208,10 @@ class SnafflerRunner:
 
         filtered = []
         for p in paths:
-            parts = p.strip("/").split("/")
-            if len(parts) < 2:
+            share_name = extract_unc_share_name(p)
+            if share_name is None:
                 filtered.append(p)
                 continue
-            share_name = parts[1]
             if share_matches_filter(share_name, include, exclude):
                 filtered.append(p)
             else:
@@ -222,12 +232,10 @@ class SnafflerRunner:
 
     def _apply_exclusions(self, computers: List[str]) -> List[str]:
         """Remove computers matching the --exclusions list."""
-        exclusions = self.cfg.targets.exclusions
-        if not exclusions:
+        if not self._exclusion_set:
             return computers
-        exc_set = {e.upper() for e in exclusions}
         before = len(computers)
-        filtered = [c for c in computers if c.upper() not in exc_set]
+        filtered = [c for c in computers if c.upper() not in self._exclusion_set]
         diff = before - len(filtered)
         if diff:
             logger.info(f"Excluded {diff} computer(s) via --exclusions")
@@ -235,17 +243,15 @@ class SnafflerRunner:
 
     def _filter_paths_by_exclusions(self, paths: List[str]) -> List[str]:
         """Remove UNC paths whose hostname matches the --exclusions list."""
-        exclusions = self.cfg.targets.exclusions
-        if not exclusions:
+        if not self._exclusion_set:
             return paths
-        exc_set = {e.upper() for e in exclusions}
         filtered = []
         for p in paths:
-            parts = p.strip("/").split("/")
-            if len(parts) < 2:
+            host = extract_unc_host(p)
+            if host is None:
                 filtered.append(p)
                 continue
-            if parts[0].upper() not in exc_set:
+            if host.upper() not in self._exclusion_set:
                 filtered.append(p)
         diff = len(paths) - len(filtered)
         if diff:
@@ -345,9 +351,10 @@ class SnafflerRunner:
                     hostname = futures[future]
                     try:
                         ip = future.result()
-                    except Exception:
+                    except Exception as e:
+                        check_fatal_os_error(e)
                         ip = None
-                        logger.debug(f"DNS: probe failed for {hostname}")
+                        logger.info(f"DNS: probe failed for {hostname}")
                     if ip is not None:
                         resolved.append(hostname)
                         self.progress.dns_resolved += 1
@@ -469,40 +476,46 @@ class SnafflerRunner:
         errors = 0
 
         def _test_one(unc_path: str):
-            parts = unc_path.strip("/").split("/")
-            if len(parts) < 2:
+            computer = extract_unc_host(unc_path)
+            share_name = extract_unc_share_name(unc_path)
+            if computer is None or share_name is None:
                 return None
-            computer, share_name = parts[0], parts[1]
             readable = finder.is_share_readable(computer, share_name)
             return readable
 
-        with ThreadPoolExecutor(
-            max_workers=self.cfg.advanced.share_threads or 2,
-        ) as pool:
-            futures = {pool.submit(_test_one, p): p for p in unreadable}
-            for future in as_completed(futures):
-                unc_path = futures[future]
-                try:
-                    result = future.result()
-                except Exception as e:
-                    logger.debug(f"Rescan error for {unc_path}: {e}")
-                    errors += 1
-                    continue
-                if result is None:
-                    # Malformed path
-                    continue
-                if result:
-                    logger.info(f"[NEW] Readable: {unc_path}")
-                    self.state.update_share_readable(unc_path)
-                    newly_readable.append(unc_path)
-                else:
-                    logger.debug(f"Still unreadable: {unc_path}")
-
-        # Close all cached connections from rescan's ShareFinder
         try:
-            finder.close()
-        except Exception:
-            pass
+            with ThreadPoolExecutor(
+                max_workers=self.cfg.advanced.share_threads or 2,
+            ) as pool:
+                futures = {pool.submit(_test_one, p): p for p in unreadable}
+                try:
+                    for future in as_completed(futures):
+                        unc_path = futures[future]
+                        try:
+                            result = future.result()
+                        except Exception as e:
+                            check_fatal_os_error(e)
+                            logger.debug(f"Rescan error for {unc_path}: {e}")
+                            errors += 1
+                            continue
+                        if result is None:
+                            # Malformed path
+                            continue
+                        if result:
+                            logger.info(f"[NEW] Readable: {unc_path}")
+                            self.state.update_share_readable(unc_path)
+                            newly_readable.append(unc_path)
+                        else:
+                            logger.debug(f"Still unreadable: {unc_path}")
+                except KeyboardInterrupt:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
+        finally:
+            # Close all cached connections from rescan's ShareFinder
+            try:
+                finder.close()
+            except Exception:
+                pass
 
         still_denied = len(unreadable) - len(newly_readable) - errors
         msg = f"Rescan: {len(newly_readable)} newly readable, {still_denied} still denied"
@@ -512,8 +525,7 @@ class SnafflerRunner:
 
         if newly_readable:
             self.progress.shares_found = len(newly_readable)
-            self._rebalance_file_threads()
-            self.file_pipeline.run(newly_readable)
+            self._run_file_pipeline(newly_readable)
 
     def _detect_scan_mode(self) -> str:
         """Determine the current scan mode from config."""
@@ -545,6 +557,99 @@ class SnafflerRunner:
             self.state.clear_phase_flags()
         self.state.set_sync_value(_SYNC_SCAN_MODE, mode)
 
+    def _validate_credentials(self):
+        """Preflight auth check — try a single login before starting the scan.
+
+        Hard-fails with a clear error if credentials are invalid so we don't
+        silently scan thousands of hosts with bad creds and come back empty.
+
+        Skipped for --local-fs (no auth) and domain mode (LDAP connect
+        validates creds as its first operation).
+        """
+        cfg = self.cfg
+
+        # Local mode — no auth needed
+        if cfg.targets.local_targets:
+            return
+
+        # Domain mode — LDAP connect is the first thing that happens,
+        # it already raises on bad creds with a clear error.
+        if (not cfg.targets.unc_targets
+                and not cfg.targets.computer_targets
+                and not cfg.targets.rescan_unreadable
+                and not cfg.targets.ftp_targets
+                and cfg.auth.domain):
+            return
+
+        # FTP mode — test FTP login
+        if cfg.targets.ftp_targets:
+            from snaffler.discovery.ftp_tree_walker import parse_ftp_url
+            from snaffler.transport.ftp import FTPTransport
+
+            target = cfg.targets.ftp_targets[0]
+            parsed = parse_ftp_url(target)
+            if not parsed:
+                return
+            host, port, _ = parsed
+            transport = FTPTransport(cfg)
+            try:
+                ftp = transport.connect(host, port)
+                try:
+                    ftp.quit()
+                except Exception:
+                    pass
+                logger.info(f"Auth OK: FTP login to {host}:{port} succeeded")
+            except OSError as e:
+                raise SystemExit(
+                    f"FATAL: cannot reach FTP server {host}:{port} — {e}\n"
+                    f"Check network connectivity and retry."
+                ) from e
+            except Exception as e:
+                raise SystemExit(
+                    f"FATAL: FTP authentication failed against {host}:{port} — {e}\n"
+                    f"Fix credentials and retry."
+                ) from e
+            return
+
+        # SMB modes — pick the first available target
+        target = None
+        if cfg.targets.rescan_unreadable and self.state:
+            unreadable = self.state.load_unreadable_shares()
+            if unreadable:
+                target = extract_unc_host(unreadable[0])
+        elif cfg.targets.unc_targets:
+            for p in cfg.targets.unc_targets:
+                host = extract_unc_host(p)
+                if host is not None:
+                    target = host
+                    break
+        elif cfg.targets.computer_targets:
+            target = cfg.targets.computer_targets[0]
+
+        if not target:
+            return
+
+        from snaffler.transport.smb import SMBTransport
+
+        transport = SMBTransport(cfg)
+        try:
+            smb = transport.connect(target)
+            try:
+                smb.close()
+            except Exception:
+                pass
+            logger.info(f"Auth OK: SMB login to {target} succeeded")
+        except OSError as e:
+            raise SystemExit(
+                f"FATAL: cannot reach SMB target {target}:445 — {e}\n"
+                f"Check network connectivity and retry."
+            ) from e
+        except Exception as e:
+            raise SystemExit(
+                f"FATAL: SMB authentication failed against {target} — {e}\n"
+                f"Fix credentials and retry."
+            ) from e
+
     def execute(self):
         self.start_time = datetime.now()
         logger.info(f"Starting Snaffler at {self.start_time:%Y-%m-%d %H:%M:%S}")
@@ -554,6 +659,8 @@ class SnafflerRunner:
         self._check_scan_mode_changed()
         interrupted = False
         try:
+            self._validate_credentials()
+
             if self.cfg.web.enabled:
                 try:
                     from snaffler.web.server import start_web_server
@@ -585,8 +692,7 @@ class SnafflerRunner:
                     logger.warning("--exclusions has no effect in --ftp mode")
                 paths = self.cfg.targets.ftp_targets
                 self.progress.shares_found = len(paths)
-                self._rebalance_file_threads()
-                self.file_pipeline.run(paths)
+                self._run_file_pipeline(paths)
 
             # ---------- Local filesystem paths ----------
             elif self.cfg.targets.local_targets:
@@ -596,8 +702,7 @@ class SnafflerRunner:
                     logger.warning("--exclusions has no effect in --local-fs mode")
                 paths = self.cfg.targets.local_targets
                 self.progress.shares_found = len(paths)
-                self._rebalance_file_threads()
-                self.file_pipeline.run(paths)
+                self._run_file_pipeline(paths)
 
             # ---------- Direct UNC paths ----------
             elif self.cfg.targets.unc_targets:
@@ -609,10 +714,11 @@ class SnafflerRunner:
                     seen_hosts = {}
                     capped = []
                     for p in paths:
-                        if p.startswith("//"):
-                            host = p.strip("/").split("/")[0].lower()
-                        else:
+                        host = extract_unc_host(p)
+                        if host is None:
                             host = p
+                        else:
+                            host = host.lower()
                         if host not in seen_hosts:
                             if len(seen_hosts) >= limit:
                                 continue
@@ -624,16 +730,14 @@ class SnafflerRunner:
                 # Seed progress counters from UNC paths so summary stats
                 # include computer/share counts even without SharePipeline.
                 hosts = {
-                    p.strip("/").split("/")[0]
+                    extract_unc_host(p)
                     for p in paths
-                    if p.startswith("//")
+                    if extract_unc_host(p) is not None
                 }
                 self.progress.computers_total = len(hosts)
                 self.progress.computers_done = len(hosts)
                 self.progress.shares_found = len(paths)
-                if paths:
-                    self._rebalance_file_threads()
-                    self.file_pipeline.run(paths)
+                self._run_file_pipeline(paths)
 
             # ---------- Explicit computer list ----------
             elif self.cfg.targets.computer_targets:
@@ -643,14 +747,12 @@ class SnafflerRunner:
                 computers = self._cap_hosts(computers)
                 resolved = self._resolve_computers(computers) if computers else []
                 share_paths = self._resume_share_discovery(resolved) if resolved else []
-                if share_paths:
-                    self._rebalance_file_threads()
-                    self.file_pipeline.run(share_paths)
+                self._run_file_pipeline(share_paths)
 
             # ---------- Domain discovery ----------
             elif self.cfg.auth.domain:
                 logger.info("Starting full domain discovery")
-                domain_pipeline = DomainPipeline(self.cfg)
+                domain_pipeline = DomainPipeline(self.cfg, exclusion_set=self._exclusion_set)
                 computers = self._resume_computer_discovery(domain_pipeline)
                 computers = self._cap_hosts(computers)
                 resolved = self._resolve_computers(computers) if computers else []
@@ -671,9 +773,8 @@ class SnafflerRunner:
                 # Reflect DFS-merged total in the status display
                 self.progress.shares_found = len(all_paths)
 
-                if all_paths and not self.cfg.targets.shares_only:
-                    self._rebalance_file_threads()
-                    self.file_pipeline.run(all_paths)
+                if not self.cfg.targets.shares_only:
+                    self._run_file_pipeline(all_paths)
 
             else:
                 logger.error("No targets specified")

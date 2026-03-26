@@ -5,6 +5,7 @@ import os
 import shutil
 
 from snaffler.accessors.file_accessor import FileAccessor
+from snaffler.utils.fatal import check_fatal_os_error
 
 logger = logging.getLogger("snaffler")
 
@@ -22,6 +23,7 @@ class LocalFileAccessor(FileAccessor):
             with open(file_path, "rb") as f:
                 return f.read(max_bytes)
         except OSError as e:
+            check_fatal_os_error(e)
             logger.debug(f"Cannot read {file_path}: {e}")
             return None
 
@@ -42,4 +44,5 @@ class LocalFileAccessor(FileAccessor):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.copy2(file_path, dest)
         except OSError as e:
+            check_fatal_os_error(e)
             logger.debug(f"Cannot copy {file_path} to {dest_root}: {e}")

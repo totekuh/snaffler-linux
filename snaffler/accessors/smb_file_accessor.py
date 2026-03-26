@@ -1,23 +1,28 @@
 # snaffler/accessors/smb_file_accessor.py
 
-import threading
 from pathlib import Path
 from typing import Optional
 
 from impacket.smb import FILE_READ_DATA, FILE_READ_ATTRIBUTES, FILE_SHARE_READ
+from impacket.smbconnection import SessionError
 
 from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.transport.smb import SMBTransport
+from snaffler.utils.connection_cache import ThreadLocalConnectionCache
+from snaffler.utils.fatal import check_fatal_os_error
 from snaffler.utils.path_utils import parse_unc_path
 
 
 class SMBFileAccessor(FileAccessor):
     def __init__(self, cfg):
         self._transport = SMBTransport(cfg)
-        self._thread_local = threading.local()
         self._max_file_bytes = cfg.scanning.max_file_bytes
-        self._all_connections = []
-        self._conn_lock = threading.Lock()
+        self._cache = ThreadLocalConnectionCache(
+            connect_fn=lambda server: self._transport.connect(server),
+            health_check_fn=lambda smb: smb.getServerName(),
+            disconnect_fn=lambda smb: smb.logoff(),
+            cache_attr="smb_cache",
+        )
 
     @staticmethod
     def _parse(file_path: str):
@@ -28,40 +33,13 @@ class SMBFileAccessor(FileAccessor):
         server, share, smb_path, _name, _ext = parsed
         return server, share, smb_path
 
-    def _get_smb(self, server: str):
-        cache = getattr(self._thread_local, "smb_cache", {})
-        self._thread_local.smb_cache = cache
-
-        smb = cache.get(server)
-        if smb:
-            try:
-                smb.getServerName()
-                return smb
-            except Exception:
-                with self._conn_lock:
-                    try:
-                        self._all_connections.remove(smb)
-                    except ValueError:
-                        pass
-                try:
-                    smb.logoff()
-                except Exception:
-                    pass
-                cache.pop(server, None)
-
-        smb = self._transport.connect(server)
-        cache[server] = smb
-        with self._conn_lock:
-            self._all_connections.append(smb)
-        return smb
-
     def read(self, file_path: str, max_bytes: Optional[int] = None) -> Optional[bytes]:
         parsed = self._parse(file_path)
         if not parsed:
             return None
         server, share, smb_path = parsed
         try:
-            smb = self._get_smb(server)
+            smb = self._cache.get(server)
             tid = smb.connectTree(share)
             try:
                 fid = smb.openFile(
@@ -78,31 +56,20 @@ class SMBFileAccessor(FileAccessor):
                     smb.closeFile(tid, fid)
             finally:
                 smb.disconnectTree(tid)
-        except Exception:
-            cache = getattr(self._thread_local, "smb_cache", None)
-            if cache:
-                smb = cache.pop(server, None)
-                if smb is not None:
-                    with self._conn_lock:
-                        try:
-                            self._all_connections.remove(smb)
-                        except ValueError:
-                            pass
-                    try:
-                        smb.logoff()
-                    except Exception:
-                        pass
+        except SessionError:
+            # SMB-level error (ACCESS_DENIED, etc.) -- the connection is still
+            # valid, don't tear it down.  Just return None for this file.
+            return None
+        except Exception as e:
+            check_fatal_os_error(e)
+            # Transport-level error (timeout, disconnect, etc.) -- connection
+            # is likely dead, evict it from the cache.
+            self._cache.invalidate(server)
             return None
 
     def close(self):
         """Close all cached SMB connections across all threads."""
-        with self._conn_lock:
-            for smb in self._all_connections:
-                try:
-                    smb.logoff()
-                except Exception:
-                    pass
-            self._all_connections.clear()
+        self._cache.close_all()
 
     def copy_to_local(self, file_path: str, dest_root) -> None:
         parsed = self._parse(file_path)
@@ -121,5 +88,5 @@ class SMBFileAccessor(FileAccessor):
             data = self.read(file_path, max_bytes=self._max_file_bytes)
             if data:
                 local.write_bytes(data)
-        except Exception:
-            pass
+        except Exception as e:
+            check_fatal_os_error(e)

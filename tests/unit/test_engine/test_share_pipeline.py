@@ -9,12 +9,8 @@ from snaffler.utils.progress import ProgressState
 # ---------- helpers ----------
 
 def make_cfg():
-    cfg = MagicMock()
-
-    cfg.advanced.share_threads = 2
-    cfg.targets.shares_only = False
-
-    return cfg
+    from tests.conftest import make_engine_cfg
+    return make_engine_cfg()
 
 
 def _share(readable=True):

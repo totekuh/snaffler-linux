@@ -27,9 +27,7 @@ Low-level two-phase API::
 """
 
 import logging
-import os
 import re
-from datetime import datetime
 from types import SimpleNamespace
 from typing import Generator, List, Optional
 
@@ -50,6 +48,7 @@ from snaffler.classifiers.rules import (
 )
 from snaffler.config.configuration import DEFAULT_CERT_PASSWORDS
 from snaffler.discovery.tree import TreeWalker, should_scan_directory
+from snaffler.utils.fatal import check_fatal_os_error
 
 logger = logging.getLogger("snaffler")
 
@@ -229,6 +228,7 @@ class Snaffler:
                 # Use return value if provided, fall back to on_dir callback
                 subdirs = subdirs if subdirs is not None else subdirs_from_cb
             except Exception as e:
+                check_fatal_os_error(e)
                 logger.debug(f"Error walking {dir_path}: {e}")
                 continue
 
@@ -270,6 +270,7 @@ class Snaffler:
             result = self._scanner.scan_with_data(data, check)
             return self._apply_filters(result)
         except Exception as e:
+            check_fatal_os_error(e)
             logger.debug(f"Error scanning {file_path}: {e}")
             return None
 
@@ -375,18 +376,7 @@ class Snaffler:
         (e.g. DISCARD rules). Use :meth:`walk` or :meth:`check_file` +
         :meth:`scan_content` for the full classification pipeline.
         """
-        file_name = os.path.basename(file_path)
-        file_ext = os.path.splitext(file_name)[1]
-        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch is not None else None
-
-        ctx = FileContext(
-            unc_path=file_path,
-            name=file_name,
-            ext=file_ext,
-            size=size,
-            modified=modified,
-        )
-
+        ctx = FileContext.from_path(file_path, size, mtime_epoch)
         result = self._scanner._evaluate_certificate(ctx, data)
         return self._apply_filters(result)
 
@@ -408,18 +398,7 @@ class Snaffler:
         or :meth:`check_file` + :meth:`scan_content` for the full
         classification pipeline.
         """
-        file_name = os.path.basename(file_path)
-        file_ext = os.path.splitext(file_name)[1]
-        modified = datetime.fromtimestamp(mtime_epoch) if mtime_epoch is not None else None
-
-        ctx = FileContext(
-            unc_path=file_path,
-            name=file_name,
-            ext=file_ext,
-            size=size,
-            modified=modified,
-        )
-
+        ctx = FileContext.from_path(file_path, size, mtime_epoch)
         result = self._scanner._evaluate_archive(ctx, data)
         return self._apply_filters(result)
 

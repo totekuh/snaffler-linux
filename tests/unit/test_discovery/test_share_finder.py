@@ -55,8 +55,8 @@ def test_get_smb_cached():
     with patch.object(
             finder.smb_transport, "connect", return_value=smb
     ) as connect:
-        a = finder._get_smb("HOST")
-        b = finder._get_smb("HOST")
+        a = finder._cache.get("HOST")
+        b = finder._cache.get("HOST")
 
     assert a is b
     connect.assert_called_once_with("HOST", timeout=cfg.auth.smb_timeout)
@@ -76,8 +76,8 @@ def test_get_smb_reconnect_on_dead():
         "connect",
         side_effect=[smb_dead, smb_new],
     ):
-        a = finder._get_smb("HOST")
-        b = finder._get_smb("HOST")
+        a = finder._cache.get("HOST")
+        b = finder._cache.get("HOST")
 
     assert b is smb_new
 
@@ -96,7 +96,7 @@ def test_enumerate_shares():
         ]
     )
 
-    with patch.object(finder, "_get_smb", return_value=smb):
+    with patch.object(finder._cache, "get", return_value=smb):
         shares = finder.enumerate_shares("HOST")
 
     assert len(shares) == 1
@@ -111,7 +111,7 @@ def test_enumerate_shares_session_error():
     smb = MagicMock()
     smb.listShares.side_effect = SessionError(0, "access denied")
 
-    with patch.object(finder, "_get_smb", return_value=smb):
+    with patch.object(finder._cache, "get", return_value=smb):
         shares = finder.enumerate_shares("HOST")
 
     assert shares == []
@@ -123,7 +123,7 @@ def test_is_share_readable_true():
 
     smb = make_smb(readable=True)
 
-    with patch.object(finder, "_get_smb", return_value=smb):
+    with patch.object(finder._cache, "get", return_value=smb):
         assert finder.is_share_readable("HOST", "DATA") is True
 
     smb.listPath.assert_called_once_with("DATA", "*")
@@ -135,7 +135,7 @@ def test_is_share_readable_false():
 
     smb = make_smb(readable=False)
 
-    with patch.object(finder, "_get_smb", return_value=smb):
+    with patch.object(finder._cache, "get", return_value=smb):
         assert finder.is_share_readable("HOST", "DATA") is False
 
 

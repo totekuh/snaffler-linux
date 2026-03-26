@@ -2,7 +2,6 @@ import os
 import tempfile
 
 import pytest
-import typer
 
 from snaffler.config.configuration import (
     SnafflerConfiguration,
@@ -129,7 +128,7 @@ def test_kerberos_requires_domain():
     cfg = SnafflerConfiguration()
     cfg.auth.kerberos = True
 
-    with pytest.raises(typer.BadParameter):
+    with pytest.raises(ValueError):
         cfg.validate()
 
 
@@ -141,7 +140,7 @@ def test_kerberos_kcache_requires_env(monkeypatch):
 
     monkeypatch.delenv("KRB5CCNAME", raising=False)
 
-    with pytest.raises(typer.BadParameter):
+    with pytest.raises(ValueError):
         cfg.validate()
 
 
@@ -154,7 +153,7 @@ def test_kerberos_kcache_no_username(monkeypatch):
 
     monkeypatch.setenv("KRB5CCNAME", "/tmp/krb5cc")
 
-    with pytest.raises(typer.BadParameter):
+    with pytest.raises(ValueError):
         cfg.validate()
 
 

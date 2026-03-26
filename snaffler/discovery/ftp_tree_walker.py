@@ -7,6 +7,8 @@ from urllib.parse import urlparse
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.discovery.tree import TreeWalker
 from snaffler.transport.ftp import FTPTransport
+from snaffler.utils.connection_cache import ThreadLocalConnectionCache
+from snaffler.utils.fatal import check_fatal_os_error
 
 logger = logging.getLogger("snaffler")
 
@@ -49,72 +51,16 @@ class FTPTreeWalker(TreeWalker):
             exclude_unc=cfg.targets.exclude_unc,
         )
         self.ftp_transport = FTPTransport(cfg)
-        self._local = threading.local()
-        self._all_connections = []
-        self._conn_lock = threading.Lock()
-
-    def _get_ftp(self, host: str, port: int):
-        """Return a cached FTP connection, creating one if needed.
-
-        Uses thread-local storage so each worker thread maintains its own
-        connection cache — same pattern as SMBTreeWalker._get_smb().
-        """
-        cache = getattr(self._local, "connections", None)
-        if cache is None:
-            cache = {}
-            self._local.connections = cache
-
-        key = (host, port)
-        ftp = cache.get(key)
-        if ftp is not None:
-            try:
-                ftp.voidcmd("NOOP")
-                return ftp
-            except Exception:
-                with self._conn_lock:
-                    try:
-                        self._all_connections.remove(ftp)
-                    except ValueError:
-                        pass
-                try:
-                    ftp.quit()
-                except Exception:
-                    pass
-                cache.pop(key, None)
-
-        ftp = self.ftp_transport.connect(host, port)
-        cache[key] = ftp
-        with self._conn_lock:
-            self._all_connections.append(ftp)
-        return ftp
-
-    def _invalidate_ftp(self, host: str, port: int):
-        """Quit and remove a cached connection."""
-        cache = getattr(self._local, "connections", None)
-        if cache is None:
-            return
-        key = (host, port)
-        ftp = cache.pop(key, None)
-        if ftp is not None:
-            with self._conn_lock:
-                try:
-                    self._all_connections.remove(ftp)
-                except ValueError:
-                    pass
-            try:
-                ftp.quit()
-            except Exception:
-                pass
+        self._cache = ThreadLocalConnectionCache(
+            connect_fn=lambda key: self.ftp_transport.connect(key[0], key[1]),
+            health_check_fn=lambda ftp: ftp.voidcmd("NOOP"),
+            disconnect_fn=lambda ftp: ftp.quit(),
+            cache_attr="connections",
+        )
 
     def close(self):
         """Close all cached FTP connections across all threads."""
-        with self._conn_lock:
-            for ftp in self._all_connections:
-                try:
-                    ftp.quit()
-                except Exception:
-                    pass
-            self._all_connections.clear()
+        self._cache.close_all()
 
     def walk_directory(self, ftp_path: str, on_file=None, on_dir=None,
                        cancel: threading.Event | None = None) -> list:
@@ -142,12 +88,14 @@ class FTPTreeWalker(TreeWalker):
         if not remote_path.endswith("/"):
             remote_path += "/"
 
+        key = (host, port)
         logger.debug(f"Walking directory: {ftp_path}")
         try:
-            ftp = self._get_ftp(host, port)
+            ftp = self._cache.get(key)
             return self._list_directory(ftp, host, port, remote_path, on_file, on_dir)
         except Exception as e:
-            self._invalidate_ftp(host, port)
+            check_fatal_os_error(e)
+            self._cache.invalidate(key)
             logger.debug(f"Error walking FTP directory {ftp_path}: {e}")
             raise
 

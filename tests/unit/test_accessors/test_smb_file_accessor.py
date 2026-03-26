@@ -57,7 +57,7 @@ def test_read_failure():
     smb = make_smb_mock()
     accessor = make_accessor(smb)
 
-    accessor._get_smb = MagicMock(side_effect=Exception("fail"))
+    accessor._cache.get = MagicMock(side_effect=Exception("fail"))
 
     assert accessor.read("//srv/share/file.bin") is None
 

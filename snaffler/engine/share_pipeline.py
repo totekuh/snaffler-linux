@@ -11,6 +11,7 @@ from typing import List, Tuple
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.discovery.shares import ShareFinder
 from snaffler.resume.scan_state import ScanState
+from snaffler.utils.fatal import check_fatal_os_error
 from snaffler.utils.progress import ProgressState
 
 logger = logging.getLogger("snaffler")
@@ -39,11 +40,10 @@ class SharePipeline:
 
     def close(self):
         """Close all cached connections held by the share finder."""
-        if hasattr(self.share_finder, 'close'):
-            try:
-                self.share_finder.close()
-            except Exception:
-                pass
+        try:
+            self.share_finder.close()
+        except Exception:
+            pass
 
     def run(self, computers: List[str]) -> List[str]:
         """
@@ -86,6 +86,7 @@ class SharePipeline:
                                     [(unc, s.readable) for unc, s in shares]
                                 )
                     except Exception as e:
+                        check_fatal_os_error(e)
                         logger.debug(f"Error processing {computer}: {e}")
                     finally:
                         if self.progress:

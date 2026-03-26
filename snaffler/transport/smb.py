@@ -1,6 +1,8 @@
 from impacket.smbconnection import SMBConnection
 
 from snaffler.config.configuration import SnafflerConfiguration
+from snaffler.transport.auth import authenticate_smb
+from snaffler.utils.fatal import check_fatal_os_error
 
 
 class SMBTransport:
@@ -19,34 +21,14 @@ class SMBTransport:
             timeout=timeout,
         )
 
-        # ---------------- Kerberos ----------------
-        if self.auth.kerberos:
-            smb.kerberosLogin(
-                user=self.auth.username or "",
-                password=self.auth.password or "",
-                domain=self.auth.domain or "",
-                lmhash="",
-                nthash=self.auth.nthash or "",
-                aesKey=None,
-                kdcHost=self.auth.dc_host,
-                useCache=self.auth.use_kcache,
-            )
+        try:
+            authenticate_smb(smb, self.auth)
             return smb
-
-        # ---------------- NTLM ----------------
-        if self.auth.nthash:
-            smb.login(
-                self.auth.username,
-                "",
-                self.auth.domain or "",
-                "",
-                self.auth.nthash,
-                )
-        else:
-            smb.login(
-                self.auth.username,
-                self.auth.password or "",
-                self.auth.domain or "",
-                )
-
-        return smb
+        except Exception as e:
+            check_fatal_os_error(e)
+            # Login failed — close the underlying TCP socket to avoid leaks
+            try:
+                smb.close()
+            except Exception:
+                pass
+            raise

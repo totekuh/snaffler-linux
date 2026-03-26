@@ -4,6 +4,7 @@ import logging
 import os
 
 from snaffler.discovery.tree import TreeWalker
+from snaffler.utils.fatal import check_fatal_os_error
 
 logger = logging.getLogger("snaffler")
 
@@ -27,6 +28,7 @@ class LocalTreeWalker(TreeWalker):
         try:
             entries = os.scandir(dir_path)
         except OSError as e:
+            check_fatal_os_error(e)
             logger.debug(f"Cannot list {dir_path}: {e}")
             return []
 
@@ -52,6 +54,7 @@ class LocalTreeWalker(TreeWalker):
                         # Dangling or directory symlinks — not followed (loop prevention)
                         logger.debug(f"Skipping symlink: {entry.path}")
                 except OSError as e:
+                    check_fatal_os_error(e)
                     logger.debug(f"Skipping {entry.path}: {e}")
                     continue
 

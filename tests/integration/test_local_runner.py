@@ -10,6 +10,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -19,6 +20,8 @@ from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.engine.runner import SnafflerRunner
 from snaffler.utils.logger import set_finding_store
 from snaffler.utils.progress import ProgressState
+
+_no_auth_check = patch.object(SnafflerRunner, "_validate_credentials")
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 _ARCHIVE_DIR = _DATA_DIR / "archives"
@@ -1045,7 +1048,8 @@ class TestRescanUnreadable:
         cfg = self._make_cfg(db_path)
         cfg.targets.rescan_unreadable = True
 
-        with patch("snaffler.discovery.shares.ShareFinder") as finder_cls:
+        with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+             _no_auth_check:
             finder = finder_cls.return_value
             # FINANCE now readable, BACKUP still denied
             finder.is_share_readable.side_effect = lambda c, s: s == "FINANCE"
@@ -1102,7 +1106,8 @@ class TestRescanUnreadable:
         cfg = self._make_cfg(db_path)
         cfg.targets.rescan_unreadable = True
 
-        with patch("snaffler.discovery.shares.ShareFinder") as finder_cls:
+        with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+             _no_auth_check:
             finder = finder_cls.return_value
             finder.is_share_readable.return_value = False
 
@@ -1134,7 +1139,8 @@ class TestRescanUnreadable:
         cfg = self._make_cfg(db_path)
         cfg.targets.rescan_unreadable = True
 
-        with patch("snaffler.discovery.shares.ShareFinder") as finder_cls:
+        with patch("snaffler.discovery.shares.ShareFinder") as finder_cls, \
+             _no_auth_check:
             finder = finder_cls.return_value
 
             def check(computer, share_name):

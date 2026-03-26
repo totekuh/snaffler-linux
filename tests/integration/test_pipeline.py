@@ -28,6 +28,8 @@ from snaffler.resume.scan_state import SQLiteStateStore, ScanState
 from snaffler.utils.logger import set_finding_store
 from snaffler.utils.progress import ProgressState
 
+_no_auth_check = patch.object(SnafflerRunner, "_validate_credentials")
+
 # ---------------------------------------------------------------------------
 # The fake share root is the existing test data directory.
 # Unit tests already prove each file triggers the right rule — here we
@@ -816,7 +818,8 @@ class TestDNSPreResolution:
              patch("snaffler.discovery.shares.SMBTransport") as st, \
              patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
              patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
-             patch("snaffler.engine.runner.print_completion_stats"):
+             patch("snaffler.engine.runner.print_completion_stats"), \
+             _no_auth_check:
 
             st.return_value.connect.return_value = smb
             tt.return_value.connect.return_value = smb
@@ -853,7 +856,8 @@ class TestDNSPreResolution:
              patch("snaffler.engine.runner.socket.create_connection",
                    return_value=MagicMock()), \
              patch("snaffler.discovery.shares.SMBTransport"), \
-             patch("snaffler.engine.runner.print_completion_stats"):
+             patch("snaffler.engine.runner.print_completion_stats"), \
+             _no_auth_check:
 
             runner = SnafflerRunner(cfg)
             runner.execute()
@@ -881,7 +885,8 @@ class TestDNSPreResolution:
              patch("snaffler.discovery.shares.SMBTransport") as st, \
              patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
              patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
-             patch("snaffler.engine.runner.print_completion_stats"):
+             patch("snaffler.engine.runner.print_completion_stats"), \
+             _no_auth_check:
 
             st.return_value.connect.return_value = smb
             tt.return_value.connect.return_value = smb
@@ -932,7 +937,8 @@ class TestDNSPreResolution:
                  patch("snaffler.discovery.shares.SMBTransport") as st, \
                  patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                  patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
-                 patch("snaffler.engine.runner.print_completion_stats"):
+                 patch("snaffler.engine.runner.print_completion_stats"), \
+                 _no_auth_check:
 
                 st.return_value.connect.return_value = smb
                 tt.return_value.connect.return_value = smb
@@ -981,7 +987,8 @@ class TestDNSPreResolution:
                  patch("snaffler.discovery.shares.SMBTransport") as st, \
                  patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                  patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
-                 patch("snaffler.engine.runner.print_completion_stats"):
+                 patch("snaffler.engine.runner.print_completion_stats"), \
+                 _no_auth_check:
 
                 st.return_value.connect.return_value = smb
                 tt.return_value.connect.return_value = smb
@@ -1042,7 +1049,8 @@ class TestExclusions:
              patch("snaffler.discovery.shares.SMBTransport") as st, \
              patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
              patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
-             patch("snaffler.engine.runner.print_completion_stats"):
+             patch("snaffler.engine.runner.print_completion_stats"), \
+             _no_auth_check:
 
             st.return_value.connect.return_value = smb
             tt.return_value.connect.return_value = smb
@@ -1080,7 +1088,8 @@ class TestExclusions:
 
         with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
              patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
-             patch("snaffler.engine.runner.print_completion_stats"):
+             patch("snaffler.engine.runner.print_completion_stats"), \
+             _no_auth_check:
 
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
@@ -1105,7 +1114,8 @@ class TestExclusions:
 
         with patch("snaffler.engine.runner.socket.getaddrinfo",
                     side_effect=AssertionError("DNS should not be called")), \
-             patch("snaffler.engine.runner.print_completion_stats"):
+             patch("snaffler.engine.runner.print_completion_stats"), \
+             _no_auth_check:
 
             runner = SnafflerRunner(cfg)
             runner.execute()
@@ -1129,11 +1139,10 @@ class TestArchivePeek:
         root = share_root or _DATA_DIR
         smb = _make_smb_mock(root)
         findings = []
-        original_log = None
 
         # Intercept log_file_result to capture individual findings
-        import snaffler.analysis.file_scanner as fs_mod
-        original_log = fs_mod.log_file_result
+        import snaffler.engine.file_pipeline as fp_mod
+        original_log = fp_mod.log_file_result
 
         def capture_log(logger, file_path, *args, **kwargs):
             findings.append(file_path)
@@ -1141,7 +1150,7 @@ class TestArchivePeek:
 
         with patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
                 patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
-                patch("snaffler.analysis.file_scanner.log_file_result", side_effect=capture_log):
+                patch("snaffler.engine.file_pipeline.log_file_result", side_effect=capture_log):
             tt.return_value.connect.return_value = smb
             at.return_value.connect.return_value = smb
 
@@ -1504,7 +1513,8 @@ class TestDashedHostname:
              patch("snaffler.discovery.shares.SMBTransport") as st, \
              patch("snaffler.discovery.smb_tree_walker.SMBTransport") as tt, \
              patch("snaffler.accessors.smb_file_accessor.SMBTransport") as at, \
-             patch("snaffler.engine.runner.print_completion_stats"):
+             patch("snaffler.engine.runner.print_completion_stats"), \
+             _no_auth_check:
 
             st.return_value.connect.return_value = smb
             tt.return_value.connect.return_value = smb

@@ -12,6 +12,8 @@ from impacket.smbconnection import SessionError
 
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.transport.smb import SMBTransport
+from snaffler.utils.connection_cache import ThreadLocalConnectionCache
+from snaffler.utils.fatal import check_fatal_os_error
 
 logger = logging.getLogger('snaffler')
 
@@ -80,51 +82,21 @@ class ShareFinder:
         ):
             logger.warning("No credentials provided (NTLM or Kerberos) – continuing with NULL session")
 
-        self._thread_local = threading.local()
-        self._all_connections = []
-        self._conn_lock = threading.Lock()
+        self._cache = ThreadLocalConnectionCache(
+            connect_fn=lambda computer: self.smb_transport.connect(
+                computer, timeout=self.cfg.auth.smb_timeout,
+            ),
+            health_check_fn=lambda smb: smb.getServerName(),
+            disconnect_fn=lambda smb: smb.logoff(),
+            cache_attr="smb_cache",
+        )
         self._sysvol_lock = threading.Lock()
         self._sysvol_scanned = False
         self._netlogon_scanned = False
 
-    def _get_smb(self, computer: str):
-        if not hasattr(self._thread_local, "smb_cache"):
-            self._thread_local.smb_cache = {}
-
-        cache = self._thread_local.smb_cache
-
-        smb = cache.get(computer)
-        if smb:
-            try:
-                smb.getServerName()
-                return smb
-            except Exception:
-                with self._conn_lock:
-                    try:
-                        self._all_connections.remove(smb)
-                    except ValueError:
-                        pass
-                try:
-                    smb.logoff()
-                except Exception:
-                    pass
-                cache.pop(computer, None)
-
-        smb = self.smb_transport.connect(computer, timeout=self.cfg.auth.smb_timeout)
-        cache[computer] = smb
-        with self._conn_lock:
-            self._all_connections.append(smb)
-        return smb
-
     def close(self):
         """Close all cached SMB connections across all threads."""
-        with self._conn_lock:
-            for smb in self._all_connections:
-                try:
-                    smb.logoff()
-                except Exception:
-                    pass
-            self._all_connections.clear()
+        self._cache.close_all()
 
     def enumerate_shares(self, target: str) -> List[ShareInfo]:
         """
@@ -133,7 +105,7 @@ class ShareFinder:
         """
         shares = []
         try:
-            smb = self._get_smb(target)
+            smb = self._cache.get(target)
             for share in smb.listShares():
                 share_name = share['shi1_netname'][:-1]
                 share_type = share['shi1_type']
@@ -147,6 +119,7 @@ class ShareFinder:
         except SessionError as e:
             logger.debug(f"[{target}] Share enumeration failed (access denied): {e}")
         except Exception as e:
+            check_fatal_os_error(e)
             logger.debug(f"[{target}] Share enumeration failed: {e}")
         return shares
 
@@ -161,10 +134,10 @@ class ShareFinder:
             ``None`` — no rule matched.
         """
         from snaffler.classifiers.rules import MatchLocation, MatchAction
+        from snaffler.utils.path_utils import extract_unc_share_name
 
         # Extract share name from UNC path for SHARE_NAME matching
-        parts = unc_path.strip('/').split('/', 1)
-        share_name = parts[1] if len(parts) == 2 else unc_path
+        share_name = extract_unc_share_name(unc_path) or unc_path
 
         for classifier in self.share_classifiers:
             # Only match against SHARE_NAME location
@@ -280,7 +253,7 @@ class ShareFinder:
             return False
 
         try:
-            smb = self._get_smb(computer)
+            smb = self._cache.get(computer)
 
             # listPath tests actual directory listing — not just tree connect.
             # A share might accept connectTree but deny directory reads.
@@ -293,5 +266,6 @@ class ShareFinder:
             logger.debug(f"Cannot read share {computer}\\{share_name}: {e}")
             return False
         except Exception as e:
+            check_fatal_os_error(e)
             logger.debug(f"Error testing share {computer}\\{share_name}: {e}")
             return False

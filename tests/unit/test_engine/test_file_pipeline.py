@@ -1,5 +1,6 @@
 import queue
 import time
+from datetime import datetime
 from unittest.mock import MagicMock, call, patch
 
 from snaffler.engine.file_pipeline import FilePipeline, _BatchWriter, _extract_share_unc
@@ -9,23 +10,23 @@ from snaffler.utils.progress import ProgressState
 # ---------- helpers ----------
 
 def make_cfg():
-    cfg = MagicMock()
+    from tests.conftest import make_engine_cfg
+    return make_engine_cfg()
 
-    cfg.advanced.tree_threads = 2
-    cfg.advanced.file_threads = 2
-    cfg.advanced.max_tree_threads_per_share = 0  # unlimited by default
 
-    cfg.rules.file = []
-    cfg.rules.content = []
-    cfg.rules.postmatch = []
-
-    cfg.targets.share_filter = []
-    cfg.targets.exclude_share = []
-    cfg.targets.exclude_unc = []
-
-    cfg.scanning.max_depth = None
-
-    return cfg
+def _fake_result(triage_label="Green", rule_name="TestRule", file_path="//HOST/SHARE/f.txt", size=100):
+    """Create a mock that looks enough like FileResult for the consumer."""
+    from snaffler.classifiers.rules import Triage
+    r = MagicMock()
+    triage_map = {"Green": Triage.GREEN, "Yellow": Triage.YELLOW, "Red": Triage.RED, "Black": Triage.BLACK}
+    r.triage = triage_map.get(triage_label, Triage.GREEN)
+    r.file_path = file_path
+    r.rule_name = rule_name
+    r.match = None
+    r.context = None
+    r.size = size
+    r.modified = datetime(2023, 11, 15, 0, 0, 0)
+    return r
 
 
 def make_walk_side_effect(fake_files):
@@ -69,10 +70,11 @@ def test_file_pipeline_basic_flow():
     )
 
     pipeline.file_scanner.scan_file = MagicMock(
-        side_effect=[None, object()]  # only one match
+        side_effect=[None, _fake_result()]  # only one match
     )
 
-    result = pipeline.run(["//HOST/SHARE"])
+    with patch("snaffler.engine.file_pipeline.log_file_result"):
+        result = pipeline.run(["//HOST/SHARE"])
 
     assert result == 1
     assert pipeline.file_scanner.scan_file.call_count == 2
@@ -222,10 +224,11 @@ def test_file_pipeline_progress_counters():
         side_effect=make_walk_side_effect(fake_files)
     )
     pipeline.file_scanner.scan_file = MagicMock(
-        side_effect=[None, object(), object()]  # 2 matches
+        side_effect=[None, _fake_result(), _fake_result()]  # 2 matches
     )
 
-    pipeline.run(["//HOST/SHARE"])
+    with patch("snaffler.engine.file_pipeline.log_file_result"):
+        pipeline.run(["//HOST/SHARE"])
 
     assert progress.files_total == 3
     assert progress.files_scanned == 3

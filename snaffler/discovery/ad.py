@@ -12,6 +12,8 @@ from typing import List
 from impacket.ldap import ldapasn1
 from impacket.ldap.ldap import SimplePagedResultsControl, LDAPSessionError
 
+from snaffler.utils.fatal import check_fatal_os_error
+
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.transport.ldap import LDAPTransport
 
@@ -166,6 +168,7 @@ class ADDiscovery:
             logger.error(f"LDAP error while querying computers: {e}")
             self.discovery_complete = False
         except Exception as e:
+            check_fatal_os_error(e)
             logger.error(
                 f"Unexpected error during LDAP computer discovery: {e}",
                 exc_info=True,
@@ -244,6 +247,7 @@ class ADDiscovery:
         except LDAPSessionError as e:
             logger.error(f"LDAP error while querying users: {e}")
         except Exception as e:
+            check_fatal_os_error(e)
             logger.error(
                 f"Unexpected error during LDAP user discovery: {e}",
                 exc_info=True,
@@ -329,6 +333,7 @@ class ADDiscovery:
         except LDAPSessionError as e:
             logger.error(f"LDAP error during DFS v1 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}")
         except Exception as e:
+            check_fatal_os_error(e)
             logger.error(f"Unexpected error during DFS v1 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}", exc_info=True)
 
         # --- DFS v2: msDFS-Namespacev2 / msDFS-Linkv2 ---
@@ -352,6 +357,7 @@ class ADDiscovery:
         except LDAPSessionError as e:
             logger.error(f"LDAP error during DFS v2 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}")
         except Exception as e:
+            check_fatal_os_error(e)
             logger.error(f"Unexpected error during DFS v2 discovery: {type(e).__name__}: {str(e).strip() or 'no details'}", exc_info=True)
 
         targets = sorted(self._dfs_targets)

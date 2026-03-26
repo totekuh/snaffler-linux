@@ -179,6 +179,54 @@ def test_connection_reuse():
     transport.return_value.connect.assert_called_once_with("10.0.0.5", 21)
 
 
+# ---------- early transfer abort tests ----------
+
+def test_read_max_bytes_aborts_transfer():
+    """When max_bytes is reached, the callback raises to abort the data
+    transfer rather than downloading the entire file."""
+    ftp = make_ftp_mock()
+    chunks_sent = []
+
+    def fake_retrbinary(cmd, callback):
+        # Simulates a server sending many chunks — only the first few
+        # should be consumed before the callback aborts.
+        for i in range(100):
+            chunks_sent.append(i)
+            callback(b"X" * 1024)  # 1KB per chunk
+
+    ftp.retrbinary.side_effect = fake_retrbinary
+    accessor = make_accessor(ftp, max_file_bytes=10485760)
+
+    data = accessor.read("ftp://10.0.0.5/big.bin", max_bytes=2048)
+
+    # Should have exactly 2048 bytes (2 full chunks)
+    assert data == b"X" * 2048
+    # The transfer should have been aborted after 3 chunks
+    # (2 consumed + 1 that triggers the abort)
+    assert len(chunks_sent) == 3
+
+
+def test_read_max_bytes_invalidates_after_abort():
+    """After aborting a transfer, the FTP connection is invalidated
+    because the control channel may be in a bad state."""
+    ftp = make_ftp_mock()
+
+    def fake_retrbinary(cmd, callback):
+        callback(b"A" * 100)
+        callback(b"B" * 100)  # this triggers abort when max_bytes=100
+
+    ftp.retrbinary.side_effect = fake_retrbinary
+    accessor = make_accessor(ftp, max_file_bytes=10485760)
+
+    data = accessor.read("ftp://10.0.0.5/file.bin", max_bytes=100)
+    assert data == b"A" * 100
+
+    # Connection should have been invalidated (quit called)
+    ftp.quit.assert_called_once()
+
+
+# ---------- reconnection tests ----------
+
 def test_reconnect_on_dead_connection():
     dead_ftp = make_ftp_mock()
     dead_ftp.voidcmd.side_effect = Exception("dead")
