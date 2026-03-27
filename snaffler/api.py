@@ -411,11 +411,7 @@ class Snaffler:
         if result.triage.below(self._min_interest):
             return None
         if self._match_re:
-            haystack = "\n".join(filter(None, [
-                result.file_path, result.rule_name,
-                result.match, result.context,
-            ]))
-            if not self._match_re.search(haystack):
+            if not self._match_re.search(result.match_haystack()):
                 return None
         return result
 

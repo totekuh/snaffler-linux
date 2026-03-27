@@ -1035,3 +1035,241 @@ def rules(
             lines.append(f"  [{triage}] {rule_name}: {count:,}")
 
     typer.echo("\n".join(lines))
+
+
+# ---------- export / import helpers ----------
+
+
+def _detect_format(output_path: str, explicit_format: str | None) -> str:
+    """Auto-detect format from file extension, or use explicit format."""
+    if explicit_format:
+        fmt = explicit_format.lower()
+        if fmt not in ("db", "json"):
+            typer.echo(f"Error: unsupported format '{explicit_format}'. Use 'db' or 'json'.", err=True)
+            raise typer.Exit(code=1)
+        return fmt
+    ext = Path(output_path).suffix.lower()
+    if ext == ".db":
+        return "db"
+    if ext == ".json":
+        return "json"
+    typer.echo(
+        f"Error: cannot detect format from extension '{ext}'. "
+        "Use --format db or --format json, or use a .db/.json extension.",
+        err=True,
+    )
+    raise typer.Exit(code=1)
+
+
+def _export_db(state_file: str, output: str):
+    """Export state DB as a clean, portable SQLite file (no WAL sidecar)."""
+    import shutil
+
+    output_path = Path(output)
+    if output_path.exists():
+        output_path.unlink()
+
+    conn = sqlite3.connect(state_file)
+    try:
+        # Checkpoint WAL to ensure all data is in the main file
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        try:
+            # VACUUM INTO creates a clean copy without WAL mode artifacts
+            # Requires SQLite 3.27+ (Python 3.8+ ships with 3.27+)
+            conn.execute("VACUUM INTO ?", (output,))
+        except sqlite3.OperationalError:
+            # Fallback: copy main file after checkpoint
+            conn.close()
+            shutil.copy2(state_file, output)
+            # Re-open the copy and disable WAL so it's self-contained
+            copy_conn = sqlite3.connect(output)
+            try:
+                copy_conn.execute("PRAGMA journal_mode=DELETE")
+            finally:
+                copy_conn.close()
+            return
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _export_json(state_file: str, output: str) -> int:
+    """Export findings as JSON for cross-tool consumption. Returns finding count."""
+    conn = sqlite3.connect(state_file)
+    try:
+        stats = {
+            "computers": conn.execute("SELECT COUNT(*) FROM target_computer").fetchone()[0],
+            "shares": conn.execute("SELECT COUNT(*) FROM target_share").fetchone()[0],
+            "files_scanned": conn.execute(
+                "SELECT COUNT(*) FROM target_file WHERE checked = 1"
+            ).fetchone()[0],
+            "findings": conn.execute("SELECT COUNT(*) FROM finding").fetchone()[0],
+        }
+
+        cursor = conn.execute(
+            "SELECT finding_id, file_path, triage, rule_name, match_text, "
+            "context, size, mtime, found_at FROM finding ORDER BY triage, file_path"
+        )
+
+        with open(output, "w") as f:
+            f.write("{\n")
+            f.write(f'  "stats": {json.dumps(stats)},\n')
+            f.write('  "findings": [\n')
+            first = True
+            while True:
+                batch = cursor.fetchmany(1000)
+                if not batch:
+                    break
+                for row in batch:
+                    finding = {
+                        "id": row[0],
+                        "file_path": row[1],
+                        "triage": row[2],
+                        "rule_name": row[3],
+                        "match": row[4],
+                        "context": row[5],
+                        "size": row[6],
+                        "mtime": row[7],
+                        "found_at": row[8],
+                    }
+                    if not first:
+                        f.write(",\n")
+                    f.write(f"    {json.dumps(finding)}")
+                    first = False
+            f.write("\n  ]\n")
+            f.write("}\n")
+    finally:
+        conn.close()
+
+    return stats["findings"]
+
+
+def _import_db(input_path: str, state_file: str) -> int:
+    """Merge findings from another scan DB into the target state DB."""
+    conn = sqlite3.connect(state_file)
+    try:
+        conn.execute("ATTACH DATABASE ? AS import_db", (input_path,))
+
+        # Merge findings (skip duplicates by finding_id)
+        imported = conn.execute(
+            "INSERT OR IGNORE INTO finding "
+            "SELECT * FROM import_db.finding"
+        ).rowcount
+
+        # Merge computers (skip duplicates)
+        conn.execute(
+            "INSERT OR IGNORE INTO target_computer (name, ip, done) "
+            "SELECT name, ip, done FROM import_db.target_computer"
+        )
+
+        # Merge shares
+        conn.execute(
+            "INSERT OR IGNORE INTO target_share (unc_path, readable, done) "
+            "SELECT unc_path, readable, done FROM import_db.target_share"
+        )
+
+        conn.commit()
+        conn.execute("DETACH DATABASE import_db")
+    finally:
+        conn.close()
+
+    return imported
+
+
+def _import_json(input_path: str, state_file: str) -> int:
+    """Import findings from a JSON export file."""
+    with open(input_path) as f:
+        data = json.load(f)
+
+    conn = sqlite3.connect(state_file)
+    try:
+        imported = 0
+        for finding in data.get("findings", []):
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO finding "
+                    "(finding_id, file_path, triage, rule_name, match_text, "
+                    "context, size, mtime, found_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        finding["id"],
+                        finding["file_path"],
+                        finding["triage"],
+                        finding["rule_name"],
+                        finding.get("match"),
+                        finding.get("context"),
+                        finding.get("size"),
+                        finding.get("mtime"),
+                        finding.get("found_at"),
+                    ),
+                )
+                imported += 1
+            except sqlite3.IntegrityError:
+                pass  # duplicate finding_id
+        conn.commit()
+    finally:
+        conn.close()
+
+    return imported
+
+
+def _ensure_state_db(state_file: str):
+    """Create the state DB with schema if it doesn't exist (for imports)."""
+    from snaffler.resume.scan_state import SQLiteStateStore
+
+    store = SQLiteStateStore(state_file)
+    store.close()
+
+
+# ---------- export / import subcommands ----------
+
+
+@results_app.command("export")
+def export_results(
+    output: str = typer.Argument(..., help="Output file path (.db or .json)"),
+    state_file: str = typer.Option(
+        "snaffler.db", "--state-file", "-s", help="State DB to export from"
+    ),
+    format: str = typer.Option(
+        None, "--format", "-f", help="Output format (db/json). Auto-detected from extension."
+    ),
+):
+    """Export scan results as a portable DB or JSON file."""
+    if not Path(state_file).exists():
+        typer.echo(f"Error: state database not found: {state_file}", err=True)
+        raise typer.Exit(code=1)
+
+    fmt = _detect_format(output, format)
+
+    if fmt == "db":
+        _export_db(state_file, output)
+        typer.echo(f"Exported state DB to {output}")
+    else:
+        count = _export_json(state_file, output)
+        typer.echo(f"Exported {count} findings to {output}")
+
+
+@results_app.command("import")
+def import_results(
+    input_path: str = typer.Argument(..., help="State DB or JSON file to import from"),
+    state_file: str = typer.Option(
+        "snaffler.db", "--state-file", "-s", help="Target state DB to merge into"
+    ),
+):
+    """Import and merge findings from another scan DB or JSON export."""
+    if not Path(input_path).exists():
+        typer.echo(f"Error: input file not found: {input_path}", err=True)
+        raise typer.Exit(code=1)
+
+    # Ensure target DB exists with proper schema
+    _ensure_state_db(state_file)
+
+    ext = Path(input_path).suffix.lower()
+    if ext == ".json":
+        imported = _import_json(input_path, state_file)
+    else:
+        imported = _import_db(input_path, state_file)
+
+    typer.echo(f"Imported {imported} new findings from {input_path}")

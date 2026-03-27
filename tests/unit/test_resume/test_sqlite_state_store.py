@@ -506,8 +506,8 @@ def test_load_checked_files_empty_db():
         os.unlink(path)
 
 
-def test_scan_state_should_skip_file_uses_in_memory_set():
-    """ScanState.should_skip_file() uses in-memory set, not SQL query."""
+def test_scan_state_should_skip_file_uses_bloom_filter():
+    """ScanState.should_skip_file() uses bloom filter + DB fallback."""
     with tempfile.NamedTemporaryFile(delete=False) as f:
         path = f.name
 
@@ -517,9 +517,10 @@ def test_scan_state_should_skip_file_uses_in_memory_set():
 
         state = ScanState(store)
 
-        # should_skip_file uses in-memory set — no SQL after init
+        # should_skip_file: bloom says yes, DB confirms
         assert state.should_skip_file("//HOST/Share/existing.txt") is True
         assert state.should_skip_file("//host/share/existing.txt") is True
+        # Unknown file: bloom says no (fast path, no DB query)
         assert state.should_skip_file("//HOST/Share/new.txt") is False
 
         store.close()
@@ -527,8 +528,8 @@ def test_scan_state_should_skip_file_uses_in_memory_set():
         os.unlink(path)
 
 
-def test_scan_state_mark_file_done_updates_both_db_and_set():
-    """mark_file_done() writes to both SQLite and in-memory set."""
+def test_scan_state_mark_file_done_updates_bloom():
+    """mark_file_done() updates the bloom filter (DB write is batched by caller)."""
     with tempfile.NamedTemporaryFile(delete=False) as f:
         path = f.name
 
@@ -540,11 +541,15 @@ def test_scan_state_mark_file_done_updates_both_db_and_set():
 
         state.mark_file_done("//HOST/Share/new.txt")
 
-        # In-memory set is updated immediately
-        assert state.should_skip_file("//HOST/Share/new.txt") is True
+        # Bloom filter is updated; DB is NOT updated by mark_file_done
+        # (caller batches DB writes separately). But should_skip_file
+        # hits the bloom, then falls through to DB, which says False
+        # since we haven't written to DB yet.
+        assert state.should_skip_file("//HOST/Share/new.txt") is False
 
-        # SQLite is also updated (for persistence across runs)
-        assert "//host/share/new.txt" in store.load_checked_files()
+        # After the caller writes to DB, should_skip_file returns True
+        store.mark_file_checked("//HOST/Share/new.txt")
+        assert state.should_skip_file("//HOST/Share/new.txt") is True
 
         store.close()
     finally:
@@ -552,15 +557,15 @@ def test_scan_state_mark_file_done_updates_both_db_and_set():
 
 
 def test_scan_state_checked_files_case_insensitive():
-    """In-memory checked file set is case-insensitive."""
+    """Bloom filter + DB fallback is case-insensitive."""
     with tempfile.NamedTemporaryFile(delete=False) as f:
         path = f.name
 
     try:
         store = SQLiteStateStore(path)
-        state = ScanState(store)
+        store.mark_file_checked("//HOST/Share/CamelCase.TXT")
 
-        state.mark_file_done("//HOST/Share/CamelCase.TXT")
+        state = ScanState(store)
 
         assert state.should_skip_file("//HOST/Share/CamelCase.TXT") is True
         assert state.should_skip_file("//host/share/camelcase.txt") is True
@@ -740,6 +745,145 @@ def test_sqlite_store_file_case_insensitive():
         store.store_file("//HOST/Share/File.TXT", "//HOST/Share", 100, 0.0)
         store.store_file("//host/share/file.txt", "//host/share", 200, 0.0)  # dup
         assert store.count_target_files() == 1
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- mark_files_checked_batch ----------
+
+
+def test_sqlite_store_mark_files_checked_batch():
+    """Batch upsert marks multiple files checked in one transaction."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        # Pre-store some files
+        store.store_files([
+            ("//HOST/SHARE/a.txt", "//HOST/SHARE", 100, 0.0),
+            ("//HOST/SHARE/b.txt", "//HOST/SHARE", 200, 0.0),
+        ])
+
+        # Batch mark: includes a pre-stored file and a new file (upsert)
+        store.mark_files_checked_batch([
+            "//HOST/SHARE/a.txt",
+            "//HOST/SHARE/b.txt",
+            "//HOST/SHARE/c.txt",  # not pre-stored
+        ])
+
+        assert store.count_checked_files() == 3
+        assert store.count_target_files() == 3  # c.txt was inserted
+
+        unchecked = store.load_unchecked_files()
+        assert len(unchecked) == 0
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_mark_files_checked_batch_empty():
+    """Batch with empty list is a no-op."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.mark_files_checked_batch([])
+        assert store.count_checked_files() == 0
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_mark_files_checked_batch_idempotent():
+    """Calling batch twice with same paths is idempotent."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.mark_files_checked_batch(["//HOST/SHARE/a.txt"])
+        store.mark_files_checked_batch(["//HOST/SHARE/a.txt"])
+        assert store.count_checked_files() == 1
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+# ---------- iter_unchecked_files ----------
+
+
+def test_sqlite_store_iter_unchecked_files():
+    """iter_unchecked_files yields (path, size, mtime) tuples."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_files([
+            ("//HOST/SHARE/a.txt", "//HOST/SHARE", 100, 1000.0),
+            ("//HOST/SHARE/b.txt", "//HOST/SHARE", 200, 2000.0),
+            ("//HOST/SHARE/c.txt", "//HOST/SHARE", 300, 3000.0),
+        ])
+
+        # Mark one as checked
+        store.mark_file_checked("//HOST/SHARE/b.txt")
+
+        result = list(store.iter_unchecked_files())
+        paths = [r[0] for r in result]
+        assert "//HOST/SHARE/a.txt" in paths
+        assert "//HOST/SHARE/c.txt" in paths
+        assert "//HOST/SHARE/b.txt" not in paths
+        assert len(result) == 2
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_iter_unchecked_files_empty():
+    """iter_unchecked_files returns empty iterator on fresh DB."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        result = list(store.iter_unchecked_files())
+        assert result == []
+
+        store.close()
+    finally:
+        os.unlink(path)
+
+
+def test_sqlite_store_iter_unchecked_files_matches_load():
+    """iter_unchecked_files returns same data as load_unchecked_files."""
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+
+    try:
+        store = SQLiteStateStore(path)
+
+        store.store_files([
+            ("//HOST/SHARE/x.txt", "//HOST/SHARE", 50, 100.0),
+            ("//HOST/SHARE/y.txt", "//HOST/SHARE", 60, 200.0),
+        ])
+        store.mark_file_checked("//HOST/SHARE/x.txt")
+
+        load_result = store.load_unchecked_files()
+        iter_result = list(store.iter_unchecked_files())
+        assert load_result == iter_result
 
         store.close()
     finally:

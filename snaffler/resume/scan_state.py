@@ -1,15 +1,24 @@
 import sqlite3
 import threading
 
+from snaffler.utils.bloom import BloomFilter
 from snaffler.utils.path_utils import extract_share_root as _extract_share
 
 
 class ScanState:
     def __init__(self, store):
         self.store = store
-        # In-memory cache of checked files for O(1) lookups (case-insensitive)
-        self._checked_files: set = store.load_checked_files()
-        self._checked_lock = threading.Lock()
+        # Bloom filter for fast checked-file dedup (probabilistic, no false negatives)
+        count = store.count_checked_files()
+        self._bloom = BloomFilter(max(count * 2, 100_000))  # 2x headroom
+        self._bloom_lock = threading.Lock()
+        # Seed bloom filter from DB (streaming, not loading all paths into memory)
+        self._seed_bloom()
+
+    def _seed_bloom(self):
+        """Populate bloom filter from existing checked files in DB."""
+        for path_lower in self.store.iter_checked_file_keys():
+            self._bloom.add(path_lower)
 
     # ---------- phase flags ----------
 
@@ -74,13 +83,22 @@ class ScanState:
     # ---------- files ----------
 
     def should_skip_file(self, unc_path: str) -> bool:
-        with self._checked_lock:
-            return unc_path.lower() in self._checked_files
+        path_lower = unc_path.lower()
+        with self._bloom_lock:
+            if path_lower not in self._bloom:
+                return False  # definitely not checked (bloom has no false negatives)
+        # Bloom says probably checked -- verify with DB to avoid false positive
+        return self.store.is_file_checked(path_lower)
 
     def mark_file_done(self, unc_path: str):
-        with self._checked_lock:
-            self._checked_files.add(unc_path.lower())
-        self.store.mark_file_checked(unc_path)
+        """Mark file as checked in the bloom filter only.
+
+        The DB write is batched by the caller (via ``_BatchWriter``) for
+        dramatically lower SQLite contention under high thread counts.
+        """
+        path_lower = unc_path.lower()
+        with self._bloom_lock:
+            self._bloom.add(path_lower)
 
     # ---------- directories ----------
 
@@ -109,6 +127,10 @@ class ScanState:
 
     def load_unchecked_files(self) -> list:
         return self.store.load_unchecked_files()
+
+    def iter_unchecked_files(self):
+        """Yield unchecked files via the streaming generator."""
+        return self.store.iter_unchecked_files()
 
     def count_target_files(self) -> int:
         return self.store.count_target_files()
@@ -150,11 +172,18 @@ class SQLiteStateStore:
 
     def _init(self):
         with self.conn:
+            # page_size must be set before tables are created; on existing DBs
+            # this is a no-op (only takes effect on fresh databases).
+            self.conn.execute("PRAGMA page_size=8192;")
             try:
                 self.conn.execute("PRAGMA journal_mode=WAL;")
             except Exception:
                 pass  # WAL unsupported — fall back to default journal mode
             self.conn.execute("PRAGMA synchronous=NORMAL;")
+            # 64 MB page cache (negative value = kibibytes)
+            self.conn.execute("PRAGMA cache_size=-65536;")
+            # 256 MB memory-mapped I/O for faster reads on large DBs
+            self.conn.execute("PRAGMA mmap_size=268435456;")
 
             # --- drop legacy tables ---
             self.conn.execute("DROP TABLE IF EXISTS checked_computer")
@@ -217,6 +246,22 @@ class SQLiteStateStore:
                 "CREATE INDEX IF NOT EXISTS idx_target_file_share "
                 "ON target_file(share)"
             )
+            # --- partial indexes for resume queries (only index incomplete rows) ---
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_target_file_checked "
+                "ON target_file(checked) WHERE checked = 0"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_target_dir_walked "
+                "ON target_dir(walked) WHERE walked = 0"
+            )
+            try:
+                self.conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_target_computer_done "
+                    "ON target_computer(done) WHERE done = 0"
+                )
+            except Exception:
+                pass  # legacy DB where target_computer lacks 'done' column
 
 
     # ---------- sync flags ----------
@@ -395,6 +440,28 @@ class SQLiteStateStore:
             ).fetchall()
             return {r[0].lower() for r in rows}
 
+    def iter_checked_file_keys(self):
+        """Yield lowercased paths of checked files for bloom filter seeding."""
+        with self.lock:
+            cursor = self.conn.execute(
+                "SELECT unc_path FROM target_file WHERE checked = 1"
+            )
+            while True:
+                batch = cursor.fetchmany(10000)
+                if not batch:
+                    break
+                for row in batch:
+                    yield row[0].lower()
+
+    def is_file_checked(self, path_lower: str) -> bool:
+        """Check if a specific file is marked as checked in the DB."""
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT 1 FROM target_file WHERE unc_path = ? AND checked = 1",
+                (path_lower,),
+            ).fetchone()
+            return row is not None
+
     def mark_file_checked(self, unc_path: str):
         with self.lock:
             share = _extract_share(unc_path)
@@ -406,6 +473,23 @@ class SQLiteStateStore:
                 "UPDATE target_file SET checked = 1 WHERE unc_path = ?",
                 (unc_path,),
             )
+            self.conn.commit()
+
+    def mark_files_checked_batch(self, paths: list):
+        """Mark multiple files as checked in one transaction.
+
+        Uses an upsert (ON CONFLICT ... DO UPDATE) so it handles the race
+        with BatchWriter file inserts that may not have flushed yet.
+        """
+        with self.lock:
+            for unc_path in paths:
+                share = _extract_share(unc_path)
+                self.conn.execute(
+                    "INSERT INTO target_file (unc_path, share, checked) "
+                    "VALUES (?, ?, 1) "
+                    "ON CONFLICT(unc_path) DO UPDATE SET checked = 1",
+                    (unc_path, share),
+                )
             self.conn.commit()
 
     def store_file(self, unc_path: str, share: str, size: int = 0, mtime: float = 0.0):
@@ -438,6 +522,27 @@ class SQLiteStateStore:
                     break
                 result.extend((r[0], r[1], r[2]) for r in batch)
             return result
+
+    def iter_unchecked_files(self):
+        """Yield unchecked files in batches (generator).
+
+        Uses LIMIT/OFFSET pagination so the lock is only held briefly per
+        batch, and memory usage stays bounded even with millions of rows.
+        """
+        offset = 0
+        batch_size = 10000
+        while True:
+            with self.lock:
+                rows = self.conn.execute(
+                    "SELECT unc_path, size, mtime FROM target_file "
+                    "WHERE checked = 0 LIMIT ? OFFSET ?",
+                    (batch_size, offset),
+                ).fetchall()
+            if not rows:
+                break
+            for r in rows:
+                yield (r[0], r[1], r[2])
+            offset += len(rows)
 
     def count_target_files(self) -> int:
         with self.lock:
@@ -578,4 +683,8 @@ class SQLiteStateStore:
 
     def close(self):
         with self.lock:
+            try:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
             self.conn.close()

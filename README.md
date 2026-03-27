@@ -42,6 +42,9 @@ snaffler --local-fs /mnt/share
 
 # FTP server (anonymous)
 snaffler --ftp ftp://10.0.0.5
+
+# Fast mode — skip time-waster directories, interleave share walking
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --fast
 ```
 
 ![snaffler-ng run](https://github.com/user-attachments/assets/4cd12508-88f3-4724-9a1e-6c5991cddafa)
@@ -56,14 +59,16 @@ Queries AD for computers + DFS namespaces, resolves DNS, probes port 445, enumer
 snaffler -u USER -p PASS -d DOMAIN.LOCAL
 snaffler -u USER -p PASS -d DOMAIN.LOCAL --max-hosts 50   # cap at 50 hosts
 snaffler -u USER -p PASS -d DOMAIN.LOCAL --shares-only    # enumerate shares without scanning
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --include-disabled  # include disabled/stale accounts
 ```
 
 ### Computer List (`--computer` / `--computer-file`)
 
-Skip LDAP discovery, target specific hosts:
+Skip LDAP discovery, target specific hosts. Supports hostnames, IPs, CIDR ranges, and IP ranges:
 
 ```bash
 snaffler -u USER -p PASS --computer 10.0.0.5 --computer 10.0.0.6
+snaffler -u USER -p PASS --computer 10.0.0.0/24
 snaffler -u USER -p PASS --computer-file targets.txt
 ```
 
@@ -96,7 +101,7 @@ Bare hostnames accepted: `--ftp 10.0.0.5` becomes `ftp://10.0.0.5`. Without `-u`
 
 ### Local Filesystem (`--local-fs`)
 
-No network, no auth — useful for mounted shares, extracted filesystems, or testing rules:
+No network, no auth -- useful for mounted shares, extracted filesystems, or testing rules:
 
 ```bash
 snaffler --local-fs /mnt/share
@@ -105,7 +110,7 @@ snaffler --local-fs /tmp/extracted --local-fs /home/user/Documents
 
 ### Rescan Unreadable Shares (`--rescan-unreadable`)
 
-Re-test previously access-denied shares with new credentials — useful after password spraying:
+Re-test previously access-denied shares with new credentials -- useful after password spraying:
 
 ```bash
 # Initial scan with low-privilege creds
@@ -116,6 +121,18 @@ snaffler --rescan-unreadable -u highpriv -p 'NewPass!' --state scan.db
 ```
 
 The initial scan stores all discovered shares (readable and unreadable) in the state DB. `--rescan-unreadable` loads only the previously denied shares, re-tests them with current credentials, and scans any that are now accessible. Respects `--share`, `--exclude-share`, and `--exclusions` filters.
+
+### Bulk Download (`--grab`)
+
+Download specific files without scanning. Pipe file paths from `snaffler results --files` or provide them manually:
+
+```bash
+# List finding paths, then download them
+snaffler results --files | snaffler -u USER -p PASS --grab -m ./loot
+
+# Download from a file list
+cat paths.txt | snaffler -u USER -p PASS --grab -m ./loot
+```
 
 ## Filtering
 
@@ -140,6 +157,9 @@ snaffler ... --exclusions hosts_to_skip.txt
 
 # Stop after N hosts
 snaffler ... --max-hosts 50
+
+# Minimum severity (0=all, 1=Yellow+, 2=Red+, 3=Black only)
+snaffler ... -b 2
 ```
 
 ## Output
@@ -168,6 +188,8 @@ snaffler ... --state /tmp/scan1.db                     # custom DB path
 snaffler ... --fresh                                   # ignore existing state
 ```
 
+Progressive deepening works across resumes: directories beyond `--max-depth` are stored but not walked. Re-running with a higher depth walks them automatically, skipping already-scanned files.
+
 ### Querying Results
 
 ```bash
@@ -175,8 +197,43 @@ snaffler results                              # plain text summary
 snaffler results -f json                      # JSON
 snaffler results -f html > report.html        # self-contained HTML report
 snaffler results -b 2                         # Red+ severity only
+snaffler results -r RuleName                  # filter by rule name
 snaffler results -s /path/to/snaffler.db      # custom DB path
+snaffler results --files                      # one file path per line (pipe into --grab)
 ```
+
+The HTML report includes resizable columns, host filtering, inline severity/rule dropdowns, and a connect command copy button.
+
+### Rule Stats
+
+See which rules matched and how many findings each produced:
+
+```bash
+snaffler results rules              # plain text
+snaffler results rules -f json      # JSON
+```
+
+### Export & Import
+
+Share results with teammates or merge findings from parallel scans:
+
+```bash
+# Export — portable DB or JSON
+snaffler results export scan-results.db
+snaffler results export findings.json
+
+# Import — merge into your local state DB
+snaffler results import teammate-scan.db
+snaffler results import findings.json
+
+# Export from a specific state DB
+snaffler results export -s /path/to/scan.db report.json
+
+# Import into a specific state DB
+snaffler results import -s /path/to/combined.db other-scan.db
+```
+
+Format is auto-detected from the file extension (`.db` or `.json`), or override with `-f`.
 
 ### Web Dashboard
 
@@ -219,6 +276,28 @@ snaffler -u USER -p PASS -d DOMAIN.LOCAL \
 
 During a scan, press `d` for DEBUG output, `i` to switch back to INFO.
 
+## Performance
+
+### Fast Mode (`--fast`)
+
+Skips 30 known time-waster directories (Windows internals, package caches, VCS metadata, build artifacts) and enables fair-share thread scheduling so one deep share cannot monopolize all workers:
+
+```bash
+snaffler -u USER -p PASS -d DOMAIN.LOCAL --fast
+```
+
+Sensitive paths like `Windows\Panther` (contains `unattend.xml` with credentials) are deliberately not excluded.
+
+### Thread Tuning
+
+```bash
+snaffler ... --max-threads 90           # total worker threads (default: 60)
+snaffler ... --dns-threads 200          # DNS + port probe threads (default: 100)
+snaffler ... --max-threads-per-share 5  # cap tree-walk threads per share (--fast auto-sets)
+```
+
+Threads are split equally across share discovery, tree walking, and file scanning. After share discovery completes, idle threads are rebalanced to file scanning.
+
 ## Library API
 
 ### Walk a directory
@@ -234,11 +313,10 @@ for finding in Snaffler().walk("/mnt/share"):
 
 ### Two-phase classification (C2 integration)
 
-Minimize beacon traffic — most files are skipped at phase 1 (metadata-only, zero I/O):
+Minimize beacon traffic -- most files are skipped at phase 1 (metadata-only, zero I/O):
 
 ```python
-from snaffler import Snaffler
-from snaffler.api import FileCheckStatus
+from snaffler import Snaffler, FileCheckStatus
 
 s = Snaffler()
 
@@ -254,7 +332,7 @@ elif check.status == FileCheckStatus.MATCHED:
 
 ### Custom transport (duck-typed)
 
-Plug in any transport — no ABC required, just implement `walk_directory` and `read`:
+Plug in any transport -- no ABC required, just implement `walk_directory` and `read`:
 
 ```python
 class BeaconWalker:
@@ -289,3 +367,13 @@ for finding in s.walk("C:\\Users"):
 | `exclude_unc` | `None` | Glob patterns to skip directories |
 | `match_filter` | `None` | Regex post-filter on findings |
 | `max_depth` | `None` | Maximum directory recursion depth |
+
+## Custom Rules
+
+Write TOML rules to extend or replace the built-in 106-rule set:
+
+```bash
+snaffler ... --rule-dir /path/to/rules/
+```
+
+See `snaffler/rules/example_custom_rule.toml` for the format.

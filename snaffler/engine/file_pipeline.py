@@ -40,7 +40,7 @@ def _extract_share_unc(unc_path: str) -> str:
 
 
 class _BatchWriter:
-    """Daemon thread that batches dir/file inserts into SQLite."""
+    """Daemon thread that batches dir/file inserts and file-checked marks into SQLite."""
 
     def __init__(self, state: ScanState):
         self._state = state
@@ -66,9 +66,14 @@ class _BatchWriter:
     def put_file(self, unc_path: str, share: str, size: int, mtime: float):
         self._queue.put(("file", unc_path, share, size, mtime))
 
+    def enqueue_checked(self, unc_path: str):
+        """Queue a file-checked mark for batched DB write."""
+        self._queue.put(("checked", unc_path))
+
     def _run(self):
         dir_buf = []
         file_buf = []
+        checked_buf = []
         deadline = time.monotonic() + _BATCH_INTERVAL
 
         while True:
@@ -92,13 +97,16 @@ class _BatchWriter:
                         dir_buf.append((remaining[1], remaining[2]))
                     elif kind == "file":
                         file_buf.append((remaining[1], remaining[2], remaining[3], remaining[4]))
-                self._flush(dir_buf, file_buf)
+                    elif kind == "checked":
+                        checked_buf.append(remaining[1])
+                self._flush(dir_buf, file_buf, checked_buf)
                 return
 
             if item == "flush":
-                self._flush(dir_buf, file_buf)
+                self._flush(dir_buf, file_buf, checked_buf)
                 dir_buf.clear()
                 file_buf.clear()
+                checked_buf.clear()
                 deadline = time.monotonic() + _BATCH_INTERVAL
                 continue
 
@@ -107,21 +115,30 @@ class _BatchWriter:
                 dir_buf.append((item[1], item[2]))
             elif kind == "file":
                 file_buf.append((item[1], item[2], item[3], item[4]))
+            elif kind == "checked":
+                checked_buf.append(item[1])
 
-            if len(dir_buf) + len(file_buf) >= _BATCH_SIZE:
-                self._flush(dir_buf, file_buf)
+            if len(dir_buf) + len(file_buf) + len(checked_buf) >= _BATCH_SIZE:
+                self._flush(dir_buf, file_buf, checked_buf)
                 dir_buf.clear()
                 file_buf.clear()
+                checked_buf.clear()
                 deadline = time.monotonic() + _BATCH_INTERVAL
 
-    def _flush(self, dir_buf, file_buf):
+    def _flush(self, dir_buf, file_buf, checked_buf=None):
         try:
             if dir_buf:
                 self._state.store_dirs(dir_buf)
             if file_buf:
                 self._state.store_files(file_buf)
+            if checked_buf:
+                self._state.store.mark_files_checked_batch(checked_buf)
         except Exception as e:
-            logger.warning(f"Batch writer flush error ({len(dir_buf)} dirs, {len(file_buf)} files): {e}")
+            logger.warning(
+                f"Batch writer flush error ({len(dir_buf)} dirs, "
+                f"{len(file_buf)} files, "
+                f"{len(checked_buf) if checked_buf else 0} checked): {e}"
+            )
 
 
 class FilePipeline:
@@ -182,16 +199,20 @@ class FilePipeline:
         results_count = 0
         producer_error = []  # captures KeyboardInterrupt from producer
 
+        # Shared batch writer — used by producer (dir/file inserts) and
+        # consumers (file-checked marks).  Created at run() scope so both
+        # closures can reference it; started before threads, stopped after
+        # all consumers finish.
+        batch_writer = None
+        if self.state:
+            batch_writer = _BatchWriter(self.state)
+            batch_writer.start()
+
         # ---------- Producer: parallel tree walking → queue ----------
         def _producer():
-            batch_writer = None
             shutdown = threading.Event()
             enqueued = set()
             enqueued_lock = threading.Lock()
-
-            if self.state:
-                batch_writer = _BatchWriter(self.state)
-                batch_writer.start()
 
             def on_file(unc_path, size, mtime):
                 """Callback invoked by TreeWalker for each file discovered."""
@@ -381,8 +402,7 @@ class FilePipeline:
                         include_filter = self.cfg.targets.share_filter
                         exclude_filter = self.cfg.targets.exclude_share
                         exclude_dir_patterns = self.cfg.targets.exclude_unc
-                        unchecked = self.state.load_unchecked_files()
-                        for unc_path, size, mtime in unchecked:
+                        for unc_path, size, mtime in self.state.iter_unchecked_files():
                             file_share = _extract_share_unc(unc_path).lower()
                             # Respect --share / --exclude-share for DB-seeded files
                             share_name = file_share.rstrip("/").rsplit("/", 1)[-1]
@@ -481,10 +501,6 @@ class FilePipeline:
                         executor.shutdown(wait=False, cancel_futures=True)
                         producer_error.append(KeyboardInterrupt())
             finally:
-                if batch_writer:
-                    # On interrupt, use a short timeout to avoid blocking shutdown
-                    timeout = 5 if producer_error else 30
-                    batch_writer.stop(timeout=timeout)
                 # Push sentinels so consumers exit — drain queue first if
                 # full, then push with timeout to guarantee delivery.
                 for _ in range(self.file_threads):
@@ -526,7 +542,9 @@ class FilePipeline:
                     result = self.file_scanner.scan_file(unc_path, size, mtime)
 
                     if self.state:
-                        self.state.mark_file_done(unc_path)
+                        self.state.mark_file_done(unc_path)  # in-memory dedup
+                        if batch_writer:
+                            batch_writer.enqueue_checked(unc_path)  # DB write batched
 
                     if result:
                         # Log the finding
@@ -578,11 +596,13 @@ class FilePipeline:
         for t in consumer_threads:
             t.start()
 
+        interrupted = False
         try:
             producer_thread.join()
             for t in consumer_threads:
                 t.join()
         except KeyboardInterrupt:
+            interrupted = True
             # Drain queue and push sentinels so consumers can exit
             while True:
                 try:
@@ -596,7 +616,15 @@ class FilePipeline:
                     pass
             for t in consumer_threads:
                 t.join(timeout=5)
-            raise
+        finally:
+            # Stop batch writer after all consumers finish so queued
+            # file-checked marks are flushed to the DB.
+            if batch_writer:
+                timeout = 5 if (interrupted or producer_error) else 30
+                batch_writer.stop(timeout=timeout)
+
+        if interrupted:
+            raise KeyboardInterrupt()
 
         # Re-raise KeyboardInterrupt from producer thread
         if producer_error:

@@ -108,7 +108,7 @@ def test_file_pipeline_resume_skips_files():
     state.should_skip_share.return_value = False
     state.should_skip_file.side_effect = lambda p: p.endswith("a.txt")
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -137,7 +137,7 @@ def test_file_pipeline_marks_files_done():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -163,7 +163,7 @@ def test_file_pipeline_marks_share_done_after_file_scanning():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     call_order = []
     state.mark_file_done.side_effect = lambda p: call_order.append(("file", p))
@@ -195,7 +195,7 @@ def test_file_pipeline_marks_share_done_on_empty_walk():
     state = MagicMock()
     state.should_skip_share.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
     pipeline.tree_walker.walk_directory = MagicMock(
@@ -243,7 +243,7 @@ def test_file_pipeline_progress_with_resume():
     state.should_skip_share.return_value = False
     state.should_skip_file.side_effect = lambda p: p.endswith("a.txt")
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state, progress=progress)
 
@@ -308,7 +308,7 @@ def test_file_pipeline_parallel_share_completion():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -338,9 +338,9 @@ def test_file_pipeline_resume_seeds_unchecked_from_other_share():
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
     # File from a different share that was already walked (not in active paths)
-    state.load_unchecked_files.return_value = [
+    state.iter_unchecked_files.return_value = iter([
         ("//OTHER/DONE/leftover.txt", 500, 1700000000.0),
-    ]
+    ])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -366,9 +366,9 @@ def test_file_pipeline_resume_no_duplicate_scan():
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
     # This file belongs to //HOST/SHARE which IS being actively walked
-    state.load_unchecked_files.return_value = [
+    state.iter_unchecked_files.return_value = iter([
         ("//HOST/SHARE/already_discovered.txt", 500, 1700000000.0),
-    ]
+    ])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -398,7 +398,7 @@ def test_file_pipeline_resume_rewalks_unwalked_dirs():
     state.load_unwalked_dirs.return_value = [
         "//HOST/SHARE/unfinished_dir",
     ]
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -434,7 +434,7 @@ def test_resume_skips_already_walked_dirs():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
     # These dirs were fully walked in the previous run
     state.load_walked_dirs.return_value = [
         "//HOST/SHARE/already_done",
@@ -476,9 +476,9 @@ def test_resume_walked_dirs_files_preseeded():
     state.load_unwalked_dirs.return_value = []
     state.load_walked_dirs.return_value = ["//HOST/SHARE/done_dir"]
     # File in a walked dir that wasn't scanned before interruption
-    state.load_unchecked_files.return_value = [
+    state.iter_unchecked_files.return_value = iter([
         ("//HOST/SHARE/done_dir/missed.txt", 100, 1700000000.0),
-    ]
+    ])
 
     pipeline = FilePipeline(cfg, state=state)
     pipeline.tree_walker.walk_directory = MagicMock(
@@ -500,7 +500,7 @@ def test_resume_skips_done_shares():
     state.should_skip_share.side_effect = lambda p: p == "//HOST/DONE"
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -538,7 +538,7 @@ def test_resume_share_root_walked_only_subdirs_resumed():
     state.load_unwalked_dirs.return_value = [
         "//HOST/SHARE/unfinished",
     ]
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -570,7 +570,7 @@ def test_resume_share_root_walked_no_remaining_work_marks_done():
     state.should_skip_file.return_value = False
     state.load_walked_dirs.return_value = ["//HOST/SHARE"]
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
     pipeline.tree_walker.walk_directory = MagicMock(
@@ -593,10 +593,10 @@ def test_preseed_respects_exclude_share():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = [
+    state.iter_unchecked_files.return_value = iter([
         ("//HOST/JUNK$/secret.txt", 100, 1700000000.0),
         ("//HOST/DATA/report.txt", 200, 1700000001.0),
-    ]
+    ])
 
     pipeline = FilePipeline(cfg, state=state)
     pipeline.tree_walker.walk_directory = MagicMock(
@@ -622,10 +622,10 @@ def test_preseed_respects_exclude_unc():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = [
+    state.iter_unchecked_files.return_value = iter([
         ("//HOST/C$/Windows/System32/config/SAM", 100, 1700000000.0),
         ("//HOST/C$/Users/admin/secret.txt", 200, 1700000001.0),
-    ]
+    ])
 
     pipeline = FilePipeline(cfg, state=state)
     pipeline.tree_walker.walk_directory = MagicMock(
@@ -650,10 +650,10 @@ def test_preseed_respects_include_share():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = [
+    state.iter_unchecked_files.return_value = iter([
         ("//HOST/DATA/report.txt", 200, 1700000001.0),
         ("//HOST/LOGS/app.log", 300, 1700000002.0),
-    ]
+    ])
 
     pipeline = FilePipeline(cfg, state=state)
     pipeline.tree_walker.walk_directory = MagicMock(
@@ -721,6 +721,41 @@ def test_batch_writer_flushes_on_interval():
     assert state.store_files.called
 
 
+def test_batch_writer_enqueue_checked():
+    """Batch writer flushes checked marks via store.mark_files_checked_batch."""
+    state = MagicMock()
+
+    writer = _BatchWriter(state)
+    writer.start()
+
+    writer.enqueue_checked("//HOST/SHARE/a.txt")
+    writer.enqueue_checked("//HOST/SHARE/b.txt")
+
+    writer.stop()
+
+    state.store.mark_files_checked_batch.assert_called_once()
+    paths = state.store.mark_files_checked_batch.call_args[0][0]
+    assert sorted(paths) == ["//HOST/SHARE/a.txt", "//HOST/SHARE/b.txt"]
+
+
+def test_batch_writer_mixed_items():
+    """Batch writer handles dir, file, and checked items together."""
+    state = MagicMock()
+
+    writer = _BatchWriter(state)
+    writer.start()
+
+    writer.put_dir("//HOST/SHARE/dir1", "//HOST/SHARE")
+    writer.put_file("//HOST/SHARE/f.txt", "//HOST/SHARE", 100, 0.0)
+    writer.enqueue_checked("//HOST/SHARE/done.txt")
+
+    writer.stop()
+
+    assert state.store_dirs.called
+    assert state.store_files.called
+    assert state.store.mark_files_checked_batch.called
+
+
 # ---------- error handling ----------
 
 def test_file_pipeline_walk_error_does_not_mark_walked():
@@ -731,7 +766,7 @@ def test_file_pipeline_walk_error_does_not_mark_walked():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -760,7 +795,7 @@ def test_file_pipeline_partial_share_error_does_not_mark_done():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -852,7 +887,7 @@ def test_no_duplicate_scan_same_file_two_dirs():
 
 
 def test_preseed_skips_already_enqueued_file():
-    """File discovered by live walk AND present in load_unchecked_files → scanned once."""
+    """File discovered by live walk AND present in iter_unchecked_files → scanned once."""
     cfg = make_cfg()
 
     state = MagicMock()
@@ -860,9 +895,9 @@ def test_preseed_skips_already_enqueued_file():
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
     # Same file appears in unchecked list for a non-active share
-    state.load_unchecked_files.return_value = [
+    state.iter_unchecked_files.return_value = iter([
         ("//OTHER/SHARE/overlap.txt", 200, 1700000000.0),
-    ]
+    ])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -1098,7 +1133,7 @@ def test_max_depth_respected_on_resume():
         "//HOST/SHARE/deep/nested/dir",
         "//HOST/SHARE/another",
     ]
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -1132,7 +1167,7 @@ def test_max_depth_one_allows_shallow_resume_dirs():
         "//HOST/SHARE/level1",        # depth 1 — allowed
         "//HOST/SHARE/level1/level2",  # depth 2 — too deep
     ]
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -1320,7 +1355,7 @@ def test_share_with_error_not_marked_done_in_resume():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state, progress=progress)
 
@@ -1352,7 +1387,7 @@ def test_clean_share_both_walked_and_marked_done():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state, progress=progress)
 
@@ -1377,7 +1412,7 @@ def test_mixed_clean_and_errored_shares_progress():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state, progress=progress)
 
@@ -1434,7 +1469,7 @@ def test_shares_with_errors_case_insensitive():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state, progress=progress)
 
@@ -1572,7 +1607,7 @@ def test_fair_share_share_completion_waits_for_buffer():
     state.should_skip_share.return_value = False
     state.should_skip_file.return_value = False
     state.load_unwalked_dirs.return_value = []
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     progress = ProgressState()
     pipeline = FilePipeline(cfg, state=state, progress=progress)
@@ -1640,7 +1675,7 @@ def test_fair_share_resume_respects_limit():
         "//HOST/SHARE/d2",
         "//HOST/SHARE/d3",
     ]
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -1708,7 +1743,7 @@ def test_max_depth_increase_on_resume_walks_deeper_dirs_skips_checked_files():
     state1.should_skip_share.return_value = False
     state1.should_skip_file.return_value = False
     state1.load_unwalked_dirs.return_value = []
-    state1.load_unchecked_files.return_value = []
+    state1.iter_unchecked_files.return_value = iter([])
 
     def track_store_dirs(dirs):
         for d in dirs:
@@ -1813,7 +1848,7 @@ def test_max_depth_increase_on_resume_walks_deeper_dirs_skips_checked_files():
     state2.load_unwalked_dirs.return_value = [
         "//HOST/SHARE/level1/level2",
     ]
-    state2.load_unchecked_files.return_value = []
+    state2.iter_unchecked_files.return_value = iter([])
 
     stored_dirs_run2 = {}
 
@@ -1888,7 +1923,7 @@ def test_max_depth_increase_resume_same_depth_no_extra_work():
     state.load_unwalked_dirs.return_value = [
         "//HOST/SHARE/level1/level2",
     ]
-    state.load_unchecked_files.return_value = []
+    state.iter_unchecked_files.return_value = iter([])
 
     pipeline = FilePipeline(cfg, state=state)
 
@@ -1944,7 +1979,7 @@ def test_max_depth_increase_progressive_deepening():
     state1.should_skip_share.return_value = False
     state1.should_skip_file.return_value = False
     state1.load_unwalked_dirs.return_value = []
-    state1.load_unchecked_files.return_value = []
+    state1.iter_unchecked_files.return_value = iter([])
     state1.store_dirs.side_effect = lambda dirs: stored_unwalked_1.extend(dirs)
     state1.store_dir.side_effect = lambda p, s: stored_unwalked_1.append(p)
 
@@ -1989,7 +2024,7 @@ def test_max_depth_increase_progressive_deepening():
     state2.should_skip_share.return_value = False
     state2.should_skip_file.side_effect = lambda p: p.lower() == "//host/share/root.txt"
     state2.load_unwalked_dirs.return_value = ["//HOST/SHARE/a"]  # from run 1
-    state2.load_unchecked_files.return_value = []
+    state2.iter_unchecked_files.return_value = iter([])
     state2.store_dirs.side_effect = lambda dirs: stored_unwalked_2.extend(dirs)
     state2.store_dir.side_effect = lambda p, s: stored_unwalked_2.append(p)
 
@@ -2016,7 +2051,7 @@ def test_max_depth_increase_progressive_deepening():
     state3.should_skip_share.return_value = False
     state3.should_skip_file.side_effect = lambda p: p.lower() == "//host/share/root.txt"
     state3.load_unwalked_dirs.return_value = ["//HOST/SHARE/a/b"]  # from run 2
-    state3.load_unchecked_files.return_value = []
+    state3.iter_unchecked_files.return_value = iter([])
 
     pipeline3 = FilePipeline(cfg3, state=state3)
     pipeline3.tree_walker.walk_directory = MagicMock(side_effect=walk_tree)

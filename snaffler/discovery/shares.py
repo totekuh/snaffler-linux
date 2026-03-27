@@ -10,10 +10,12 @@ from typing import List, Tuple
 
 from impacket.smbconnection import SessionError
 
+from snaffler.classifiers.rules import MatchLocation, MatchAction
 from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.transport.smb import SMBTransport
 from snaffler.utils.connection_cache import ThreadLocalConnectionCache
 from snaffler.utils.fatal import check_fatal_os_error
+from snaffler.utils.path_utils import extract_unc_share_name
 
 logger = logging.getLogger('snaffler')
 
@@ -133,9 +135,6 @@ class ShareFinder:
             confirming readability).
             ``None`` — no rule matched.
         """
-        from snaffler.classifiers.rules import MatchLocation, MatchAction
-        from snaffler.utils.path_utils import extract_unc_share_name
-
         # Extract share name from UNC path for SHARE_NAME matching
         share_name = extract_unc_share_name(unc_path) or unc_path
 
