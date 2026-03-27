@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import logging
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Optional, List
@@ -11,6 +12,8 @@ from snaffler.config.configuration import SnafflerConfiguration
 from snaffler.engine.runner import SnafflerRunner
 from snaffler.utils.logger import setup_logging
 from snaffler.cli.results import results_app
+
+logger = logging.getLogger("snaffler")
 
 
 def _get_version() -> str:
@@ -251,6 +254,21 @@ def main(
         rescan_unreadable: bool = typer.Option(
             False, "--rescan-unreadable",
             help="Re-test previously unreadable shares from state DB with current creds",
+            rich_help_panel="Targeting",
+        ),
+        domain_users: bool = typer.Option(
+            False, "--domain-users",
+            help="Discover interesting AD users and match their names in file contents (requires -d)",
+            rich_help_panel="Targeting",
+        ),
+        user_match: Optional[List[str]] = typer.Option(
+            None, "--user-match",
+            help="Keyword filter for interesting usernames (repeatable, default: sql,svc,service,...)",
+            rich_help_panel="Targeting",
+        ),
+        user_min_len: int = typer.Option(
+            6, "--user-min-len",
+            help="Minimum username length for dynamic user rules",
             rich_help_panel="Targeting",
         ),
         grab: bool = typer.Option(
@@ -510,6 +528,9 @@ def main(
     if _explicit("shares_only"):      cfg.targets.shares_only = shares_only
     if _explicit("include_disabled"): cfg.targets.skip_disabled_computers = not include_disabled
     if _explicit("rescan_unreadable"): cfg.targets.rescan_unreadable = rescan_unreadable
+    if _explicit("domain_users"):     cfg.targets.domain_users = domain_users
+    if _explicit("user_match"):       cfg.targets.user_match_strings = user_match or []
+    if _explicit("user_min_len"):     cfg.targets.user_min_len = user_min_len
     if _explicit("share"):            cfg.targets.share_filter = share or []
     if _explicit("exclude_share"):    cfg.targets.exclude_share = exclude_share or []
     if _explicit("exclude_unc"):      cfg.targets.exclude_unc = exclude_unc or []
@@ -735,6 +756,38 @@ def main(
             setup_custom_dns(nameserver)
         except (ImportError, ValueError) as exc:
             raise typer.BadParameter(str(exc))
+
+    # ---------- dynamic domain user rules ----------
+    if cfg.targets.domain_users:
+        if not cfg.auth.domain:
+            typer.echo(
+                "Warning: --domain-users requires -d/--domain, ignoring",
+                err=True,
+            )
+            cfg.targets.domain_users = False
+        else:
+            try:
+                from snaffler.discovery.ad import ADDiscovery
+                from snaffler.classifiers.loader import build_domain_user_rule
+
+                logger.info("Discovering interesting domain users for content rules...")
+                ad = ADDiscovery(cfg)
+                users = ad.get_domain_users(
+                    match_strings=cfg.targets.user_match_strings or None,
+                    min_len=cfg.targets.user_min_len,
+                )
+                if users:
+                    rule = build_domain_user_rule(users)
+                    cfg.rules.content.append(rule)
+                    logger.info(
+                        f"Added DynamicDomainUsers rule matching {len(users)} users"
+                    )
+                else:
+                    logger.warning(
+                        "No interesting domain users found, skipping dynamic rule"
+                    )
+            except Exception as e:
+                logger.warning(f"Domain user discovery failed, continuing without: {e}")
 
     # ---------- grab mode ----------
     if grab:

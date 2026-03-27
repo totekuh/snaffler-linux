@@ -54,11 +54,8 @@ class TestWALCheckpoint:
         db_path = str(tmp_path / "test.db")
         store = SQLiteStateStore(db_path)
         store.close()
-        # Second close should not crash (conn already closed)
-        try:
-            store.close()
-        except Exception:
-            pass  # Some SQLite versions may error, but it shouldn't be fatal
+        # Second close must not crash
+        store.close()
 
 
 # ---------- Indexes ----------

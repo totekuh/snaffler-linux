@@ -1,7 +1,10 @@
 """Tests for snaffler results export/import subcommands."""
 
+import gzip
 import json
+import shutil
 import sqlite3
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -10,6 +13,25 @@ from typer.testing import CliRunner
 from snaffler.cli.main import app
 
 runner = CliRunner()
+
+
+def _open_exported_db(gz_path):
+    """Decompress a gzip-exported DB and return an open sqlite3 connection.
+
+    Returns (connection, tmp_path) — caller must close conn and delete tmp_path.
+    """
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    with gzip.open(str(gz_path), "rb") as f_in, open(tmp_path, "wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+    return sqlite3.connect(tmp_path), tmp_path
+
+
+def _load_exported_json(gz_path):
+    """Load a gzip-exported JSON file and return the parsed data."""
+    with gzip.open(str(gz_path), "rt", encoding="utf-8") as f:
+        return json.load(f)
 
 
 # ---------- helpers ----------
@@ -121,41 +143,35 @@ class TestExportDB:
         assert result.exit_code == 0
         assert "Exported state DB to" in result.output
 
-        # Verify the exported file is valid SQLite
-        exp_conn = sqlite3.connect(str(out_path))
-        findings = exp_conn.execute("SELECT COUNT(*) FROM finding").fetchone()[0]
-        computers = exp_conn.execute("SELECT COUNT(*) FROM target_computer").fetchone()[0]
-        shares = exp_conn.execute("SELECT COUNT(*) FROM target_share").fetchone()[0]
-        exp_conn.close()
+        # Verify the exported file is gzip-compressed valid SQLite
+        exp_conn, tmp_db = _open_exported_db(out_path)
+        try:
+            findings = exp_conn.execute("SELECT COUNT(*) FROM finding").fetchone()[0]
+            computers = exp_conn.execute("SELECT COUNT(*) FROM target_computer").fetchone()[0]
+            shares = exp_conn.execute("SELECT COUNT(*) FROM target_share").fetchone()[0]
+        finally:
+            exp_conn.close()
+            Path(tmp_db).unlink(missing_ok=True)
 
         assert findings == 5
         assert computers == 3
         assert shares == 3
 
-    def test_export_db_no_wal_sidecar(self, tmp_path):
-        """Exported DB should not create WAL sidecar files."""
+    def test_export_db_is_gzip(self, tmp_path):
+        """Exported DB should be gzip compressed."""
         db_path = tmp_path / "snaffler.db"
         conn = _create_db(db_path)
         _populate_db(conn)
         conn.close()
 
         out_path = tmp_path / "exported.db"
-        result = runner.invoke(
+        runner.invoke(
             app, ["results", "export", str(out_path), "--state-file", str(db_path)]
         )
 
-        assert result.exit_code == 0
-        # Open the exported DB to check journal mode — should be usable
-        # without generating -wal/-shm files
-        exp_conn = sqlite3.connect(str(out_path))
-        mode = exp_conn.execute("PRAGMA journal_mode").fetchone()[0]
-        exp_conn.close()
-
-        # VACUUM INTO produces a DB in DELETE journal mode (not WAL)
-        assert mode != "wal"
-        # No sidecar files should exist
-        assert not (tmp_path / "exported.db-wal").exists()
-        assert not (tmp_path / "exported.db-shm").exists()
+        # Check gzip magic bytes
+        with open(out_path, "rb") as f:
+            assert f.read(2) == b"\x1f\x8b"
 
     def test_export_db_preserves_data_integrity(self, tmp_path):
         """All finding data should be preserved exactly."""
@@ -169,11 +185,14 @@ class TestExportDB:
             app, ["results", "export", str(out_path), "--state-file", str(db_path)]
         )
 
-        exp_conn = sqlite3.connect(str(out_path))
-        row = exp_conn.execute(
-            "SELECT file_path, triage, rule_name, context FROM finding WHERE finding_id = 'bbb'"
-        ).fetchone()
-        exp_conn.close()
+        exp_conn, tmp_db = _open_exported_db(out_path)
+        try:
+            row = exp_conn.execute(
+                "SELECT file_path, triage, rule_name, context FROM finding WHERE finding_id = 'bbb'"
+            ).fetchone()
+        finally:
+            exp_conn.close()
+            Path(tmp_db).unlink(missing_ok=True)
 
         assert row[0] == "//FS02/deploy$/id_rsa"
         assert row[1] == "Black"
@@ -194,9 +213,12 @@ class TestExportDB:
         )
 
         assert result.exit_code == 0
-        exp_conn = sqlite3.connect(str(out_path))
-        count = exp_conn.execute("SELECT COUNT(*) FROM finding").fetchone()[0]
-        exp_conn.close()
+        exp_conn, tmp_db = _open_exported_db(out_path)
+        try:
+            count = exp_conn.execute("SELECT COUNT(*) FROM finding").fetchone()[0]
+        finally:
+            exp_conn.close()
+            Path(tmp_db).unlink(missing_ok=True)
         assert count == 5
 
 
@@ -218,8 +240,7 @@ class TestExportJSON:
         assert result.exit_code == 0
         assert "Exported 5 findings to" in result.output
 
-        with open(out_path) as f:
-            data = json.load(f)
+        data = _load_exported_json(out_path)
 
         assert "stats" in data
         assert "findings" in data
@@ -235,8 +256,7 @@ class TestExportJSON:
             app, ["results", "export", str(out_path), "--state-file", str(db_path)]
         )
 
-        with open(out_path) as f:
-            data = json.load(f)
+        data = _load_exported_json(out_path)
 
         # Check stats
         stats = data["stats"]
@@ -268,8 +288,7 @@ class TestExportJSON:
             app, ["results", "export", str(out_path), "--state-file", str(db_path)]
         )
 
-        with open(out_path) as f:
-            data = json.load(f)
+        data = _load_exported_json(out_path)
 
         # Find the PrivateKey finding
         pk = [f for f in data["findings"] if f["id"] == "bbb"][0]
@@ -293,8 +312,7 @@ class TestExportJSON:
         )
 
         assert result.exit_code == 0
-        with open(out_path) as f:
-            data = json.load(f)
+        data = _load_exported_json(out_path)
         assert len(data["findings"]) == 5
 
     def test_export_json_empty_db(self, tmp_path):
@@ -309,8 +327,7 @@ class TestExportJSON:
         )
 
         assert result.exit_code == 0
-        with open(out_path) as f:
-            data = json.load(f)
+        data = _load_exported_json(out_path)
         assert data["stats"]["findings"] == 0
         assert data["findings"] == []
 
@@ -372,8 +389,7 @@ class TestFormatDetection:
         )
 
         assert result.exit_code == 0
-        with open(out_path) as f:
-            data = json.load(f)
+        data = _load_exported_json(out_path)
         assert "findings" in data
 
     def test_unsupported_format_errors(self, tmp_path):
@@ -591,14 +607,16 @@ class TestImportJSON:
 
         tgt_path = tmp_path / "target.db"
         # First import
-        runner.invoke(app, ["results", "import", str(json_path), "--state-file", str(tgt_path)])
+        result1 = runner.invoke(app, ["results", "import", str(json_path), "--state-file", str(tgt_path)])
+        assert "Imported 1 new findings" in result1.output
 
-        # Second import of same data
+        # Second import of same data — should report 0 new
         result = runner.invoke(
             app, ["results", "import", str(json_path), "--state-file", str(tgt_path)]
         )
 
         assert result.exit_code == 0
+        assert "Imported 0 new findings" in result.output
 
         conn = sqlite3.connect(str(tgt_path))
         count = conn.execute("SELECT COUNT(*) FROM finding").fetchone()[0]

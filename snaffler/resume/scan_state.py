@@ -171,20 +171,23 @@ class SQLiteStateStore:
         self._init()
 
     def _init(self):
-        with self.conn:
-            # page_size must be set before tables are created; on existing DBs
-            # this is a no-op (only takes effect on fresh databases).
-            self.conn.execute("PRAGMA page_size=8192;")
-            try:
-                self.conn.execute("PRAGMA journal_mode=WAL;")
-            except Exception:
-                pass  # WAL unsupported — fall back to default journal mode
-            self.conn.execute("PRAGMA synchronous=NORMAL;")
-            # 64 MB page cache (negative value = kibibytes)
-            self.conn.execute("PRAGMA cache_size=-65536;")
-            # 256 MB memory-mapped I/O for faster reads on large DBs
-            self.conn.execute("PRAGMA mmap_size=268435456;")
+        # PRAGMAs must be set outside any transaction.
+        # page_size only takes effect on fresh databases (before first CREATE
+        # TABLE); on existing DBs it is a no-op unless followed by VACUUM.
+        self.conn.execute("PRAGMA page_size=8192;")
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+        except Exception:
+            pass  # WAL unsupported — fall back to default journal mode
+        self.conn.execute("PRAGMA synchronous=NORMAL;")
+        # 64 MB page cache (negative value = kibibytes)
+        self.conn.execute("PRAGMA cache_size=-65536;")
+        # 256 MB memory-mapped I/O for faster reads on large DBs;
+        # on 32-bit systems SQLite silently caps this to the available
+        # address space, so no special handling is needed.
+        self.conn.execute("PRAGMA mmap_size=268435456;")
 
+        with self.conn:
             # --- drop legacy tables ---
             self.conn.execute("DROP TABLE IF EXISTS checked_computer")
             self.conn.execute("DROP TABLE IF EXISTS checked_share")
@@ -687,4 +690,7 @@ class SQLiteStateStore:
                 self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             except Exception:
                 pass
-            self.conn.close()
+            try:
+                self.conn.close()
+            except Exception:
+                pass  # already closed

@@ -1062,8 +1062,10 @@ def _detect_format(output_path: str, explicit_format: str | None) -> str:
 
 
 def _export_db(state_file: str, output: str):
-    """Export state DB as a clean, portable SQLite file (no WAL sidecar)."""
+    """Export state DB as a gzip-compressed, clean SQLite file (no WAL sidecar)."""
+    import gzip
     import shutil
+    import tempfile
 
     output_path = Path(output)
     if output_path.exists():
@@ -1071,23 +1073,28 @@ def _export_db(state_file: str, output: str):
 
     conn = sqlite3.connect(state_file)
     try:
-        # Checkpoint WAL to ensure all data is in the main file
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+        # VACUUM INTO a temp file first, then gzip to output
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
         try:
-            # VACUUM INTO creates a clean copy without WAL mode artifacts
-            # Requires SQLite 3.27+ (Python 3.8+ ships with 3.27+)
-            conn.execute("VACUUM INTO ?", (output,))
-        except sqlite3.OperationalError:
-            # Fallback: copy main file after checkpoint
-            conn.close()
-            shutil.copy2(state_file, output)
-            # Re-open the copy and disable WAL so it's self-contained
-            copy_conn = sqlite3.connect(output)
             try:
-                copy_conn.execute("PRAGMA journal_mode=DELETE")
-            finally:
-                copy_conn.close()
-            return
+                conn.execute("VACUUM INTO ?", (tmp_path,))
+            except sqlite3.OperationalError:
+                conn.close()
+                shutil.copy2(state_file, tmp_path)
+                copy_conn = sqlite3.connect(tmp_path)
+                try:
+                    copy_conn.execute("PRAGMA journal_mode=DELETE")
+                finally:
+                    copy_conn.close()
+
+            # Gzip compress
+            with open(tmp_path, "rb") as f_in, gzip.open(output, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
     finally:
         try:
             conn.close()
@@ -1096,7 +1103,9 @@ def _export_db(state_file: str, output: str):
 
 
 def _export_json(state_file: str, output: str) -> int:
-    """Export findings as JSON for cross-tool consumption. Returns finding count."""
+    """Export findings as gzip-compressed JSON. Returns finding count."""
+    import gzip
+
     conn = sqlite3.connect(state_file)
     try:
         stats = {
@@ -1113,7 +1122,7 @@ def _export_json(state_file: str, output: str) -> int:
             "context, size, mtime, found_at FROM finding ORDER BY triage, file_path"
         )
 
-        with open(output, "w") as f:
+        with gzip.open(output, "wt", encoding="utf-8") as f:
             f.write("{\n")
             f.write(f'  "stats": {json.dumps(stats)},\n')
             f.write('  "findings": [\n')
@@ -1146,68 +1155,106 @@ def _export_json(state_file: str, output: str) -> int:
     return stats["findings"]
 
 
-def _import_db(input_path: str, state_file: str) -> int:
-    """Merge findings from another scan DB into the target state DB."""
-    conn = sqlite3.connect(state_file)
+def _is_gzip(path: str) -> bool:
+    """Check if a file starts with the gzip magic bytes."""
     try:
-        conn.execute("ATTACH DATABASE ? AS import_db", (input_path,))
+        with open(path, "rb") as f:
+            return f.read(2) == b"\x1f\x8b"
+    except OSError:
+        return False
 
-        # Merge findings (skip duplicates by finding_id)
-        imported = conn.execute(
-            "INSERT OR IGNORE INTO finding "
-            "SELECT * FROM import_db.finding"
-        ).rowcount
 
-        # Merge computers (skip duplicates)
-        conn.execute(
-            "INSERT OR IGNORE INTO target_computer (name, ip, done) "
-            "SELECT name, ip, done FROM import_db.target_computer"
-        )
+def _decompress_to_temp(path: str) -> str:
+    """Decompress a gzip file to a temp file. Caller must delete it."""
+    import gzip
+    import shutil
+    import tempfile
 
-        # Merge shares
-        conn.execute(
-            "INSERT OR IGNORE INTO target_share (unc_path, readable, done) "
-            "SELECT unc_path, readable, done FROM import_db.target_share"
-        )
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        with gzip.open(path, "rb") as f_in, open(tmp_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
+    except Exception:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
+    return tmp_path
 
-        conn.commit()
-        conn.execute("DETACH DATABASE import_db")
+
+def _import_db(input_path: str, state_file: str) -> int:
+    """Merge findings from another scan DB (plain or gzip-compressed)."""
+    # Transparently decompress if gzipped
+    if _is_gzip(input_path):
+        actual_path = _decompress_to_temp(input_path)
+        cleanup = True
+    else:
+        actual_path = input_path
+        cleanup = False
+
+    try:
+        conn = sqlite3.connect(state_file)
+        try:
+            conn.execute("ATTACH DATABASE ? AS import_db", (actual_path,))
+
+            imported = conn.execute(
+                "INSERT OR IGNORE INTO finding "
+                "SELECT * FROM import_db.finding"
+            ).rowcount
+
+            conn.execute(
+                "INSERT OR IGNORE INTO target_computer (name, ip, done) "
+                "SELECT name, ip, done FROM import_db.target_computer"
+            )
+
+            conn.execute(
+                "INSERT OR IGNORE INTO target_share (unc_path, readable, done) "
+                "SELECT unc_path, readable, done FROM import_db.target_share"
+            )
+
+            conn.commit()
+            conn.execute("DETACH DATABASE import_db")
+        finally:
+            conn.close()
     finally:
-        conn.close()
+        if cleanup:
+            Path(actual_path).unlink(missing_ok=True)
 
     return imported
 
 
 def _import_json(input_path: str, state_file: str) -> int:
-    """Import findings from a JSON export file."""
-    with open(input_path) as f:
-        data = json.load(f)
+    """Import findings from a JSON export file (plain or gzip-compressed)."""
+    import gzip
+
+    if _is_gzip(input_path):
+        with gzip.open(input_path, "rt", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        with open(input_path) as f:
+            data = json.load(f)
 
     conn = sqlite3.connect(state_file)
     try:
         imported = 0
         for finding in data.get("findings", []):
-            try:
-                conn.execute(
-                    "INSERT OR IGNORE INTO finding "
-                    "(finding_id, file_path, triage, rule_name, match_text, "
-                    "context, size, mtime, found_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        finding["id"],
-                        finding["file_path"],
-                        finding["triage"],
-                        finding["rule_name"],
-                        finding.get("match"),
-                        finding.get("context"),
-                        finding.get("size"),
-                        finding.get("mtime"),
-                        finding.get("found_at"),
-                    ),
-                )
-                imported += 1
-            except sqlite3.IntegrityError:
-                pass  # duplicate finding_id
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO finding "
+                "(finding_id, file_path, triage, rule_name, match_text, "
+                "context, size, mtime, found_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    finding["id"],
+                    finding["file_path"],
+                    finding["triage"],
+                    finding["rule_name"],
+                    finding.get("match"),
+                    finding.get("context"),
+                    finding.get("size"),
+                    finding.get("mtime"),
+                    finding.get("found_at"),
+                ),
+            )
+            imported += cursor.rowcount
         conn.commit()
     finally:
         conn.close()
@@ -1236,7 +1283,7 @@ def export_results(
         None, "--format", "-f", help="Output format (db/json). Auto-detected from extension."
     ),
 ):
-    """Export scan results as a portable DB or JSON file."""
+    """Export scan results as a gzip-compressed DB or JSON file."""
     if not Path(state_file).exists():
         typer.echo(f"Error: state database not found: {state_file}", err=True)
         raise typer.Exit(code=1)
@@ -1245,10 +1292,10 @@ def export_results(
 
     if fmt == "db":
         _export_db(state_file, output)
-        typer.echo(f"Exported state DB to {output}")
+        typer.echo(f"Exported state DB to {output} (gzip compressed)")
     else:
         count = _export_json(state_file, output)
-        typer.echo(f"Exported {count} findings to {output}")
+        typer.echo(f"Exported {count} findings to {output} (gzip compressed)")
 
 
 @results_app.command("import")

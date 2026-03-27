@@ -218,7 +218,15 @@ class ADDiscovery:
             min_len: int = 6,
     ) -> List[str]:
         if not match_strings:
-            match_strings = ["sql", "svc", "service", "backup", "admin"]
+            match_strings = [
+                "sql", "svc", "service", "backup", "admin",
+                "ccm", "scom", "opsmgr", "adcs", "msol",
+                "adsync", "thycotic", "secretserver",
+                "cyberark", "configmgr",
+            ]
+
+        # Normalize match strings to lowercase for case-insensitive substring matching
+        match_strings = [s.lower() for s in match_strings]
 
         logger.info("Querying LDAP for interesting domain users")
         self._users = []

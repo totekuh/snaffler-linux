@@ -110,6 +110,11 @@ class TargetingConfig:
 
     rescan_unreadable: bool = False
 
+    # Dynamic domain user rules
+    domain_users: bool = False
+    user_match_strings: List[str] = field(default_factory=list)
+    user_min_len: int = 6
+
 
 # ---------------- SCANNING ----------------
 
