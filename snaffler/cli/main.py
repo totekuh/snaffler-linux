@@ -20,7 +20,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.5.10"  # fallback for PyInstaller/frozen builds — update on release
+        return "1.5.11"  # fallback for PyInstaller/frozen builds — update on release
 
 
 def _version_callback(value: bool):
@@ -783,7 +783,7 @@ def main(
                     min_len=cfg.targets.user_min_len,
                 )
                 if users:
-                    rule = build_domain_user_rule(users)
+                    rule = build_domain_user_rule(users, domain=cfg.auth.domain)
                     cfg.rules.content.append(rule)
                     logger.info(
                         f"Added DynamicDomainUsers rule matching {len(users)} users"

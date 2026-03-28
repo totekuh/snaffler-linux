@@ -47,17 +47,36 @@ class RuleLoader:
         logger.info(f"Loaded {len(rules)} classification rules")
 
 
-def build_domain_user_rule(usernames: List[str]) -> ClassifierRule:
+def build_domain_user_rule(
+    usernames: List[str],
+    domain: str | None = None,
+) -> ClassifierRule:
     """Build a content rule that matches any of the given usernames.
 
     Creates one alternation regex rather than per-user rules for efficiency.
     Usernames are matched when surrounded by typical config-file delimiters
     (whitespace, quotes, ``=``, ``:``, commas, backslashes).
+
+    When *domain* is provided, NetBIOS (``DOMAIN\\user``) and UPN
+    (``user@domain``) variants are generated alongside the bare
+    sAMAccountName.  This catches config-file patterns like
+    ``RunAs=CORP\\svc_sql`` and ``user=svc_sql@corp.local``.
     """
     if not usernames:
         raise ValueError("Cannot build domain user rule with empty username list")
 
-    escaped = [re.escape(u) for u in usernames]
+    # Build all name variants for each user
+    all_variants: list[str] = []
+    for u in usernames:
+        all_variants.append(u)  # bare sAMAccountName
+        if domain:
+            # NetBIOS style: DOMAIN\username (use short name before first dot)
+            netbios = domain.split(".")[0].upper()
+            all_variants.append(f"{netbios}\\{u}")
+            # UPN style: username@domain.tld
+            all_variants.append(f"{u}@{domain}")
+
+    escaped = [re.escape(v) for v in all_variants]
     delim = r"""(?:^|[\s'"=:,\\])"""
     end_delim = r"""(?:$|[\s'"=:,\\])"""
     alternation = "|".join(escaped)

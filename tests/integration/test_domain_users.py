@@ -16,9 +16,9 @@ class TestDomainUserRuleIntegration:
     """Full FileScanner pipeline with injected domain user rule."""
 
     @staticmethod
-    def _make_scanner(usernames, extra_content_rules=None):
+    def _make_scanner(usernames, extra_content_rules=None, domain=None):
         """Create a FileScanner with a domain user rule + optional extras."""
-        user_rule = build_domain_user_rule(usernames)
+        user_rule = build_domain_user_rule(usernames, domain=domain)
         content_rules = [user_rule]
         if extra_content_rules:
             content_rules.extend(extra_content_rules)
@@ -130,3 +130,32 @@ class TestDomainUserRuleIntegration:
 
         assert result is not None
         assert "svc_user_0500" in result.match
+
+    def test_netbios_format_detected_in_config(self):
+        """DOMAIN\\username format in a config file is detected."""
+        scanner, accessor = self._make_scanner(
+            ["svc_backup"], domain="corp.local"
+        )
+        accessor.read.return_value = (
+            b"[Service]\nRunAs=CORP\\svc_backup\nPassword=secret"
+        )
+
+        result = scanner.scan_file("//server/share/app.config", 60, 0.0)
+
+        assert result is not None
+        assert result.triage == Triage.RED
+        assert "CORP\\svc_backup" in result.match or "svc_backup" in result.match
+
+    def test_upn_format_detected_in_config(self):
+        """user@domain format in a config file is detected."""
+        scanner, accessor = self._make_scanner(
+            ["svc_sql"], domain="corp.local"
+        )
+        accessor.read.return_value = (
+            b"db_user=svc_sql@corp.local\ndb_pass=hunter2"
+        )
+
+        result = scanner.scan_file("//server/share/db.ini", 50, 0.0)
+
+        assert result is not None
+        assert result.triage == Triage.RED
