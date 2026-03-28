@@ -69,9 +69,12 @@ class FTPFileAccessor(FileAccessor):
             return buf.getvalue()
         except Exception as e:
             check_fatal_os_error(e)
-            logger.debug(f"FTP read failed for {file_path}: {e}")
+            # Transport-level error (timeout, disconnect, etc.) -- connection
+            # is likely dead, evict it from the cache.  Re-raise so the
+            # pipeline can track the failure and NOT mark the file as done.
+            logger.warning(f"FTP transport error reading {file_path}: {e}")
             self._cache.invalidate(key)
-            return None
+            raise
 
     def copy_to_local(self, file_path: str, dest_root) -> None:
         parsed = parse_ftp_url(file_path)

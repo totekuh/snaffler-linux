@@ -119,10 +119,16 @@ class ShareFinder:
                     remark=share_remark
                 ))
         except SessionError as e:
-            logger.debug(f"[{target}] Share enumeration failed (access denied): {e}")
+            # SMB-level error (access denied at RPC level) — permanent,
+            # no point retrying.  Return whatever we have (usually empty).
+            logger.warning(f"[{target}] Share enumeration access denied: {e}")
         except Exception as e:
             check_fatal_os_error(e)
-            logger.debug(f"[{target}] Share enumeration failed: {e}")
+            # Transport-level error (timeout, disconnect, etc.) — re-raise
+            # so the pipeline can decide NOT to mark the host as done.
+            logger.warning(f"[{target}] Share enumeration transport error: {e}")
+            self._cache.invalidate(target)
+            raise
         return shares
 
     def _classify_share(self, unc_path: str):

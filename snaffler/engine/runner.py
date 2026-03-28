@@ -666,7 +666,10 @@ class SnafflerRunner:
                     from snaffler.web.server import start_web_server
                     start_web_server(self.progress, self.cfg.state.state_db, self.start_time, self.cfg.web.port)
                 except ImportError as exc:
-                    logger.warning(f"Web dashboard unavailable: {exc}")
+                    raise SystemExit(
+                        f"FATAL: --web requires Flask: {exc}\n"
+                        f"Install with: pip install snaffler-ng[web]"
+                    ) from exc
 
             # ---------- rescan unreadable shares ----------
             if self.cfg.targets.rescan_unreadable:

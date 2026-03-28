@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import MagicMock, patch
 
 from snaffler.accessors.ftp_file_accessor import FTPFileAccessor
@@ -88,20 +89,24 @@ def test_read_invalid_path():
     assert accessor.read("INVALID") is None
 
 
-def test_read_failure_returns_none():
+def test_read_transport_error_raises():
+    """Transport errors now raise so the pipeline can decide not to mark the file as done."""
     ftp = make_ftp_mock()
     ftp.retrbinary.side_effect = Exception("transfer failed")
     accessor = make_accessor(ftp)
 
-    assert accessor.read("ftp://10.0.0.5/file.txt") is None
+    with pytest.raises(Exception, match="transfer failed"):
+        accessor.read("ftp://10.0.0.5/file.txt")
 
 
-def test_read_failure_invalidates_connection():
+def test_read_transport_error_invalidates_connection():
+    """On transport error, connection is invalidated before re-raising."""
     ftp = make_ftp_mock()
     ftp.retrbinary.side_effect = Exception("transfer failed")
     accessor = make_accessor(ftp)
 
-    accessor.read("ftp://10.0.0.5/file.txt")
+    with pytest.raises(Exception, match="transfer failed"):
+        accessor.read("ftp://10.0.0.5/file.txt")
 
     ftp.quit.assert_called_once()
 

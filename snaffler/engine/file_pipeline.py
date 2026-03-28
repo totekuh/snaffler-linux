@@ -541,6 +541,8 @@ class FilePipeline:
                 try:
                     result = self.file_scanner.scan_file(unc_path, size, mtime)
 
+                    # Mark done only on success — transport errors skip this
+                    # so the file is retried on resume.
                     if self.state:
                         self.state.mark_file_done(unc_path)  # in-memory dedup
                         if batch_writer:
@@ -579,7 +581,8 @@ class FilePipeline:
 
                 except Exception as e:
                     check_fatal_os_error(e)
-                    logger.debug(f"Error scanning {unc_path}: {e}")
+                    # Transport error — file NOT marked done, will retry on resume
+                    logger.warning(f"Error scanning {unc_path}: {e}")
                 finally:
                     if self.progress:
                         self.progress.files_scanned += 1

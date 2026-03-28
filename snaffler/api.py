@@ -271,7 +271,7 @@ class Snaffler:
             return self._apply_filters(result)
         except Exception as e:
             check_fatal_os_error(e)
-            logger.debug(f"Error scanning {file_path}: {e}")
+            logger.warning(f"Error scanning {file_path}: {e}")
             return None
 
     # ------------------------------------------------------------------ dirs

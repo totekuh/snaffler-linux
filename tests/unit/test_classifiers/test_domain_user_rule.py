@@ -77,6 +77,38 @@ class TestBuildDomainUserRule:
         assert rule.matches("account=svc_user_1499") is not None
         assert rule.matches("account=nonexistent_user") is None
 
+    def test_massive_user_list_10k(self):
+        """10K users — realistic filtered result from a large domain."""
+        users = [f"svc_account_{i:05d}" for i in range(10_000)]
+        rule = build_domain_user_rule(users)
+        assert rule.matches("RunAs=svc_account_00000") is not None
+        assert rule.matches("user=svc_account_09999") is not None
+        assert rule.matches("user=svc_account_10000") is None
+
+    def test_extreme_user_list_200k(self):
+        """200K users — full unfiltered domain user list.
+
+        Tests that Python's re module can handle massive alternation
+        groups without crashing or taking excessive time. Real AD
+        environments can have 200K+ user accounts.
+        """
+        import time
+        users = [f"user_{i:06d}" for i in range(200_000)]
+        rule = build_domain_user_rule(users)
+
+        # Compilation succeeded — now test matching speed
+        t0 = time.monotonic()
+        for _ in range(100):
+            rule.matches("account=user_100000")
+            rule.matches("account=nonexistent_xyz")
+        elapsed = time.monotonic() - t0
+
+        assert rule.matches("account=user_000000") is not None
+        assert rule.matches("account=user_199999") is not None
+        assert rule.matches("account=user_200000") is None
+        # 100 match+miss cycles should complete in under 10 seconds
+        assert elapsed < 10.0, f"200K-user regex too slow: {elapsed:.1f}s for 100 lookups"
+
     def test_regex_compiles_to_pattern(self):
         """Rule's __post_init__ compiles the regex."""
         rule = build_domain_user_rule(["svc_test"])

@@ -166,8 +166,8 @@ def test_share_pipeline_marks_computers_in_state():
     assert state.store_shares.call_count == 2
 
 
-def test_share_pipeline_marks_failed_computer_in_state():
-    """Failed computers are marked done (no DNS, access denied, etc.) — no point retrying."""
+def test_share_pipeline_transport_error_does_not_mark_done():
+    """Transport errors should NOT mark the computer done — retry on resume."""
     cfg = make_cfg()
     state = MagicMock()
     pipeline = SharePipeline(cfg, state=state)
@@ -181,10 +181,9 @@ def test_share_pipeline_marks_failed_computer_in_state():
 
     pipeline.run(["BAD", "GOOD"])
 
-    # Both marked done — errors are permanent, only KeyboardInterrupt skips marking
-    assert state.mark_computer_done.call_count == 2
-    state.mark_computer_done.assert_any_call("BAD")
-    state.mark_computer_done.assert_any_call("GOOD")
+    # Only GOOD is marked done — BAD had a transport error
+    assert state.mark_computer_done.call_count == 1
+    state.mark_computer_done.assert_called_once_with("GOOD")
 
 
 # ---------- readable / unreadable ----------

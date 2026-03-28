@@ -71,6 +71,7 @@ class SharePipeline:
             try:
                 for future in as_completed(future_to_computer):
                     computer = future_to_computer[future]
+                    should_mark_done = True
                     try:
                         shares = future.result()
                         if shares:
@@ -87,15 +88,19 @@ class SharePipeline:
                                 )
                     except Exception as e:
                         check_fatal_os_error(e)
-                        logger.debug(f"Error processing {computer}: {e}")
+                        # Transport error — don't mark host done so it's retried on resume
+                        logger.warning(f"Error processing {computer}: {e}")
+                        should_mark_done = False
                     finally:
                         if self.progress:
                             with self.progress._lock:
                                 self.progress.computers_done += 1
-                        # Mark done on success or error (no DNS, access denied — no point retrying).
+                        # Mark done on success or permanent error (access denied).
+                        # Transport errors set should_mark_done=False so the host
+                        # is retried on resume.
                         # On KeyboardInterrupt the for-loop breaks, so un-yielded futures
                         # never reach here and their computers get retried on resume.
-                        if self.state:
+                        if self.state and should_mark_done:
                             self.state.mark_computer_done(computer)
             except KeyboardInterrupt:
                 executor.shutdown(wait=False, cancel_futures=True)

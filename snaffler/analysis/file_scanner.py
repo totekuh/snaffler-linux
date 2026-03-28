@@ -252,41 +252,47 @@ class FileScanner:
         This is the main entry point used by FilePipeline.
         Returns a filtered FileResult or None. No logging or download
         side effects — those are the caller's responsibility.
+
+        Raises:
+            Transport-level errors from ``file_accessor.read()`` propagate
+            so the pipeline can decide not to mark the file as done
+            (retry on resume).
         """
+        check = self.check_file(file_path, size, mtime_epoch)
+
+        if check.status == FileCheckStatus.DISCARD:
+            return None
+
+        if check.status == FileCheckStatus.SNAFFLE:
+            return self._filter_result(check.result)
+
+        # Phase 2 requires data — read it
+        if self.file_accessor is None:
+            if check._best_result:
+                return self._filter_result(check._best_result)
+            return None
+
+        # read() may raise on transport errors — let those propagate
+        # so the pipeline can track the failure.
+        data = self.file_accessor.read(
+            file_path,
+            max_bytes=self._max_read_bytes,
+        )
+        if not data:
+            # Access denied or empty — filter whatever we have from Phase 1
+            if check._best_result:
+                return self._filter_result(check._best_result)
+            return None
+
         try:
-            check = self.check_file(file_path, size, mtime_epoch)
-
-            if check.status == FileCheckStatus.DISCARD:
-                return None
-
-            if check.status == FileCheckStatus.SNAFFLE:
-                return self._filter_result(check.result)
-
-            # Phase 2 requires data — read it
-            if self.file_accessor is None:
-                if check._best_result:
-                    return self._filter_result(check._best_result)
-                return None
-
-            data = self.file_accessor.read(
-                file_path,
-                max_bytes=self._max_read_bytes,
-            )
-            if not data:
-                # Access denied or empty — filter whatever we have from Phase 1
-                if check._best_result:
-                    return self._filter_result(check._best_result)
-                return None
-
             result = self.scan_with_data(data, check)
             if result:
                 return self._filter_result(result)
             return None
-
         except Exception as e:
             check_fatal_os_error(e)
-            logger.debug(f"Unhandled exception while scanning {file_path}: {e}")
-            return
+            logger.warning(f"Classification error scanning {file_path}: {e}")
+            return None
 
     # -------------------------------------------------------------- Pure evaluation (no I/O)
 
@@ -304,6 +310,7 @@ class FileScanner:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             text = data.decode("latin-1", errors="ignore")
+            logger.debug(f"Non-UTF-8 content in {ctx.unc_path}, decoded as Latin-1")
 
         best_result: Optional[FileResult] = None
 
@@ -416,7 +423,8 @@ class FileScanner:
 
             return best_result
         except Exception as e:
-            logger.debug(
+            check_fatal_os_error(e)
+            logger.warning(
                 f"Archive peek failed for {ctx.unc_path}: {e}"
             )
             return None
@@ -443,7 +451,8 @@ class FileScanner:
                         if len(members) >= cap:
                             break
                     return members
-            except (zipfile.BadZipFile, Exception):
+            except (zipfile.BadZipFile, Exception) as e:
+                logger.debug(f"Cannot list archive members ({ext}): {e}")
                 return None
 
         if ext_lower == ".7z":
@@ -465,7 +474,8 @@ class FileScanner:
                         if len(members) >= cap:
                             break
                     return members
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Cannot list archive members ({ext}): {e}")
                 return None
 
         if ext_lower == ".rar":
@@ -487,7 +497,8 @@ class FileScanner:
                         if len(members) >= cap:
                             break
                     return members
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Cannot list archive members ({ext}): {e}")
                 return None
 
         return None

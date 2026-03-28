@@ -6,11 +6,15 @@ from typing import Optional
 from impacket.smb import FILE_READ_DATA, FILE_READ_ATTRIBUTES, FILE_SHARE_READ
 from impacket.smbconnection import SessionError
 
+import logging
+
 from snaffler.accessors.file_accessor import FileAccessor
 from snaffler.transport.smb import SMBTransport
 from snaffler.utils.connection_cache import ThreadLocalConnectionCache
 from snaffler.utils.fatal import check_fatal_os_error
 from snaffler.utils.path_utils import parse_unc_path
+
+logger = logging.getLogger("snaffler")
 
 
 class SMBFileAccessor(FileAccessor):
@@ -56,16 +60,19 @@ class SMBFileAccessor(FileAccessor):
                     smb.closeFile(tid, fid)
             finally:
                 smb.disconnectTree(tid)
-        except SessionError:
+        except SessionError as e:
             # SMB-level error (ACCESS_DENIED, etc.) -- the connection is still
             # valid, don't tear it down.  Just return None for this file.
+            logger.debug(f"SMB access denied reading {file_path}: {e}")
             return None
         except Exception as e:
             check_fatal_os_error(e)
             # Transport-level error (timeout, disconnect, etc.) -- connection
-            # is likely dead, evict it from the cache.
+            # is likely dead, evict it from the cache.  Re-raise so the
+            # pipeline can track the failure and NOT mark the file as done.
+            logger.warning(f"SMB transport error reading {file_path}: {e}")
             self._cache.invalidate(server)
-            return None
+            raise
 
     def close(self):
         """Close all cached SMB connections across all threads."""

@@ -166,6 +166,7 @@ class ScanState:
 
 class SQLiteStateStore:
     def __init__(self, path: str):
+        self.path = path
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.lock = threading.Lock()
         self._init()
@@ -176,9 +177,15 @@ class SQLiteStateStore:
         # TABLE); on existing DBs it is a no-op unless followed by VACUUM.
         self.conn.execute("PRAGMA page_size=8192;")
         try:
-            self.conn.execute("PRAGMA journal_mode=WAL;")
-        except Exception:
-            pass  # WAL unsupported — fall back to default journal mode
+            mode = self.conn.execute("PRAGMA journal_mode=WAL;").fetchone()[0]
+            # In-memory databases return "memory" — WAL is N/A (all in RAM).
+            if mode.lower() not in ("wal", "memory"):
+                raise RuntimeError(f"Failed to enable WAL mode (got {mode})")
+        except Exception as e:
+            raise SystemExit(
+                f"FATAL: Cannot enable WAL journal mode on {self.path} — {e}\n"
+                f"The SQLite state DB requires WAL mode for concurrent access."
+            ) from e
         self.conn.execute("PRAGMA synchronous=NORMAL;")
         # 64 MB page cache (negative value = kibibytes)
         self.conn.execute("PRAGMA cache_size=-65536;")

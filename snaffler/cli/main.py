@@ -20,7 +20,7 @@ def _get_version() -> str:
     try:
         return pkg_version("snaffler-ng")
     except Exception:
-        return "1.5.6"  # fallback for PyInstaller builds
+        return "1.5.10"  # fallback for PyInstaller/frozen builds — update on release
 
 
 def _version_callback(value: bool):
@@ -585,10 +585,16 @@ def main(
         raise typer.BadParameter("Use either --ftp or --ftp-file, not both")
 
     def _normalize_ftp(raw_url: str) -> str:
-        raw_url = raw_url.strip()
-        if raw_url.startswith("ftp://"):
-            return raw_url.rstrip("/") or raw_url
-        return f"ftp://{raw_url}"
+        url = raw_url.strip()
+        if not url.startswith("ftp://"):
+            url = f"ftp://{url}"
+        url = url.rstrip("/") or url  # preserve at least ftp://host
+        # Validate host component exists
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            raise typer.BadParameter(f"Invalid FTP URL (no host): {raw_url}")
+        return url
 
     if ftp:
         cfg.targets.ftp_targets = [_normalize_ftp(r) for r in ftp]

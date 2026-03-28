@@ -196,6 +196,16 @@ class SnafflerConfiguration:
 
     # ---------- validation ----------
     def validate(self):
+        # ---------- NUMERIC BOUNDS ----------
+        if self.advanced.max_threads < 3:
+            raise ValueError("--max-threads must be >= 3 (need at least 1 per bucket)")
+        if self.advanced.dns_threads < 1:
+            raise ValueError("--dns-threads must be >= 1")
+        if self.scanning.max_read_bytes <= 0:
+            raise ValueError("--max-read-bytes must be > 0")
+        if self.scanning.max_depth is not None and self.scanning.max_depth < 0:
+            raise ValueError("--max-depth must be >= 0")
+
         if self.scanning.max_read_bytes > self.scanning.max_file_bytes:
             raise ValueError("max_read_bytes cannot exceed max_file_bytes")
 
@@ -251,23 +261,27 @@ class SnafflerConfiguration:
             data = tomlkit.load(f)
 
         for section, values in data.items():
-            if hasattr(self, section):
-                obj = getattr(self, section)
-                for key, value in values.items():
-                    if hasattr(obj, key):
-                        current = getattr(obj, key)
-                        if current is not None:
-                            expected_type = type(current)
-                            # bool is a subclass of int — check bool first
-                            if expected_type is bool and not isinstance(value, bool):
-                                _cfg_logger.warning(
-                                    f"Config: {key} expected bool, got {type(value).__name__} — skipping"
-                                )
-                                continue
-                            if not isinstance(value, (expected_type, type(None))):
-                                _cfg_logger.warning(
-                                    f"Config: {key} expected {expected_type.__name__}, "
-                                    f"got {type(value).__name__} — skipping"
-                                )
-                                continue
-                        setattr(obj, key, value)
+            if not hasattr(self, section):
+                _cfg_logger.warning(f"Config: unknown section '{section}' — ignoring")
+                continue
+            obj = getattr(self, section)
+            for key, value in values.items():
+                if not hasattr(obj, key):
+                    _cfg_logger.warning(f"Config: unknown key '{key}' in section [{section}] — ignoring")
+                    continue
+                current = getattr(obj, key)
+                if current is not None:
+                    expected_type = type(current)
+                    # bool is a subclass of int — check bool first
+                    if expected_type is bool and not isinstance(value, bool):
+                        _cfg_logger.warning(
+                            f"Config: {key} expected bool, got {type(value).__name__} — skipping"
+                        )
+                        continue
+                    if not isinstance(value, (expected_type, type(None))):
+                        _cfg_logger.warning(
+                            f"Config: {key} expected {expected_type.__name__}, "
+                            f"got {type(value).__name__} — skipping"
+                        )
+                        continue
+                setattr(obj, key, value)

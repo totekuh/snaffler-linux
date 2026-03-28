@@ -1,4 +1,6 @@
+import pytest
 from unittest.mock import MagicMock, patch
+from impacket.smbconnection import SessionError
 from snaffler.accessors.smb_file_accessor import SMBFileAccessor
 
 
@@ -53,25 +55,39 @@ def test_read_with_max_bytes():
     assert data == b"ABCD"
 
 
-def test_read_failure():
+def test_read_transport_error_raises():
+    """Transport errors (non-SessionError) now raise so the pipeline can
+    decide not to mark the file as done."""
     smb = make_smb_mock()
     accessor = make_accessor(smb)
 
     accessor._cache.get = MagicMock(side_effect=Exception("fail"))
 
+    with pytest.raises(Exception, match="fail"):
+        accessor.read("//srv/share/file.bin")
+
+
+def test_read_session_error_returns_none():
+    """SessionError (access denied) returns None — the connection is still valid."""
+    smb = make_smb_mock()
+    smb.openFile.side_effect = SessionError(0, "access denied")
+    accessor = make_accessor(smb)
+
     assert accessor.read("//srv/share/file.bin") is None
 
 
-def test_read_closes_file_on_error():
+def test_read_closes_file_on_transport_error():
+    """Transport error during readFile: closeFile/disconnectTree run via
+    finally blocks, then the error re-raises."""
     smb = make_smb_mock()
     smb.readFile.side_effect = Exception("read failed")
     accessor = make_accessor(smb)
 
-    result = accessor.read("//srv/share/file.bin")
+    with pytest.raises(Exception, match="read failed"):
+        accessor.read("//srv/share/file.bin")
 
     # closeFile should still be called via finally block
-    # (but the outer except catches the error, returning None)
-    assert result is None
+    smb.closeFile.assert_called_once()
 
 
 def test_copy_to_local_success(tmp_path):
@@ -106,31 +122,31 @@ def test_copy_to_local_no_data(tmp_path):
 
 
 def test_read_connect_tree_failure():
-    """If connectTree raises, read() returns None without NameError.
+    """If connectTree raises a transport error, read() re-raises (not NameError).
 
     Regression test: nested try/finally ensures disconnectTree(tid) is
     never reached when connectTree fails (tid is unbound).
     """
     smb = make_smb_mock()
-    smb.connectTree.side_effect = Exception("access denied")
+    smb.connectTree.side_effect = Exception("connection reset")
     accessor = make_accessor(smb)
 
-    # Must return None, not raise NameError
-    result = accessor.read("//srv/share/file.bin")
+    with pytest.raises(Exception, match="connection reset"):
+        accessor.read("//srv/share/file.bin")
 
-    assert result is None
     smb.disconnectTree.assert_not_called()
 
 
 def test_read_open_file_failure_still_disconnects():
-    """If openFile raises, disconnectTree must still be called (tid is valid)."""
+    """If openFile raises a transport error, disconnectTree must still be called
+    (tid is valid) and the error re-raises."""
     smb = make_smb_mock()
     smb.openFile.side_effect = Exception("file not found")
     accessor = make_accessor(smb)
 
-    result = accessor.read("//srv/share/file.bin")
+    with pytest.raises(Exception, match="file not found"):
+        accessor.read("//srv/share/file.bin")
 
-    assert result is None
     smb.disconnectTree.assert_called_once_with(1)  # tid=1 from mock
 
 

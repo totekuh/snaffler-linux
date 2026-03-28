@@ -88,11 +88,15 @@ def setup_custom_dns(nameserver: str) -> None:
                 )
             if results:
                 return results
+        except socket.gaierror:
+            raise  # already a gaierror — propagate unchanged
         except Exception as exc:
             check_fatal_os_error(exc)
-            logger.debug("Custom DNS resolution failed for %s: %s", host, exc)
+            logger.warning("Custom DNS resolution failed for %s via %s: %s", host, nameserver, exc)
+            raise socket.gaierror(8, f"Custom DNS failed for {host}: {exc}") from exc
 
-        # Fallback to system resolver
-        return _original_getaddrinfo(host, port, family, type, proto, flags)
+        # Empty answer set (shouldn't happen — resolve() raises NoAnswer).
+        # Guard against implicit None return which would crash callers.
+        raise socket.gaierror(8, f"Custom DNS returned no records for {host}")
 
     socket.getaddrinfo = custom_getaddrinfo

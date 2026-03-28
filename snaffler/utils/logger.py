@@ -14,6 +14,7 @@ from typing import Optional
 NO_COLOR = False
 
 _finding_store = None
+_finding_store_warned = False
 
 
 def set_finding_store(fn):
@@ -287,8 +288,11 @@ def log_file_result(
                     size=size,
                     mtime=modified,
                 )
-            except Exception:
-                pass  # never crash the scanner on DB write failure
+            except Exception as e:
+                global _finding_store_warned
+                if not _finding_store_warned:
+                    logger.warning(f"Finding store write failed (will suppress repeats): {e}")
+                    _finding_store_warned = True
 
 
 def print_completion_stats(start_time, progress=None):

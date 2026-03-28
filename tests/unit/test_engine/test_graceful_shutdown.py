@@ -191,8 +191,8 @@ def test_share_pipeline_cancels_futures_on_interrupt():
 
 # ---------- runner: web ImportError handling ----------
 
-def test_runner_web_import_error_does_not_skip_cleanup():
-    """ImportError from start_web_server must not prevent state close (W1/W2)."""
+def test_runner_web_import_error_raises_system_exit():
+    """ImportError from start_web_server must raise SystemExit (hard fail)."""
     cfg = make_cfg()
     cfg.targets.unc_targets = ["//HOST/SHARE"]
     cfg.web.enabled = True
@@ -206,8 +206,10 @@ def test_runner_web_import_error_does_not_skip_cleanup():
             "snaffler.web.server.create_app",
             side_effect=ImportError("Flask not installed"),
         ):
-            runner.execute()
+            with pytest.raises(SystemExit, match="--web requires Flask"):
+                runner.execute()
 
+    # Cleanup still runs (finally block)
     runner.state.close.assert_called_once()
 
 
